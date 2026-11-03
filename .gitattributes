@@ -1,0 +1,19 @@
+# Keep line endings stable across platforms.
+#
+# The repository is developed on Windows but has to build and run on Linux and
+# macOS as well, so everything is stored with LF endings. Windows batch files
+# keep CRLF, because cmd.exe needs it.
+
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files that may end up in the repository.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.appkg binary
