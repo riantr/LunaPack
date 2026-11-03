@@ -51,6 +51,25 @@ Because the launcher does the extraction, the application finds its own
 dependencies (`.dll`, `.json`, assets) exactly like it would in its build
 folder - a plain copy of the executable would not run at all.
 
+### The icon
+
+When the application carries an icon, the bundle gets it as well, so Explorer
+shows the application's own icon instead of the launcher's:
+
+```
+$ lunapack --input-exe=./BRLabeler.exe --output-exe=./BRLabeler.exe --Files=./build
+bundled 392 files -> ./BRLabeler.exe (icon copied)
+```
+
+The icon is read from the application executable with a small PE reader and
+written into the bundle with the Windows resource API, which creates the
+resource section the launcher does not have. All icon sizes are copied, so the
+bundle looks right at every zoom level.
+
+This is a Windows feature: an icon is a Windows resource, so on Linux and
+macOS the bundle keeps the icon of the launcher. Use `--Files` with the
+application's own `.ico` file there, or install the icon separately.
+
 `lunapack unpack` recognises the appended archive automatically, so the same
 file can be verified and extracted again:
 
@@ -244,5 +263,6 @@ executable bit, install-script execution, corruption detection and
   does not extract itself.
 - The extraction cache lives next to the bundle (`.lunapack/<hash>/`). When
   that folder cannot be written, a temporary directory is used instead.
+- Copying the icon is Windows only, because an icon is a Windows resource.
 - Bundling writes the archive to a temporary file next to the output, so
   there must be enough free disk space for it.

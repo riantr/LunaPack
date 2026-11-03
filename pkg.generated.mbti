@@ -8,6 +8,10 @@ pub const FORMAT_VERSION : Int32 = 2
 
 pub const MAGIC : String = "APPKGD02"
 
+pub const RT_GROUP_ICON : Int64 = 14
+
+pub const RT_ICON : Int64 = 3
+
 pub fn basename(String) -> String
 
 pub async fn bundle(String, String, Array[String], PackOptions) -> Unit
@@ -15,6 +19,8 @@ pub async fn bundle(String, String, Array[String], PackOptions) -> Unit
 pub async fn collect_files(String) -> Array[String]
 
 pub async fn compress_if_smaller(Bytes, Bool) -> (Bytes, String)
+
+pub async fn copy_icon(String, String) -> Bool
 
 pub fn current_exe_path() -> String?
 
@@ -24,7 +30,11 @@ pub fn dirname(String) -> String
 
 pub async fn ensure_parent_dir(String) -> Unit
 
+pub fn extract_icon(PeFile) -> (Int64, Bytes, Array[(Int64, Bytes)])? raise
+
 pub async fn extract_to(String, String) -> Unit
+
+pub fn find_resource(PeFile, Int64, Int64, Int64) -> (Int64, Int64)? raise
 
 pub async fn gzip_compress(Bytes) -> Bytes
 
@@ -58,7 +68,11 @@ pub fn package_tag(Manifest) -> String
 
 pub fn package_tag_of(String) -> String
 
+pub fn parse_pe(Bytes) -> PeFile raise
+
 pub async fn probe_archive(String) -> (Int64, Manifest)?
+
+pub fn read_at(PeFile, Int64, Int64) -> Bytes
 
 pub async fn read_package_manifest(String) -> Manifest
 
@@ -129,6 +143,13 @@ pub struct PackOptions {
   post_install : Script?
   compression : String
   main_program : String
+}
+
+pub struct PeFile {
+  data : Bytes
+  sections : Array[(Int64, Int64, Int64, Int64)]
+  resource_rva : Int64
+  resource_size : Int64
 }
 
 pub struct Script {

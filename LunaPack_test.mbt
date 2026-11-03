@@ -301,3 +301,120 @@ test "the running executable path is known" {
     None => assert_true(false)
   }
 }
+
+// ---------------------------------------------------------------- PE reader ---
+
+///|
+fn put16(arr : Array[Byte], off : Int32, v : Int32) -> Unit {
+  arr[off] = (v & 0xff).to_byte()
+  arr[off + 1] = ((v >> 8) & 0xff).to_byte()
+}
+
+///|
+fn put32(arr : Array[Byte], off : Int32, v : Int32) -> Unit {
+  arr[off] = (v & 0xff).to_byte()
+  arr[off + 1] = ((v >> 8) & 0xff).to_byte()
+  arr[off + 2] = ((v >> 16) & 0xff).to_byte()
+  arr[off + 3] = ((v >> 24) & 0xff).to_byte()
+}
+
+///|
+/// Build a tiny PE image that carries one icon, to exercise the PE reader.
+fn build_test_pe() -> Bytes {
+  let arr = Array::make(0x400, b'\x00')
+  // DOS header
+  arr[0] = b'M'
+  arr[1] = b'Z'
+  put32(arr, 0x3c, 0x40)
+  // PE signature
+  arr[0x40] = b'P'
+  arr[0x41] = b'E'
+  // COFF header
+  put16(arr, 0x44, 0x8664)
+  put16(arr, 0x46, 1)
+  put16(arr, 0x54, 240)
+  // Optional header (PE32+): magic and the resource data directory
+  let opt = 0x58
+  put16(arr, opt, 0x20b)
+  let dir = opt + 112
+  put32(arr, dir + 16, 0x1000)
+  put32(arr, dir + 20, 0x100)
+  // Section table
+  let sec = opt + 240
+  arr[sec] = b'.'
+  arr[sec + 1] = b'r'
+  arr[sec + 2] = b's'
+  arr[sec + 3] = b'r'
+  arr[sec + 4] = b'c'
+  put32(arr, sec + 8, 0x100)
+  put32(arr, sec + 12, 0x1000)
+  put32(arr, sec + 16, 0x200)
+  put32(arr, sec + 20, 0x200)
+  // Resource section: directories, data entries and payloads
+  let r = 0x200
+  // level 1: the resource types
+  put16(arr, r + 12, 0)
+  put16(arr, r + 14, 2)
+  put32(arr, r + 16, 3)
+  put32(arr, r + 20, 0x020)
+  put32(arr, r + 24, 14)
+  put32(arr, r + 28, 0x060)
+  // level 2 and 3 of the icon
+  put16(arr, r + 0x020 + 14, 1)
+  put32(arr, r + 0x020 + 16, 1)
+  put32(arr, r + 0x020 + 20, 0x038)
+  put16(arr, r + 0x038 + 14, 1)
+  put32(arr, r + 0x038 + 16, 0)
+  put32(arr, r + 0x038 + 20, 0x0a0)
+  // level 2 and 3 of the group icon
+  put16(arr, r + 0x060 + 14, 1)
+  put32(arr, r + 0x060 + 16, 1)
+  put32(arr, r + 0x060 + 20, 0x078)
+  put16(arr, r + 0x078 + 14, 1)
+  put32(arr, r + 0x078 + 16, 0)
+  put32(arr, r + 0x078 + 20, 0x0b8)
+  // data entries
+  put32(arr, r + 0x0a0, 0x10b0)
+  put32(arr, r + 0x0a4, 8)
+  put32(arr, r + 0x0b8, 0x10c8)
+  put32(arr, r + 0x0bc, 20)
+  // the icon payload
+  put32(arr, r + 0x0b0, 40)
+  // the group icon payload: GRPICONDIR with a single 32x32 entry
+  put16(arr, r + 0x0c8 + 2, 1)
+  put16(arr, r + 0x0c8 + 4, 1)
+  arr[r + 0x0c8 + 6] = 32
+  arr[r + 0x0c8 + 7] = 32
+  put16(arr, r + 0x0c8 + 12, 1)
+  put16(arr, r + 0x0c8 + 14, 32)
+  put32(arr, r + 0x0c8 + 16, 8)
+  put16(arr, r + 0x0c8 + 18, 1)
+  Bytes::from_array(arr)
+}
+
+///|
+test "the PE reader finds the icon of an image" {
+  let pe = @LunaPack.parse_pe(build_test_pe())
+  assert_true(pe.sections.length() == 1)
+  assert_true(pe.resource_rva == 0x1000)
+  match @LunaPack.extract_icon(pe) {
+    Some((group_id, group, icons)) => {
+      assert_true(group_id == 1)
+      assert_true(group.length() == 20)
+      assert_true(icons.length() == 1)
+      assert_true(icons[0].0 == 1)
+      assert_true(icons[0].1.length() == 8)
+    }
+    None => assert_true(false)
+  }
+}
+
+///|
+test "the PE reader reports no icon when there is none" {
+  let pe = @LunaPack.parse_pe(build_test_pe())
+  // Type 16 is the version resource, which is not an icon.
+  match @LunaPack.find_resource(pe, 16, 1, 0) {
+    Some(_) => assert_true(false)
+    None => assert_true(true)
+  }
+}

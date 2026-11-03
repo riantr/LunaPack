@@ -169,6 +169,7 @@ pub async fn bundle(
     }
   }
   let opts2 = with_main_program(opts, main_name)
+  let mut icon_copied = false
   // Build the archive next to the target, then append it to the stub.
   ensure_parent_dir(output_exe)
   let tmp = output_exe + ".lunapack-archive.tmp"
@@ -184,12 +185,26 @@ pub async fn bundle(
   if @fs.exists(output_exe) {
     @fs.remove(output_exe)
   }
-  let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
-  defer out.close()
   match stub {
     Some(s) => {
-      append_file(out, s, 0)
-      let stub_size = @fs.file_size(s)
+      // Write the launcher stub first and close it again: the icon is
+      // written with the Windows resource API, which rewrites the file and
+      // therefore needs it to be closed.
+      {
+        let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
+        defer out.close()
+        append_file(out, s, 0)
+      }
+      // Give the bundle the icon of the application it carries. This has to
+      // happen before the payload is appended, because writing resources
+      // rewrites the file.
+      if copy_icon(input_exe, output_exe) {
+        icon_copied = true
+      }
+      // Finally append the archive. The stub may have grown by the icon.
+      let out = @fs.open(output_exe, mode=@fs.Mode::ReadWrite)
+      defer out.close()
+      let stub_size = @fs.file_size(output_exe)
       append_file(out, tmp, stub_size)
     }
     None => {
@@ -199,6 +214,8 @@ pub async fn bundle(
       println(
         "warning: no native launcher available, the bundle will not extract itself",
       )
+      let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
+      defer out.close()
       append_file(out, input_exe, 0)
       let exe_size = @fs.file_size(input_exe)
       append_file(out, tmp, exe_size)
@@ -206,6 +223,10 @@ pub async fn bundle(
   }
   @fs.remove(tmp)
   println(
-    "bundled " + m.entries.length().to_string() + " files -> " + output_exe,
+    "bundled " +
+    m.entries.length().to_string() +
+    " files -> " +
+    output_exe +
+    (if icon_copied { " (icon copied)" } else { "" }),
   )
 }
