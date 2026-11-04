@@ -70,15 +70,6 @@ jobs:
           - os: ubuntu-latest
             name: Linux
             binary: lunapack-linux-x86_64
-          # The macOS runners are the scarce ones: a tag that is pushed when
-          # none of them is free leaves this leg without a runner. The leg does
-          # not hold the release then: the release is made with the binaries
-          # that were built, and it says which one is missing.
-          - os: macos-15
-            name: macOS
-            binary: lunapack-macos-aarch64
-            continue-on-error: true
-            timeout-minutes: 10
           - os: windows-latest
             name: Windows
             binary: lunapack-windows-x86_64.exe
@@ -143,6 +134,59 @@ jobs:
         with:
           name: binary-${{ matrix.binary }}
           path: dist/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # The macOS binary is built on a runner that is not always there: a tag that
+  # is pushed when no macOS runner is free leaves this job without one. The
+  # job does not hold the release then: the release is made with the binaries
+  # that were built, and its notes name the one that is missing.
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: macOS
+    needs: verify-tag
+    runs-on: macos-15
+    continue-on-error: true
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install MoonBit
+        shell: bash
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        shell: bash
+        run: moon build --release --target native
+
+      - name: Collect the binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "_build/native/release/build/LunaPack.exe" "dist/lunapack-macos-aarch64"
+          chmod +x "dist/lunapack-macos-aarch64" || true
+          ls -la dist/
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          "dist/lunapack-macos-aarch64" --help | tee output.txt
+          grep -q "usage" output.txt
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-lunapack-macos-aarch64
+          path: dist/lunapack-macos-aarch64
           if-no-files-found: error
           retention-days: 7
 
@@ -256,7 +300,7 @@ jobs:
   # ---------------------------------------------------------------------------
   release:
     name: Publish the GitHub Release
-    needs: [verify-tag, build, build-wasm, publish-registry]
+    needs: [verify-tag, build, build-macos, build-wasm, publish-registry]
     runs-on: ubuntu-latest
 
     permissions:
@@ -296,10 +340,7 @@ jobs:
           # release says what it holds instead of pretending to be complete.
           for name in lunapack-linux-x86_64 lunapack-macos-aarch64 lunapack-windows-x86_64.exe lunapack.wasm; do
             if [ ! -f "artifacts/$name" ]; then
-              NOTES="$NOTES
-
-The binary \`$name\` is not part of this release: the runner that builds it was
-not available when the tag was pushed."
+              NOTES="$NOTES"$'\n\n'"The binary $name is not part of this release: the runner that builds it was not available when the tag was pushed."
             fi
           done
           # A tag that already carries a release is reused, so re-running the

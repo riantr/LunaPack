@@ -133,3 +133,26 @@ jobs:
         run: |
           moon info
           git diff --exit-code -- '*.mbti'
+
+      # A workflow file that does not parse is a run that fails before it has
+      # done anything at all, and the failure says nothing about the code. The
+      # syntax is checked here, so that a broken workflow is caught by the
+      # gate instead of by the release it was meant to make.
+      - name: Verify the workflow files
+        shell: bash
+        run: |
+          for f in .github/workflows/*.yml; do
+            if python3 -c 'import yaml' 2>/dev/null; then
+              python3 - "$f" <<'PY'
+          import sys
+          import yaml
+          with open(sys.argv[1], encoding="utf-8") as fh:
+              yaml.safe_load(fh)
+          print("ok", sys.argv[1])
+          PY
+            elif command -v ruby > /dev/null; then
+              ruby -ryaml -e 'YAML.load_file(ARGV[0]); puts "ok #{ARGV[0]}"' "$f"
+            else
+              echo "::warning::no YAML parser on this runner, the workflow files are not checked"
+            fi
+          done
