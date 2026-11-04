@@ -7,7 +7,7 @@ name: Release
 # result is attached to a GitHub Release.
 #
 # The same tag is also published to the Mooncakes registry so that
-# `moonx riantr/LunaPack/cmd/main@latest` resolves.
+# `moonx riantr/LunaPack@latest` resolves.
 
 on:
   push:
@@ -116,10 +116,11 @@ jobs:
         shell: bash
         run: |
           # The build directory also holds intermediate artefacts named
-          # main.core, main.c and so on, so the executable is copied by its
-          # exact name. The toolchain calls it main.exe on every platform.
+          # LunaPack.core, LunaPack.c and so on, so the executable is copied by
+          # its exact name. The toolchain calls it LunaPack.exe on every
+          # platform.
           mkdir -p dist
-          cp "_build/native/release/build/cmd/main/main.exe" "dist/${{ matrix.binary }}"
+          cp "_build/native/release/build/LunaPack.exe" "dist/${{ matrix.binary }}"
           chmod +x "dist/${{ matrix.binary }}" || true
           ls -la dist/
 
@@ -172,9 +173,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp _build/wasm/release/build/cmd/main/main.wasm dist/lunapack.wasm
+          cp _build/wasm/release/build/LunaPack.wasm dist/lunapack.wasm
           # The .core file holds the compiled package the wasm module needs.
-          cp _build/wasm/release/build/cmd/main/main.core dist/lunapack.core
+          cp _build/wasm/release/build/LunaPack.core dist/lunapack.core
           ls -la dist/
 
       - name: Upload the artifact
@@ -187,7 +188,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Publish to the Mooncakes registry, so
-  # `moonx riantr/LunaPack/cmd/main@latest` resolves to this version.
+  # `moonx riantr/LunaPack@latest` resolves to this version.
   # ---------------------------------------------------------------------------
   publish-registry:
     name: Publish to Mooncakes

@@ -11,8 +11,8 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${LUNAPACK_TEST_DIR:-/tmp/lunapack_linux_test}"
-# The toolchain calls the executable main.exe on every platform.
-BIN="$PROJECT_DIR/_build/native/debug/build/cmd/main/main.exe"
+# The toolchain calls the executable LunaPack.exe on every platform.
+BIN="$PROJECT_DIR/_build/native/debug/build/LunaPack.exe"
 
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; exit 1; }

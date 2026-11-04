@@ -4,7 +4,7 @@
 //
 // 1. The `moonx` style, used when the package is published to Mooncakes:
 //
-//      moonx riantr/LunaPack/cmd/main@latest \
+//      moonx riantr/LunaPack@latest \
 //        --input-exe=[input-exe-path] \
 //        --output-exe=[output-exe-path] \
 //        --Files=[Pack-Folder]
@@ -125,7 +125,7 @@ fn flag_values(flags : Array[Flag], key : String) -> Array[String] {
 /// Read the whole content of a file as UTF-8 text.
 async fn read_text_file(path : String) -> String {
   let data = @fs.read_binary(path)
-  @lib.utf8_bytes_to_string(data)
+  utf8_bytes_to_string(data)
 }
 
 ///|
@@ -158,7 +158,7 @@ async fn read_passphrase(flags : Array[Flag]) -> String {
 /// The encryption of the package, from the flags.
 ///
 /// Returns None when the package is not to be encrypted.
-async fn encryption_options(flags : Array[Flag]) -> @lib.EncryptionOptions? {
+async fn encryption_options(flags : Array[Flag]) -> EncryptionOptions? {
   let mut kind = flag_value(flags, "encryption-method")
   if kind == "" {
     kind = flag_value(flags, "encryption")
@@ -166,28 +166,23 @@ async fn encryption_options(flags : Array[Flag]) -> @lib.EncryptionOptions? {
   if kind == "" || kind == "none" {
     return None
   }
-  if kind != @lib.METHOD_X25519 && kind != @lib.METHOD_PASSPHRASE {
+  if kind != METHOD_X25519 && kind != METHOD_PASSPHRASE {
     fail("--encryption-method must be x25519 or passphrase")
   }
   let public_key = flag_value(flags, "public-key")
-  let passphrase = if kind == @lib.METHOD_PASSPHRASE {
+  let passphrase = if kind == METHOD_PASSPHRASE {
     read_passphrase(flags)
   } else {
     ""
   }
-  if kind == @lib.METHOD_X25519 && public_key == "" {
+  if kind == METHOD_X25519 && public_key == "" {
     fail("--encryption-method x25519 needs --public-key")
   }
-  if kind == @lib.METHOD_PASSPHRASE && passphrase == "" {
+  if kind == METHOD_PASSPHRASE && passphrase == "" {
     fail("--encryption-method passphrase needs --passphrase-file")
   }
   Some(
-    @lib.new_encryption_options(
-      kind,
-      public_key,
-      passphrase,
-      @lib.PASSPHRASE_ITERATIONS,
-    ),
+    new_encryption_options(kind, public_key, passphrase, PASSPHRASE_ITERATIONS),
   )
 }
 
@@ -195,10 +190,7 @@ async fn encryption_options(flags : Array[Flag]) -> @lib.EncryptionOptions? {
 /// The key of an encrypted package, from the flags.
 ///
 /// Returns None when the package is not encrypted.
-async fn package_key(
-  flags : Array[Flag],
-  m : @lib.Manifest,
-) -> @lib.PackageKey? {
+async fn package_key(flags : Array[Flag], m : Manifest) -> PackageKey? {
   match m.encryption {
     None => None
     Some(info) => {
@@ -207,18 +199,18 @@ async fn package_key(
       // flag serves both.
       let passphrase = read_passphrase(flags)
       let secret = flag_value(flags, "secret-key")
-      if info.method_name != @lib.METHOD_PASSPHRASE && secret == "" {
+      if info.method_name != METHOD_PASSPHRASE && secret == "" {
         fail("the package is encrypted: it needs --secret-key")
       }
-      Some(@lib.recover_encryption(info, secret, passphrase))
+      Some(recover_encryption(info, secret, passphrase))
     }
   }
 }
 
 ///|
 /// Build the pack options shared by both front ends.
-async fn build_options(flags : Array[Flag]) -> @lib.PackOptions {
-  let empty = @lib.new_pack_options("", "", "", "", None, None, "auto")
+async fn build_options(flags : Array[Flag]) -> PackOptions {
+  let empty = new_pack_options("", "", "", "", None, None, "auto")
   let pre_path = flag_value(flags, "pre-install")
   let post_path = flag_value(flags, "post-install")
   let pre = if pre_path == "" {
@@ -230,7 +222,7 @@ async fn build_options(flags : Array[Flag]) -> @lib.PackOptions {
         return empty
       }
     }
-    Some(@lib.new_script(@lib.script_platform_of(pre_path), body))
+    Some(new_script(script_platform_of(pre_path), body))
   }
   let post = if post_path == "" {
     None
@@ -241,14 +233,14 @@ async fn build_options(flags : Array[Flag]) -> @lib.PackOptions {
         return empty
       }
     }
-    Some(@lib.new_script(@lib.script_platform_of(post_path), body))
+    Some(new_script(script_platform_of(post_path), body))
   }
   // The compression method; `--compression` is the older name of the flag.
   let mut compression = flag_value(flags, "compression-method")
   if compression == "" {
     compression = flag_value(flags, "compression")
   }
-  @lib.new_pack_options(
+  new_pack_options(
     flag_value(flags, "name"),
     flag_value(flags, "version"),
     flag_value(flags, "os"),
@@ -268,9 +260,7 @@ fn usage() -> Unit {
   println("LunaPack - application distribution packer (MoonBit)")
   println("")
   println("usage (moonx):")
-  println(
-    "  moonx riantr/LunaPack/cmd/main@latest --input-exe=[input-exe-path] \\",
-  )
+  println("  moonx riantr/LunaPack@latest --input-exe=[input-exe-path] \\")
   println("       --output-exe=[output-exe-path] --Files=[Pack-Folder]")
   println("")
   println("usage (native):")
@@ -323,12 +313,12 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
     if input_exe == "" {
       "app"
     } else {
-      @lib.basename(input_exe)
+      basename(input_exe)
     }
   } else {
     base.name
   }
-  let opts = @lib.with_defaults(
+  let opts = with_defaults(
     base,
     name,
     if base.version == "" {
@@ -337,27 +327,27 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
       base.version
     },
     if base.os == "" {
-      @lib.host_platform()
+      host_platform()
     } else {
       base.os
     },
     if base.arch == "" {
-      @lib.default_arch()
+      default_arch()
     } else {
       base.arch
     },
   )
   try {
     let opts = match encryption_options(flags) {
-      Some(e) => @lib.with_encryption(opts, e)
+      Some(e) => with_encryption(opts, e)
       None => opts
     }
     if input_exe == "" {
       // No executable given: write a plain archive instead.
       let first = if file_dirs.length() > 0 { file_dirs[0] } else { "." }
-      @lib.pack(first, output_exe, opts)
+      pack(first, output_exe, opts)
     } else {
-      @lib.bundle(
+      bundle(
         input_exe,
         output_exe,
         file_dirs,
@@ -392,10 +382,10 @@ async fn do_pack(args : ArrayView[String]) -> Unit {
   }
   try {
     let base = build_options(flags)
-    let opts = @lib.with_defaults(
+    let opts = with_defaults(
       base,
       if base.name == "" {
-        @lib.basename(input)
+        basename(input)
       } else {
         base.name
       },
@@ -405,21 +395,21 @@ async fn do_pack(args : ArrayView[String]) -> Unit {
         base.version
       },
       if base.os == "" {
-        @lib.host_platform()
+        host_platform()
       } else {
         base.os
       },
       if base.arch == "" {
-        @lib.default_arch()
+        default_arch()
       } else {
         base.arch
       },
     )
     let opts = match encryption_options(flags) {
-      Some(e) => @lib.with_encryption(opts, e)
+      Some(e) => with_encryption(opts, e)
       None => opts
     }
-    @lib.pack(input, output, opts)
+    pack(input, output, opts)
   } catch {
     err => println("error: " + err.to_string())
   }
@@ -441,10 +431,10 @@ async fn do_bundle(args : ArrayView[String]) -> Unit {
   }
   try {
     let base = build_options(flags)
-    let opts = @lib.with_defaults(
+    let opts = with_defaults(
       base,
       if base.name == "" {
-        @lib.basename(input)
+        basename(input)
       } else {
         base.name
       },
@@ -454,21 +444,21 @@ async fn do_bundle(args : ArrayView[String]) -> Unit {
         base.version
       },
       if base.os == "" {
-        @lib.host_platform()
+        host_platform()
       } else {
         base.os
       },
       if base.arch == "" {
-        @lib.default_arch()
+        default_arch()
       } else {
         base.arch
       },
     )
     let opts = match encryption_options(flags) {
-      Some(e) => @lib.with_encryption(opts, e)
+      Some(e) => with_encryption(opts, e)
       None => opts
     }
-    @lib.bundle(
+    bundle(
       input,
       output,
       flag_values(flags, "Files"),
@@ -493,9 +483,9 @@ async fn do_unpack(args : ArrayView[String]) -> Unit {
   }
   let skip = flag_has(flags, "skip-scripts")
   try {
-    let m = @lib.read_package_manifest(input)
+    let m = read_package_manifest(input)
     let key = package_key(flags, m)
-    @lib.unpack(input, output, !skip, key)
+    unpack(input, output, !skip, key)
   } catch {
     err => println("error: " + err.to_string())
   }
@@ -516,11 +506,11 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
   try {
     let flags = parse_flags(args, 1)
     let extracted = flag_value(flags, "extracted")
-    let m = @lib.read_package_manifest(args[1])
+    let m = read_package_manifest(args[1])
     let key = package_key(flags, m)
-    let ok = @lib.verify(args[1], key)
+    let ok = verify(args[1], key)
     if extracted != "" {
-      if @lib.verify_extracted_dir(args[1], extracted) {
+      if verify_extracted_dir(args[1], extracted) {
         println("VERIFY OK")
       } else {
         println("VERIFY FAILED")
@@ -554,14 +544,14 @@ async fn do_keygen(args : ArrayView[String]) -> Unit {
     return
   }
   try {
-    let secret = @lib.random_bytes(32)
-    let public = @lib.x25519_public_key(secret)
-    @lib.save_public_key(public_path, public)
+    let secret = random_bytes(32)
+    let public = x25519_public_key(secret)
+    save_public_key(public_path, public)
     let passphrase = read_passphrase(flags)
     if passphrase == "" {
-      @lib.save_secret_key_raw(secret_path, secret)
+      save_secret_key_raw(secret_path, secret)
     } else {
-      @lib.save_secret_key(secret_path, secret, passphrase)
+      save_secret_key(secret_path, secret, passphrase)
     }
     println("wrote the public key to " + public_path)
     println("wrote the secret key to " + secret_path)
@@ -579,7 +569,7 @@ async fn do_info(args : ArrayView[String]) -> Unit {
     return
   }
   try {
-    let m = @lib.read_package_manifest(args[1])
+    let m = read_package_manifest(args[1])
     println("name:         " + m.name)
     println("version:      " + m.version)
     println("format:       v" + m.format_version.to_string())
@@ -639,7 +629,7 @@ async fn do_info(args : ArrayView[String]) -> Unit {
 async fn main {
   // A self-extracting bundle carries its payload inside this executable:
   // start the bundled program instead of acting as a command line tool.
-  let launched = @lib.try_launch_self_extracting() catch {
+  let launched = try_launch_self_extracting() catch {
     err => {
       println("LunaPack: cannot start the bundled program: " + err.to_string())
       false
