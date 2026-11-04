@@ -183,11 +183,24 @@ pass "the lz4 codec round-trips"
 section "corruption detection"
 cp "$WORK_DIR/pkg.appkg" "$WORK_DIR/bad.appkg"
 python3 - "$WORK_DIR/bad.appkg" <<'PY'
-import sys
+import json, struct, sys
 p = sys.argv[1]
-b = bytearray(open(p, "rb").read())
-b[30] ^= 0xFF
-open(p, "wb").write(b)
+d = bytearray(open(p, "rb").read())
+# The manifest is at the end of the file: the magic, the offset and the
+# length of the manifest.
+mlen = struct.unpack_from("<q", d, len(d) - 8)[0]
+m = json.loads(d[len(d) - 24 - mlen:len(d) - 24].decode("utf-8"))
+# The checksum of an entry covers the content, not the compressed form, so
+# the byte that is flipped has to be one that the content is built from: the
+# data of a stored entry, or the deflate stream of a compressed one. The
+# header of a gzip stream carries a timestamp that no checksum covers.
+for e in m["entries"]:
+    at = e["offset"] + (16 if e["codec"] == "gzip" else 0)
+    if at < e["offset"] + e["stored_size"]:
+        d[at] ^= 0xFF
+        print(f"flipped a byte of {e['path']} at {at}")
+        break
+open(p, "wb").write(d)
 PY
 if "$BIN" verify "$WORK_DIR/bad.appkg" | grep -q "VERIFY FAILED"; then
   pass "corrupted package is rejected"
