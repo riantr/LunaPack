@@ -124,6 +124,35 @@ cmp "$WORK_DIR/myapp" "$WORK_DIR/bundle_out/myapp" \
 # next to the main program.
 diff -r --exclude=myapp "$WORK_DIR/src" "$WORK_DIR/bundle_out" \
   || fail "bundled resources did not round-trip"
+
+# The bundle subcommand makes the same thing without the flags of the
+# moonx front end.
+"$BIN" bundle -i "$WORK_DIR/myapp" -o "$WORK_DIR/dist/myapp2" \
+  --Files "$WORK_DIR/src" > /dev/null
+[ -f "$WORK_DIR/dist/myapp2" ] || fail "the bundle subcommand made nothing"
+"$BIN" verify "$WORK_DIR/dist/myapp2" >/dev/null \
+  || fail "the bundle of the subcommand does not verify"
+pass "the bundle subcommand makes a bundle"
+
+# A launcher can be named, so that a bundle can be made for another
+# machine than the one that makes it.
+cp "$BIN" "$WORK_DIR/launcher"
+"$BIN" bundle -i "$WORK_DIR/myapp" -o "$WORK_DIR/dist/myapp3" \
+  --Files "$WORK_DIR/src" --launcher "$WORK_DIR/launcher" > /dev/null
+# The bundle starts with the launcher that was named.
+head -c "$(wc -c < "$WORK_DIR/launcher")" "$WORK_DIR/dist/myapp3" \
+  > "$WORK_DIR/head.bin"
+cmp "$WORK_DIR/launcher" "$WORK_DIR/head.bin" \
+  || fail "the named launcher is not the head of the bundle"
+pass "a named launcher is used"
+
+# A launcher that does not exist is refused.
+if "$BIN" bundle -i "$WORK_DIR/myapp" -o "$WORK_DIR/dist/myapp4" \
+     --launcher "$WORK_DIR/nothing-here" 2>&1 | grep -q "error:"; then
+  pass "a launcher that does not exist is refused"
+else
+  fail "a launcher that does not exist was NOT refused"
+fi
 pass "bundle round-trips byte-identically"
 
 section "md5 fingerprints"
