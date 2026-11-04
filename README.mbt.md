@@ -34,11 +34,11 @@ Prebuilt binaries are attached to every
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 
 The release is built by a GitHub workflow when a version tag such as
-`v0.1.2` is pushed; the same version is published to the Mooncakes registry,
+`v0.1.3` is pushed; the same version is published to the Mooncakes registry,
 so `moonx riantr/LunaPack/cmd/main@latest` resolves to it.
 
 The registry requires a `0.x.y` version while it is in its early stage, so
-the releases are numbered `0.1.0`, `0.1.1`, `0.1.2` and so on.
+the releases are numbered `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3` and so on.
 
 ## Usage
 
