@@ -1,84 +1,24 @@
 // Platform detection, path helpers and shell selection.
 //
-// The *host* platform is resolved at compile time, but every downstream
-// decision is driven by a plain platform string. That keeps the Unix code
-// path compiled - and unit-testable - on any host.
-
-///|
-/// The platform this binary was compiled for.
-#cfg(all(target="native", platform="windows"))
-fn compiled_platform() -> String {
-  "windows"
-}
-
-///|
-#cfg(all(target="native", platform="linux"))
-fn compiled_platform() -> String {
-  "linux"
-}
-
-///|
-#cfg(all(target="native", platform="macos"))
-fn compiled_platform() -> String {
-  "macos"
-}
-
-///|
-#cfg(target="wasm")
-fn compiled_platform() -> String {
-  "wasm"
-}
-
-///|
-#cfg(target="llvm")
-fn compiled_platform() -> String {
-  "llvm"
-}
-
-///|
-/// Does the environment variable `key` exist?
-fn env_has(key : String) -> Bool {
-  match @env.get_env_var(key) {
-    Some(_) => true
-    None => false
-  }
-}
-
-///|
-/// Does the environment variable `key` contain `needle`?
-fn env_contains(key : String, needle : String) -> Bool {
-  match @env.get_env_var(key) {
-    Some(v) => v.contains(needle)
-    None => false
-  }
-}
-
-///|
-/// Detect the host OS from environment variables.
-///
-/// Under Wasm the compile-time platform is "wasm", but the program still runs
-/// on a real operating system, so the environment is consulted instead.
-fn detect_platform_from_env() -> String {
-  if env_contains("OS", "Windows") || env_has("COMSPEC") {
-    "windows"
-  } else if env_contains("OSTYPE", "darwin") ||
-    env_contains("HOSTTYPE", "darwin") {
-    "macos"
-  } else if env_has("HOME") || env_has("OSTYPE") || env_has("HOSTTYPE") {
-    "linux"
-  } else {
-    "unknown"
-  }
-}
+// The host platform is resolved at *runtime* through the platform the async
+// runtime reports, and every downstream decision is driven by a plain platform
+// string. That keeps the Unix code path compiled - and unit-testable - on any
+// host.
+//
+// Runtime detection is used rather than a compile-time `#cfg(platform=...)`
+// because the compiler only documents "windows" as a platform value; the
+// runtime enum knows Linux, macOS and Windows and also works under the Wasm
+// backend, where the same binary can run on any operating system.
 
 ///|
 /// Name of the platform the program is running on.
+///
+/// One of "windows", "linux", "macos" or "unknown".
 pub fn host_platform() -> String {
-  let c = compiled_platform()
-  if c == "windows" || c == "linux" || c == "macos" {
-    c
-  } else {
-    detect_platform_from_env()
+  match @async_rt.platform {
+    Linux => "linux"
+    MacOS => "macos"
+    Windows => "windows"
   }
 }
 

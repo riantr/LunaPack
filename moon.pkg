@@ -3,16 +3,13 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
+  "moonbitlang/async" @async_rt,
   "moonbitlang/async/fs",
   "moonbitlang/async/gzip",
   "moonbitlang/async/io",
   "moonbitlang/async/shell",
   "moonbitlang/async/process",
 }
-
-import {
-  "moonbitlang/core/async",
-} for "test"
 
 supported_targets = "native+wasm"
 

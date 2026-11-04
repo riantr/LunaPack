@@ -1,0 +1,127 @@
+name: CI
+
+# Continuous integration: build and test the project on every supported
+# platform. This is the gate that keeps a release honest, so it runs on every
+# push and on every pull request.
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build and test on every platform we ship a binary for.
+  # ---------------------------------------------------------------------------
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+          - os: macos-15
+            name: macOS
+          - os: windows-latest
+            name: Windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # The MoonBit toolchain is installed with the official script. The
+      # Windows installer honours $env:MOONBIT_INSTALL_VERSION, the Unix one
+      # honours $MOONBIT_INSTALL_VERSION; both read the same variable name.
+      - name: Install MoonBit (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Install MoonBit (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Show toolchain versions
+        shell: bash
+        run: moon version --all
+
+      # Fetch the dependencies declared in moon.mod. The vendored .mooncakes/
+      # directory is not committed, so this needs the registry.
+      - name: Update dependencies
+        shell: bash
+        run: moon update
+
+      - name: Check
+        shell: bash
+        run: moon check --target native
+
+      - name: Test
+        shell: bash
+        run: moon test --target native
+
+      - name: Build (release)
+        shell: bash
+        run: moon build --release --target native
+
+      # The Wasm backend is what `moonx` runs, so it is verified as well.
+      - name: Build (wasm)
+        shell: bash
+        run: moon build --release --target wasm
+
+  # ---------------------------------------------------------------------------
+  # The source must be formatted and its generated interface up to date.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Formatting and generated files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit
+        shell: bash
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Update dependencies
+        shell: bash
+        run: moon update
+
+      - name: Verify formatting
+        shell: bash
+        run: moon fmt --check
+
+      # `moon info` regenerates the .mbti interface files; a diff means the
+      # committed interface is stale.
+      - name: Verify the generated interface
+        shell: bash
+        run: |
+          moon info
+          git diff --exit-code -- '*.mbti'

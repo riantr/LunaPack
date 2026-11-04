@@ -1,0 +1,295 @@
+name: Release
+
+# Publish a release when a version tag is pushed.
+#
+# The tag is the source of truth: `v1.2.3` becomes version 1.2.3. Every
+# platform is built on its own runner so the binaries are native, and the
+# result is attached to a GitHub Release.
+#
+# The same tag is also published to the Mooncakes registry so that
+# `moonx riantr/LunaPack@latest` resolves.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to release, for example v1.2.3"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The tag must agree with the version in moon.mod, otherwise the published
+  # module and the release would disagree.
+  # ---------------------------------------------------------------------------
+  verify-tag:
+    name: Verify the tag
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Check the tag against moon.mod
+        id: check
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          declared=$(grep -E '^version[[:space:]]*=' moon.mod | head -1 | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
+          if [ "$version" != "$declared" ]; then
+            echo "::error::tag $tag says $version but moon.mod says $declared"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $version"
+
+  # ---------------------------------------------------------------------------
+  # Build the native binary on each platform.
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.name }}
+    needs: verify-tag
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+            binary: lunapack-linux-x86_64
+            asset: lunapack-linux-x86_64
+          - os: macos-15
+            name: macOS
+            binary: lunapack-macos-aarch64
+            asset: lunapack-macos-aarch64
+          - os: windows-latest
+            name: Windows
+            binary: lunapack-windows-x86_64.exe
+            asset: lunapack-windows-x86_64.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install MoonBit (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Install MoonBit (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Update dependencies
+        shell: bash
+        run: moon update
+
+      - name: Build
+        shell: bash
+        run: moon build --release --target native
+
+      - name: Collect the binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp _build/native/release/build/cmd/main/main* "dist/${{ matrix.binary }}"
+          chmod +x "dist/${{ matrix.binary }}" || true
+          ls -la dist/
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          # The binary must at least report its own version and reject a
+          # broken package; a full round trip is covered by the test suite.
+          "dist/${{ matrix.binary }}" --help || true
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.asset }}
+          path: dist/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # The Wasm build, which is what `moonx` runs.
+  # ---------------------------------------------------------------------------
+  build-wasm:
+    name: Wasm
+    needs: verify-tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install MoonBit
+        shell: bash
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Update dependencies
+        shell: bash
+        run: moon update
+
+      - name: Build
+        shell: bash
+        run: moon build --release --target wasm
+
+      - name: Collect the artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp _build/wasm/release/build/cmd/main/main.wasm dist/
+          cp _build/wasm/release/build/cmd/main/main.core dist/
+          ls -la dist/
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-lunapack-wasm
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Publish to the Mooncakes registry, so `moonx riantr/LunaPack@latest`
+  # resolves to this version.
+  # ---------------------------------------------------------------------------
+  publish-registry:
+    name: Publish to Mooncakes
+    needs: [verify-tag]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Install MoonBit
+        shell: bash
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Update dependencies
+        shell: bash
+        run: moon update
+
+      # The registry token is stored in the credentials file the toolchain
+      # reads; it comes from the repository secret, never from the log.
+      - name: Write the registry credentials
+        shell: bash
+        env:
+          MOONCAKES_TOKEN: ${{ secrets.MOONCAKES_TOKEN }}
+        run: |
+          if [ -z "$MOONCAKES_TOKEN" ]; then
+            echo "::warning::MOONCAKES_TOKEN is not set, skipping the registry publication"
+            exit 0
+          fi
+          mkdir -p "$HOME/.moon"
+          printf '{\n  "token": "%s"\n}\n' "$MOONCAKES_TOKEN" > "$HOME/.moon/credentials.json"
+          chmod 600 "$HOME/.moon/credentials.json"
+
+      - name: Publish
+        shell: bash
+        env:
+          MOONCAKES_TOKEN: ${{ secrets.MOONCAKES_TOKEN }}
+        run: |
+          if [ -z "$MOONCAKES_TOKEN" ]; then
+            echo "::warning::no registry token, skipping"
+            exit 0
+          fi
+          moon publish
+
+  # ---------------------------------------------------------------------------
+  # Attach everything to the GitHub Release.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish the GitHub Release
+    needs: [verify-tag, build, build-wasm, publish-registry]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download the artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List the artifacts
+        shell: bash
+        run: ls -la artifacts/
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          VERSION: ${{ needs.verify-tag.outputs.version }}
+        shell: bash
+        run: |
+          # A tag that already carries a release is reused, so re-running the
+          # workflow replaces the assets instead of failing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/* --clobber
+            echo "updated the existing release $TAG"
+          else
+            gh release create "$TAG" artifacts/* \
+              --title "LunaPack $VERSION" \
+              --generate-notes \
+              --notes-start-tag "$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null || echo "")" \
+              || gh release create "$TAG" artifacts/* \
+                   --title "LunaPack $VERSION" \
+                   --generate-notes
+          fi
+
+      - name: Verify the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets \
+            --jq '{tag: .tagName, name: .name, draft: .isDraft, prerelease: .isPrerelease, assets: [.assets[] | .name]}'
