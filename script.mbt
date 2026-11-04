@@ -51,7 +51,7 @@ async fn write_script(
 ) -> String {
   let (_, _, ext) = shell_for(platform)
   let path = dest + "/.lunapack_" + kind + ext
-  @fs.write_file(path, string_to_utf8_bytes(script.body))
+  @fs.write_binary(path, string_to_utf8_bytes(script.body))
   // Make the script executable on POSIX; a no-op on Windows.
   set_permissions(platform, path, 0o755)
   path

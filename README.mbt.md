@@ -34,7 +34,7 @@ Prebuilt binaries are attached to every
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 
 The release is built by a GitHub workflow when a version tag such as
-`v0.1.1` is pushed; the same version is published to the Mooncakes registry,
+`v0.1.2` is pushed; the same version is published to the Mooncakes registry,
 so `moonx riantr/LunaPack/cmd/main@latest` resolves to it.
 
 The registry requires a `0.x.y` version while it is in its early stage, so
@@ -130,6 +130,10 @@ moon build --release
 
 The toolchain calls the executable `main.exe` on every platform, Windows
 included, so the path is the same everywhere.
+
+The package has **no dependencies**: everything it needs comes with the
+MoonBit toolchain, so there is nothing to download and `moon update` is not
+needed.
 
 ```
 lunapack pack   -i <input_dir> -o <output.appkg> [options]
@@ -270,6 +274,9 @@ The module publishes with `supported_targets = "native+wasm"`; `moonx` runs
 the Wasm build, which reads and writes the real filesystem through the MoonBit
 runtime.
 
+Because the package has no dependencies, the published module carries none
+either: nothing has to be resolved when it is fetched.
+
 ## Install scripts
 
 The script body is stored verbatim inside the manifest together with the
@@ -391,3 +398,7 @@ CI runs it on the Linux runner.
 - Copying the icon is Windows only, because an icon is a Windows resource.
 - Bundling writes the archive to a temporary file next to the output, so
   there must be enough free disk space for it.
+- The package is built on `moonbitlang/core/async`, which the toolchain
+  ships as an experimental package. The MoonBit developers have confirmed
+  that the stable releases will use it, so the package follows the toolchain
+  rather than pinning an older release of the runtime.

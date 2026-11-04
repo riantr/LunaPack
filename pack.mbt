@@ -31,7 +31,7 @@ pub async fn collect_files(root : String) -> Array[String] {
 /// The file is read as a whole, so it needs to fit in memory; that is the
 /// same limitation the packing code has.
 pub async fn file_md5_hex(path : String) -> String {
-  md5_hex(@fs.read_file(path).binary())
+  md5_hex(@fs.read_binary(path))
 }
 
 ///|
@@ -71,8 +71,7 @@ async fn write_archive(
   let mut scanned = 0
   for it in items {
     let (src, target) = it
-    let data = @fs.read_file(src)
-    let raw = data.binary()
+    let raw = @fs.read_binary(src)
     let sum = sha256_hex(raw)
     let fingerprint = md5_hex(raw)
     // The scan list shows the fingerprint of every file before it goes into

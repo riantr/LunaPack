@@ -194,9 +194,9 @@ async test "compression is skipped when it does not help" {
 ///|
 async test "pack produces a manifest that round-trips" {
   let src = @fs.tmpdir(prefix="lunapack_src")
-  @fs.write_file(src + "/hello.txt", "hello")
+  @fs.write_text(src + "/hello.txt", "hello")
   @fs.mkdir(src + "/sub", recursive=true, allow_exist=true)
-  @fs.write_file(src + "/sub/nested.txt", "nested")
+  @fs.write_text(src + "/sub/nested.txt", "nested")
   let outdir = @fs.tmpdir(prefix="lunapack_out")
   let pkg = outdir + "/test.appkg"
   let opts = @LunaPack.new_pack_options(
@@ -241,9 +241,9 @@ async test "pack produces a manifest that round-trips" {
 ///|
 async test "unpack restores the original tree" {
   let src = @fs.tmpdir(prefix="lunapack_src")
-  @fs.write_file(src + "/hello.txt", "hello")
+  @fs.write_text(src + "/hello.txt", "hello")
   @fs.mkdir(src + "/sub", recursive=true, allow_exist=true)
-  @fs.write_file(src + "/sub/nested.txt", "nested")
+  @fs.write_text(src + "/sub/nested.txt", "nested")
   let outdir = @fs.tmpdir(prefix="lunapack_out")
   let pkg = outdir + "/test.appkg"
   let dest = outdir + "/unpacked"
@@ -258,10 +258,10 @@ async test "unpack restores the original tree" {
   )
   @LunaPack.pack(src, pkg, opts)
   @LunaPack.unpack(pkg, dest, false)
-  let a = @fs.read_file(dest + "/hello.txt")
-  assert_true(@LunaPack.utf8_bytes_to_string(a.binary()) == "hello")
-  let b = @fs.read_file(dest + "/sub/nested.txt")
-  assert_true(@LunaPack.utf8_bytes_to_string(b.binary()) == "nested")
+  let a = @fs.read_binary(dest + "/hello.txt")
+  assert_true(@LunaPack.utf8_bytes_to_string(a) == "hello")
+  let b = @fs.read_binary(dest + "/sub/nested.txt")
+  assert_true(@LunaPack.utf8_bytes_to_string(b) == "nested")
 }
 
 ///|
@@ -274,17 +274,17 @@ async test "posix install script runs through sh" {
   )
   let st = @LunaPack.run_install_script("linux", "pre_install", script, dir)
   assert_true(st == 0)
-  let out = @fs.read_file(dir + "/out.txt")
-  assert_true(@LunaPack.utf8_bytes_to_string(out.binary()) == "ran-pre_install")
+  let out = @fs.read_binary(dir + "/out.txt")
+  assert_true(@LunaPack.utf8_bytes_to_string(out) == "ran-pre_install")
 }
 
 ///|
 async test "bundle appends an archive to the executable" {
   let src = @fs.tmpdir(prefix="lunapack_src")
   let app = src + "/app.exe"
-  @fs.write_file(app, "pretend this is an executable")
+  @fs.write_text(app, "pretend this is an executable")
   let res = @fs.tmpdir(prefix="lunapack_res")
-  @fs.write_file(res + "/data.txt", "resource")
+  @fs.write_text(res + "/data.txt", "resource")
   let outdir = @fs.tmpdir(prefix="lunapack_out")
   let bundle_path = outdir + "/app.exe"
   let opts = @LunaPack.new_pack_options(
@@ -299,8 +299,8 @@ async test "bundle appends an archive to the executable" {
   @LunaPack.bundle(app, bundle_path, [res], opts)
   // The bundle is the launcher stub with the archive appended, so it is
   // larger than the application it carries.
-  let app_bytes = @fs.read_file(app).binary()
-  let bundle_bytes = @fs.read_file(bundle_path).binary()
+  let app_bytes = @fs.read_binary(app)
+  let bundle_bytes = @fs.read_binary(bundle_path)
   assert_true(bundle_bytes.length() > app_bytes.length())
   // The manifest must be reachable inside the bundle.
   let m = @LunaPack.read_package_manifest(bundle_path)
@@ -309,15 +309,14 @@ async test "bundle appends an archive to the executable" {
   // And the payload must extract byte-identically.
   let dest = outdir + "/extracted"
   @LunaPack.unpack(bundle_path, dest, false)
-  let a = @fs.read_file(dest + "/app.exe")
+  let a = @fs.read_binary(dest + "/app.exe")
   assert_true(
-    @LunaPack.utf8_bytes_to_string(a.binary()) ==
-    "pretend this is an executable",
+    @LunaPack.utf8_bytes_to_string(a) == "pretend this is an executable",
   )
   // A single --Files directory is stored at the archive root, next to the
   // main program, so the extracted application is directly runnable.
-  let b = @fs.read_file(dest + "/data.txt")
-  assert_true(@LunaPack.utf8_bytes_to_string(b.binary()) == "resource")
+  let b = @fs.read_binary(dest + "/data.txt")
+  assert_true(@LunaPack.utf8_bytes_to_string(b) == "resource")
 }
 
 ///|

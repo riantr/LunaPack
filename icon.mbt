@@ -40,7 +40,7 @@ fn utf16_z(s : String) -> Bytes {
 /// Returns true when the icon was copied.
 #cfg(platform="windows")
 pub async fn copy_icon(source_exe : String, target_exe : String) -> Bool {
-  let data = @fs.read_file(source_exe).binary()
+  let data = @fs.read_binary(source_exe)
   // A source that is not a PE image, or that carries no icon, simply means
   // there is nothing to copy.
   let pe = parse_pe(data) catch { _ => return false }
