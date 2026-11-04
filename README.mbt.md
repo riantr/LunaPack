@@ -60,6 +60,12 @@ The result is a **self-extracting bundle**: the LunaPack launcher with the
 archive appended, exactly the trick a WinRAR or 7-Zip self-extracting archive
 uses.
 
+> The bundle is self-extracting only when it is produced by a **native**
+> LunaPack binary, because the launcher stub is the binary itself. A bundle
+> produced through `moonx` runs on WebAssembly and therefore carries the
+> payload without a native launcher; use the native binary to get a
+> self-extracting file.
+
 ```
 myapp.exe  =  [ LunaPack launcher ]  +  [ archive: myapp.exe, res/app.cfg, ... ]
 ```
@@ -166,6 +172,15 @@ archive next to the main program, so the extracted application is directly
 runnable. With several `--Files` directories each one gets a subdirectory
 named after it. The main program is never stored twice, even when it also
 lives inside the `--Files` folder.
+
+The binary to use is the one from the release, not `moonx`:
+
+```cmd
+D://src//WorkBuddy//Moonbit//LunaPack//_build//native//release//build//cmd//main//main.exe ^
+  --input-exe="D://zkhongtuo//src//MOlabeler_V2.6//bin//x64//Release//net10.0-windows10.0.22000.0//BRLabeler.exe" ^
+  --output-exe="D://zkhongtuo//src//MOLabeler_V2.6//bin//BRLabeler.exe" ^
+  --Files="D://zkhongtuo//src//MOlabeler_V2.6//bin//x64//Release//net10.0-windows10.0.22000.0"
+```
 
 ## Publishing to Mooncakes
 
