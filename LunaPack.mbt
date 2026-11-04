@@ -11,10 +11,17 @@
 ///|
 /// Magic marker at the head and inside the footer of every .appkg file.
 /// v2 = SHA-256 checksums + optional gzip compression + install scripts.
+///
+/// The marker names the *container* layout, which did not change when the
+/// MD5 fingerprint was added: the fingerprint is stored in the manifest and
+/// is optional, so a package written by an older version still unpacks and a
+/// newer version still reads an older package.
 pub const MAGIC : String = "APPKGD02"
 
 ///|
 /// Format version recorded in the manifest.
+///
+/// v3 adds the MD5 fingerprint of every entry next to its SHA-256 checksum.
 pub const FORMAT_VERSION : Int32 = 3
 
 ///|

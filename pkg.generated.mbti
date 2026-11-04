@@ -4,7 +4,7 @@ package "riantr/LunaPack"
 // Values
 pub const CHECKSUM_ALGO : String = "sha256"
 
-pub const FORMAT_VERSION : Int32 = 2
+pub const FORMAT_VERSION : Int32 = 3
 
 pub const MAGIC : String = "APPKGD02"
 
@@ -34,6 +34,8 @@ pub fn extract_icon(PeFile) -> (Int64, Bytes, Array[(Int64, Bytes)])? raise
 
 pub async fn extract_to(String, String) -> Unit
 
+pub async fn file_md5_hex(String) -> String
+
 pub fn find_resource(PeFile, Int64, Int64, Int64) -> (Int64, Int64)? raise
 
 pub async fn gzip_compress(Bytes) -> Bytes
@@ -56,6 +58,10 @@ pub fn magic_bytes() -> Bytes
 
 pub fn manifest_to_json(Manifest) -> String
 
+pub fn md5_hex(Bytes) -> String
+
+pub fn md5_hex_of_string(String) -> String
+
 pub fn new_pack_options(String, String, String, String, Script?, Script?, String) -> PackOptions
 
 pub fn new_script(String, String) -> Script
@@ -77,6 +83,8 @@ pub fn read_at(PeFile, Int64, Int64) -> Bytes
 pub async fn read_package_manifest(String) -> Manifest
 
 pub fn relpath(String, String) -> String
+
+pub async fn report_output_md5(String) -> Unit
 
 pub async fn run_install_script(String, String, Script, String) -> Int32
 
@@ -116,6 +124,7 @@ pub struct Entry {
   stored_size : Int64
   codec : String
   checksum : String
+  md5 : String
   offset : Int64
 }
 
