@@ -942,11 +942,12 @@ developer machine without a POSIX shell, not the code.
 
 The end-to-end suite needs a real POSIX host, because it runs the install
 scripts and checks the permission bits, so CI runs it on the Linux runner. It
-has **17 sections**: the environment, the build, the unit tests, the fixture,
+has **19 sections**: the environment, the build, the unit tests, the fixture,
 packing, the manifest, the checksums, the unpack, the content integrity, the
 executable bit, compression, the bundle, the MD5 fingerprints, the LZ4 codec,
-the encryption, the corruption detection and `--skip-scripts`. It compares the
-bundled executable with the original byte for byte.
+the encryption, the corruption detection, the integrity of the manifest, the
+signature of the host and `--skip-scripts`. It compares the bundled
+executable with the original byte for byte.
 
 The unit tests cover the LZ4 implementation as well: the round trip for every
 shape of payload — empty, short, repetitive, random, a sentence, a sentence
