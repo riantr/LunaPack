@@ -354,7 +354,7 @@ async test "bundle appends an archive to the executable" {
     None,
     "auto",
   )
-  @LunaPack.bundle(app, bundle_path, [res], opts)
+  @LunaPack.bundle(app, bundle_path, [res], opts, "")
   // The bundle is the launcher stub with the archive appended, so it is
   // larger than the application it carries.
   let app_bytes = @fs.read_binary(app)
@@ -534,4 +534,94 @@ test "the PE reader reports no icon when there is none" {
     Some(_) => assert_true(false)
     None => assert_true(true)
   }
+}
+
+///|
+/// The launcher that the archive is appended to can be named, so that a
+/// bundle can be made for a machine other than the one that makes it.
+async test "bundle uses the launcher that is named" {
+  let src = @fs.tmpdir(prefix="lunapack_src")
+  let app = src + "/app.exe"
+  @fs.write_text(app, "the program")
+  let launcher = src + "/launcher.exe"
+  @fs.write_text(launcher, "the launcher")
+  let outdir = @fs.tmpdir(prefix="lunapack_out")
+  let bundle_path = outdir + "/app.exe"
+  let opts = @LunaPack.new_pack_options(
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+    None,
+    None,
+    "auto",
+  )
+  @LunaPack.bundle(app, bundle_path, [], opts, launcher)
+  // The bundle starts with the launcher that was named.
+  let head = @fs.read_binary(bundle_path)
+  let launcher_bytes = @fs.read_binary(launcher)
+  assert_true(head.length() > launcher_bytes.length())
+  let mut same = true
+  let mut i = 0
+  while i < launcher_bytes.length() {
+    if head.at(i) != launcher_bytes.at(i) {
+      same = false
+    }
+    i = i + 1
+  }
+  assert_true(same)
+}
+
+///|
+/// A launcher that does not exist is refused, rather than producing a file
+/// that cannot start itself.
+async test "bundle refuses a launcher that does not exist" {
+  let src = @fs.tmpdir(prefix="lunapack_src")
+  let app = src + "/app.exe"
+  @fs.write_text(app, "the program")
+  let outdir = @fs.tmpdir(prefix="lunapack_out")
+  let opts = @LunaPack.new_pack_options(
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+    None,
+    None,
+    "auto",
+  )
+  let failed = try {
+    @LunaPack.bundle(
+      app,
+      outdir + "/app.exe",
+      [],
+      opts,
+      src + "/nothing-here.exe",
+    )
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(failed)
+}
+
+///|
+/// The subsystem of a PE image is read from its header.
+test "the subsystem of a PE image is read" {
+  // A minimal PE header: the MZ signature, the offset of the PE header
+  // and the subsystem field of the optional header.
+  let data = FixedArray::make(0x100, b'\x00')
+  data[0] = b'M'
+  data[1] = b'Z'
+  // The PE header sits at 0x80.
+  data[0x3c] = 0x80
+  data[0x80] = b'P'
+  data[0x81] = b'E'
+  // The subsystem is at offset 68 of the optional header, which starts
+  // 24 bytes after the PE signature.
+  data[0x80 + 24 + 68] = 3
+  assert_true(@LunaPack.pe_subsystem(Bytes::from_array(data[:])) == 3)
+  data[0x80 + 24 + 68] = 2
+  assert_true(@LunaPack.pe_subsystem(Bytes::from_array(data[:])) == 2)
+  // Something that is not a PE image has no subsystem.
+  assert_true(@LunaPack.pe_subsystem(Bytes::from_array([b'x', b'y'])) == 0)
 }

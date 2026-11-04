@@ -226,19 +226,27 @@ async fn append_file(
 /// Bundle `input_exe` together with the contents of every directory in
 /// `file_dirs` into the single file `output_exe`.
 ///
-/// The result is the original executable with a LunaPack archive appended, so
-/// it stays a runnable executable while carrying the extra files. Use
-/// `unpack` on the result to extract the payload again.
+/// The result is a launcher with a LunaPack archive appended, so it stays a
+/// runnable executable while carrying the extra files. Starting it unpacks
+/// the archive and starts the program it carries. Use `unpack` on the result
+/// to extract the payload again.
 ///
 /// The contents of a single `--Files` directory land at the root of the
 /// archive, next to the main program, so an extracted application is directly
 /// runnable. With several directories each one gets a subdirectory named after
 /// it, to keep the paths unique.
+///
+/// `launcher` names the executable that the archive is appended to. It is
+/// the running program itself when it is empty, which is the right choice
+/// when the bundle is made for the machine that makes it. A different one is
+/// needed when the bundle is made for another machine: the launcher has to
+/// run there, so it has to be built for there.
 pub async fn bundle(
   input_exe : String,
   output_exe : String,
   file_dirs : Array[String],
   opts : PackOptions,
+  launcher : String,
 ) -> Unit {
   let exe_real = norm_sep(@fs.realpath(input_exe))
   let items = []
@@ -260,17 +268,35 @@ pub async fn bundle(
   }
   let opts2 = with_main_program(opts, main_name)
   let mut icon_copied = false
+  let mut subsystem_copied = false
   // Build the archive next to the target, then append it to the stub.
   ensure_parent_dir(output_exe)
   let tmp = output_exe + ".lunapack-archive.tmp"
   let m = write_archive(items, tmp, opts2, None)
-  // The stub that makes the result runnable is the LunaPack executable
-  // itself: starting it notices the appended archive, extracts the payload
-  // and starts the bundled program. That is the same trick a WinRAR or 7-Zip
+  // The stub that makes the result runnable is a LunaPack executable:
+  // starting it notices the appended archive, extracts the payload and
+  // starts the bundled program. That is the same trick a WinRAR or 7-Zip
   // self-extracting archive uses.
-  let stub = match current_exe_path() {
-    Some(p) => if is_native_target() && @fs.exists(p) { Some(p) } else { None }
-    None => None
+  //
+  // The one that runs on this machine is the right one for a bundle that is
+  // made for this machine. A bundle for another machine needs a launcher
+  // that was built for that one, which is what `launcher` names.
+  let stub = if launcher != "" {
+    if @fs.exists(launcher) {
+      Some(launcher)
+    } else {
+      fail("the launcher " + launcher + " does not exist")
+    }
+  } else {
+    match current_exe_path() {
+      Some(p) =>
+        if is_native_target() && @fs.exists(p) {
+          Some(p)
+        } else {
+          None
+        }
+      None => None
+    }
   }
   if @fs.exists(output_exe) {
     @fs.remove(output_exe)
@@ -294,7 +320,16 @@ pub async fn bundle(
       if copy_icon(input_exe, output_exe) {
         icon_copied = true
       }
-      // The stub is hashed now, because the icon has changed its bytes.
+      // The bundle has to carry the subsystem of the program it carries:
+      // the bundle is what Windows starts, so a windowed program that is
+      // bundled into a console bundle flashes a console window on every
+      // start.
+      let wanted = pe_subsystem_of(input_exe)
+      if wanted != 0 && set_pe_subsystem(output_exe, wanted) {
+        subsystem_copied = wanted == PE_SUBSYSTEM_GUI
+      }
+      // The stub is hashed now, because the icon and the subsystem have
+      // changed its bytes.
       let stub_size = @fs.file_size(output_exe)
       digest.update(@fs.read_binary(output_exe))
       // Finally append the archive. The stub may have grown by the icon.
@@ -305,9 +340,13 @@ pub async fn bundle(
     None => {
       // Without a native launcher (for example when running under Wasm) the
       // application executable itself carries the archive. The result still
-      // holds the payload, but it cannot extract itself.
+      // holds the payload, but it cannot extract itself, so it has to be
+      // unpacked with `lunapack unpack`.
       println(
         "warning: no native launcher available, the bundle will not extract itself",
+      )
+      println(
+        "hint: name one with --launcher <file> to get a file that starts on its own",
       )
       let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
       defer out.close()
@@ -322,7 +361,8 @@ pub async fn bundle(
     m.entries.length().to_string() +
     " files -> " +
     output_exe +
-    (if icon_copied { " (icon copied)" } else { "" }),
+    (if icon_copied { " (icon copied)" } else { "" }) +
+    (if subsystem_copied { " (windowed)" } else { "" }),
   )
   report_md5(output_exe, digest.finish())
 }

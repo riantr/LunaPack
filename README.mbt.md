@@ -37,11 +37,11 @@ Prebuilt binaries are attached to every
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 
 The release is built by a GitHub workflow when a version tag such as
-`v0.1.4` is pushed; the same version is published to the Mooncakes registry,
+`v0.1.5` is pushed; the same version is published to the Mooncakes registry,
 so `moonx riantr/LunaPack/cmd/main@latest` resolves to it.
 
 The registry requires a `0.x.y` version while it is in its early stage, so
-the releases are numbered `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4` and so on.
+the releases are numbered `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, `0.1.5` and so on.
 
 ## Usage
 
@@ -68,11 +68,11 @@ The result is a **self-extracting bundle**: the LunaPack launcher with the
 archive appended, exactly the trick a WinRAR or 7-Zip self-extracting archive
 uses.
 
-> The bundle is self-extracting only when it is produced by a **native**
-> LunaPack binary, because the launcher stub is the binary itself. A bundle
-> produced through `moonx` runs on WebAssembly and therefore carries the
-> payload without a native launcher; use the native binary to get a
-> self-extracting file.
+> The bundle is self-extracting when the launcher is a **native** LunaPack
+> binary. The one that runs on this machine is used by default, so a native
+> LunaPack always produces a self-extracting file. A bundle produced through
+> `moonx` runs on WebAssembly and has no native binary of its own, so it
+> needs one named with `--launcher` - see below.
 
 ```
 myapp.exe  =  [ LunaPack launcher ]  +  [ archive: myapp.exe, res/app.cfg, ... ]
@@ -91,6 +91,44 @@ second start is immediate. Delete that folder to force a fresh extraction.
 Because the launcher does the extraction, the application finds its own
 dependencies (`.dll`, `.json`, assets) exactly like it would in its build
 folder - a plain copy of the executable would not run at all.
+
+### The launcher
+
+The launcher is the program that unpacks the payload and starts the program
+it carries. It has to run on the machine the bundle is started on, so it has
+to be built for that machine.
+
+By default the running LunaPack binary is used, which is the right choice for
+a bundle that is made for the machine that makes it. `--launcher` names a
+different one:
+
+```bash
+# A bundle for Windows, made with the launcher of the release.
+lunapack bundle -i ./myapp.exe -o ./myapp.exe \
+  --Files=./build --launcher ./lunapack-windows-x86_64.exe
+```
+
+This is what makes a bundle for another operating system possible: the
+launcher of that operating system is named, and the bundle runs there.
+
+### As a single file that behaves like the program
+
+The bundle is not only a container: it is the program, with the files it
+needs around it.
+
+- The **arguments** of the bundle are the arguments of the bundled program.
+- The **exit code** of the bundle is the exit code of the bundled program.
+- The **subsystem** of the bundle is the subsystem of the bundled program, so
+  a windowed program does not flash a console window when it is started.
+- The **standard input, output and error** are the ones of the bundle, so a
+  program that asks a question gets an answer.
+
+```bash
+$ ./myapp.exe --version
+myapp 2.6.0
+$ echo $?
+0
+```
 
 ### The icon
 
@@ -140,6 +178,7 @@ needed.
 
 ```
 lunapack pack   -i <input_dir> -o <output.appkg> [options]
+lunapack bundle -i <exe> -o <output.exe> [--Files <dir>]... [options]
 lunapack unpack -i <package>   -o <dest_dir>    [--skip-scripts]
 lunapack verify <package>      [--extracted <dir>]
 lunapack info   <package>
@@ -158,6 +197,7 @@ Flags accept both `--flag=value` and `--flag value`.
 | `--pre-install <file>` | script executed *before* extraction |
 | `--post-install <file>` | script executed *after* extraction |
 | `--compression-method <m>` | `none`, `gzip`, `lz4` or `auto` (default: `auto`) |
+| `--launcher <file>` | the launcher of the single file (default: this one) |
 | `--encryption-method <m>` | `x25519` or `passphrase` (default: none) |
 | `--public-key <file>` | the public key of the recipient |
 | `--secret-key <file>` | the secret key of the recipient |
