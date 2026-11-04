@@ -46,6 +46,15 @@ pub async fn report_output_md5(path : String) -> Unit {
 }
 
 ///|
+/// Print a fingerprint that was computed while the file was written.
+///
+/// The file does not have to be read back for that, which matters when it is
+/// a large application.
+pub fn report_md5(path : String, digest : String) -> Unit {
+  println("output md5  " + digest + "  " + basename(path))
+}
+
+///|
 /// Write an archive containing `items`.
 ///
 /// Every item is a pair of (source file path, path inside the archive).
@@ -54,10 +63,15 @@ pub async fn report_output_md5(path : String) -> Unit {
 /// The MD5 fingerprint of every source file is computed before it is written
 /// and printed as a scan list, so the fingerprints that go into the package
 /// can be compared with what the platform tooling reports.
+///
+/// When `digest` is given, the bytes that go into the archive are hashed as
+/// they are written, so the fingerprint of the archive is known without
+/// reading the file back.
 async fn write_archive(
   items : Array[(String, String)],
   output : String,
   opts : PackOptions,
+  digest : Md5?,
 ) -> Manifest {
   if @fs.exists(output) {
     @fs.remove(output)
@@ -65,7 +79,12 @@ async fn write_archive(
   ensure_parent_dir(output)
   let pkg = @fs.create(output, allow_existing=true, permission=0o644)
   defer pkg.close()
-  pkg.write(magic_bytes())
+  let magic = magic_bytes()
+  pkg.write(magic)
+  match digest {
+    Some(d) => d.update(magic)
+    None => ()
+  }
   let mut cursor : Int64 = 8
   let entries = []
   let mut scanned = 0
@@ -82,12 +101,12 @@ async fn write_archive(
     // the POSIX x-bit and to executable extensions on Windows.
     let exec = @fs.can_execute(src)
     let mode : Int32 = if exec { 0o755 } else { 0o644 }
-    let (stored, codec) = if opts.compression == "none" {
-      (raw, "raw")
-    } else {
-      compress_if_smaller(raw, opts.compression == "gzip")
-    }
+    let (stored, codec) = compress_with(raw, opts.compression)
     pkg.write(stored)
+    match digest {
+      Some(d) => d.update(stored)
+      None => ()
+    }
     entries.push({
       path: target,
       mode,
@@ -120,9 +139,19 @@ async fn write_archive(
   let moff = cursor
   pkg.write(mbytes)
   let mlen : Int64 = Int64::from_int(mbytes.length())
-  pkg.write(magic_bytes())
+  let footer = magic_bytes()
+  pkg.write(footer)
   pkg.write(i64_to_le8(moff))
   pkg.write(i64_to_le8(mlen))
+  match digest {
+    Some(d) => {
+      d.update(mbytes)
+      d.update(footer)
+      d.update(i64_to_le8(moff))
+      d.update(i64_to_le8(mlen))
+    }
+    None => ()
+  }
   manifest
 }
 
@@ -135,9 +164,10 @@ pub async fn pack(input : String, output : String, opts : PackOptions) -> Unit {
   for f in files {
     items.push((f, relpath(base, f)))
   }
-  let m = write_archive(items, output, opts)
+  let digest = Md5::Md5()
+  let m = write_archive(items, output, opts, Some(digest))
   println("packed " + m.entries.length().to_string() + " files -> " + output)
-  report_output_md5(output)
+  report_md5(output, digest.finish())
 }
 
 ///|
@@ -149,6 +179,7 @@ async fn append_file(
   dst : @fs.File,
   src_path : String,
   position : Int64,
+  digest : Md5?,
 ) -> Unit {
   let src = @fs.open(src_path, mode=@fs.Mode::ReadOnly)
   defer src.close()
@@ -160,6 +191,10 @@ async fn append_file(
     let n = if rest < chunk { rest } else { chunk }
     let buf = src.read_exactly_at(n.to_int(), position=off)
     dst.write_at(buf, position=position + off)
+    match digest {
+      Some(d) => d.update(buf)
+      None => ()
+    }
     off = off + n
   }
 }
@@ -205,7 +240,7 @@ pub async fn bundle(
   // Build the archive next to the target, then append it to the stub.
   ensure_parent_dir(output_exe)
   let tmp = output_exe + ".lunapack-archive.tmp"
-  let m = write_archive(items, tmp, opts2)
+  let m = write_archive(items, tmp, opts2, None)
   // The stub that makes the result runnable is the LunaPack executable
   // itself: starting it notices the appended archive, extracts the payload
   // and starts the bundled program. That is the same trick a WinRAR or 7-Zip
@@ -217,6 +252,9 @@ pub async fn bundle(
   if @fs.exists(output_exe) {
     @fs.remove(output_exe)
   }
+  // The fingerprint of the produced file is computed while it is written, so
+  // the file never has to be read back.
+  let digest = Md5::Md5()
   match stub {
     Some(s) => {
       // Write the launcher stub first and close it again: the icon is
@@ -225,7 +263,7 @@ pub async fn bundle(
       {
         let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
         defer out.close()
-        append_file(out, s, 0)
+        append_file(out, s, 0, None)
       }
       // Give the bundle the icon of the application it carries. This has to
       // happen before the payload is appended, because writing resources
@@ -233,11 +271,13 @@ pub async fn bundle(
       if copy_icon(input_exe, output_exe) {
         icon_copied = true
       }
+      // The stub is hashed now, because the icon has changed its bytes.
+      let stub_size = @fs.file_size(output_exe)
+      digest.update(@fs.read_binary(output_exe))
       // Finally append the archive. The stub may have grown by the icon.
       let out = @fs.open(output_exe, mode=@fs.Mode::ReadWrite)
       defer out.close()
-      let stub_size = @fs.file_size(output_exe)
-      append_file(out, tmp, stub_size)
+      append_file(out, tmp, stub_size, Some(digest))
     }
     None => {
       // Without a native launcher (for example when running under Wasm) the
@@ -248,9 +288,9 @@ pub async fn bundle(
       )
       let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
       defer out.close()
-      append_file(out, input_exe, 0)
+      append_file(out, input_exe, 0, Some(digest))
       let exe_size = @fs.file_size(input_exe)
-      append_file(out, tmp, exe_size)
+      append_file(out, tmp, exe_size, Some(digest))
     }
   }
   @fs.remove(tmp)
@@ -261,5 +301,5 @@ pub async fn bundle(
     output_exe +
     (if icon_copied { " (icon copied)" } else { "" }),
   )
-  report_output_md5(output_exe)
+  report_md5(output_exe, digest.finish())
 }

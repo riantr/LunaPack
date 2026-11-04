@@ -4,7 +4,13 @@ package "riantr/LunaPack"
 // Values
 pub const CHECKSUM_ALGO : String = "sha256"
 
-pub const FORMAT_VERSION : Int32 = 3
+pub const FORMAT_VERSION : Int32 = 4
+
+pub const GZIP_LEVEL : Int32 = 1
+
+pub const LZ4_BLOCK_SIZE : Int32 = 4194304
+
+pub const LZ4_MAGIC : UInt32 = 0x184D2204
 
 pub const MAGIC : String = "APPKGD02"
 
@@ -18,7 +24,7 @@ pub async fn bundle(String, String, Array[String], PackOptions) -> Unit
 
 pub async fn collect_files(String) -> Array[String]
 
-pub async fn compress_if_smaller(Bytes, Bool) -> (Bytes, String)
+pub fn compress_with(Bytes, String) -> (Bytes, String)
 
 pub async fn copy_icon(String, String) -> Bool
 
@@ -38,9 +44,9 @@ pub async fn file_md5_hex(String) -> String
 
 pub fn find_resource(PeFile, Int64, Int64, Int64) -> (Int64, Int64)? raise
 
-pub async fn gzip_compress(Bytes) -> Bytes
+pub fn gzip_compress(Bytes) -> Bytes
 
-pub async fn gzip_decompress(Bytes) -> Bytes
+pub fn gzip_decompress(Bytes) -> Bytes
 
 pub fn host_platform() -> String
 
@@ -53,6 +59,10 @@ pub fn iso8601_utc(UInt64) -> String
 pub fn json_to_manifest(String) -> Manifest raise
 
 pub fn le8_to_i64(Bytes, Int32) -> Int64
+
+pub fn lz4_compress_frame(Bytes) -> Bytes
+
+pub fn lz4_decompress_frame(Bytes, Int32) -> Bytes
 
 pub fn magic_bytes() -> Bytes
 
@@ -83,6 +93,8 @@ pub fn read_at(PeFile, Int64, Int64) -> Bytes
 pub async fn read_package_manifest(String) -> Manifest
 
 pub fn relpath(String, String) -> String
+
+pub fn report_md5(String, String) -> Unit
 
 pub async fn report_output_md5(String) -> Unit
 
@@ -116,6 +128,8 @@ pub fn with_defaults(PackOptions, String, String, String, String) -> PackOptions
 
 pub fn with_main_program(PackOptions, String) -> PackOptions
 
+pub fn xxhash32(Bytes, Int32, Int32, UInt32) -> UInt32
+
 // Errors
 
 // Types and methods
@@ -144,6 +158,15 @@ pub struct Manifest {
   post_install : Script?
   entries : Array[Entry]
 }
+
+pub struct Md5 {
+  state : Array[UInt64]
+  pending : Array[Byte]
+  mut length : Int64
+}
+pub fn Md5::Md5() -> Self
+pub fn Md5::finish(Self) -> String
+pub fn Md5::update(Self, Bytes) -> Unit
 
 pub struct PackOptions {
   name : String

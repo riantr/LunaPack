@@ -156,7 +156,11 @@ async fn build_options(flags : Array[Flag]) -> @lib.PackOptions {
     }
     Some(@lib.new_script(@lib.script_platform_of(post_path), body))
   }
-  let compression = flag_value(flags, "compression")
+  // The compression method; `--compression` is the older name of the flag.
+  let mut compression = flag_value(flags, "compression-method")
+  if compression == "" {
+    compression = flag_value(flags, "compression")
+  }
   @lib.new_pack_options(
     flag_value(flags, "name"),
     flag_value(flags, "version"),
@@ -198,7 +202,7 @@ fn usage() -> Unit {
   println("  --arch <arch>           target arch tag (default: detected)")
   println("  --pre-install <file>    script executed before extraction")
   println("  --post-install <file>   script executed after extraction")
-  println("  --compression <mode>    none | gzip | auto (default: auto)")
+  println("  --compression-method <m> none | gzip | lz4 | auto (default: auto)")
 }
 
 ///|

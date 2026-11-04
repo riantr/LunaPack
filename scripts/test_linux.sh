@@ -168,6 +168,18 @@ else
   fail "a changed file was NOT reported"
 fi
 
+section "the lz4 codec"
+# LZ4 has to round-trip through the package as well.
+"$BIN" pack -i "$WORK_DIR/src" -o "$WORK_DIR/lz4.appkg" \
+  --name "lz4-demo" --version "1.0.0" --compression-method lz4 > /dev/null
+"$BIN" info "$WORK_DIR/lz4.appkg" | grep -q '\[lz4\]' \
+  || fail "the lz4 codec was not recorded in the manifest"
+rm -rf "$WORK_DIR/lz4_out"
+"$BIN" unpack -i "$WORK_DIR/lz4.appkg" -o "$WORK_DIR/lz4_out" > /dev/null
+diff -r "$WORK_DIR/src" "$WORK_DIR/lz4_out" \
+  || fail "the lz4 package did not round-trip"
+pass "the lz4 codec round-trips"
+
 section "corruption detection"
 cp "$WORK_DIR/pkg.appkg" "$WORK_DIR/bad.appkg"
 python3 - "$WORK_DIR/bad.appkg" <<'PY'

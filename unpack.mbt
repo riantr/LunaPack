@@ -88,6 +88,8 @@ async fn entry_payload(file : @fs.File, e : Entry, base : Int64) -> Bytes {
   )
   if e.codec == "gzip" {
     gzip_decompress(stored)
+  } else if e.codec == "lz4" {
+    lz4_decompress_frame(stored, e.size.to_int())
   } else {
     stored
   }
@@ -240,8 +242,6 @@ pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
     // `write_binary`'s permission is subject to the umask, so set it explicitly.
     set_permissions(host, out_path, e.mode)
     println("  " + e.path)
-    // Read the file back and confirm that the fingerprint is unchanged.
-    verify_written_file(out_path, e.md5)
   }
   // post_install runs once every file is in place.
   if run_scripts {
@@ -263,7 +263,8 @@ pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
     "unpacked " + manifest.entries.length().to_string() + " files -> " + dest,
   )
   // Read the extracted files back and confirm that every MD5 fingerprint is
-  // still the one that went into the package.
+  // still the one that went into the package. This is the scan the user asked
+  // for, and it covers every file, so the files are not read back twice.
   let mismatches = verify_extracted_md5(manifest, dest)
   if mismatches > 0 {
     fail(
