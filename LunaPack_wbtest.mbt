@@ -33,3 +33,70 @@ test "the magic marker is exactly eight bytes" {
   assert_true(magic_bytes().length() == 8)
   assert_true(utf8_bytes_to_string(magic_bytes()) == MAGIC)
 }
+
+///|
+async test "the extracted files are checked against their md5 fingerprint" {
+  let src = @fs.tmpdir(prefix="lunapack_md5_src")
+  @fs.write_file(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let dest = @fs.tmpdir(prefix="lunapack_md5_dest")
+  unpack(pkg, dest, false)
+  // Every file is written back with the fingerprint it had in the package.
+  let data = @fs.read_file(dest + "/a.txt").binary()
+  assert_true(md5_hex(data) == md5_hex_of_string("hello\n"))
+}
+
+///|
+async test "a changed file is reported as an md5 mismatch" {
+  let src = @fs.tmpdir(prefix="lunapack_md5_src2")
+  @fs.write_file(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let dest = @fs.tmpdir(prefix="lunapack_md5_dest2")
+  unpack(pkg, dest, false)
+  // Change the file on the disk after it was extracted.
+  @fs.write_file(dest + "/a.txt", "tampered\n")
+  let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
+  defer file.close()
+  let (_base, manifest) = locate_archive(file)
+  let mismatches = verify_extracted_md5(manifest, dest)
+  assert_true(mismatches == 1)
+}
+
+///|
+async test "a missing file is reported as an md5 mismatch" {
+  let src = @fs.tmpdir(prefix="lunapack_md5_src3")
+  @fs.write_file(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let dest = @fs.tmpdir(prefix="lunapack_md5_dest3")
+  unpack(pkg, dest, false)
+  @fs.remove(dest + "/a.txt")
+  let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
+  defer file.close()
+  let (_base, manifest) = locate_archive(file)
+  let mismatches = verify_extracted_md5(manifest, dest)
+  assert_true(mismatches == 1)
+}

@@ -94,6 +94,29 @@ async fn entry_payload(file : @fs.File, e : Entry, base : Int64) -> Bytes {
 }
 
 ///|
+/// Read the file at `path` back and confirm that its MD5 fingerprint is
+/// still `expected`.
+///
+/// The payload is checked against the SHA-256 checksum while it is written,
+/// but that only proves the bytes in the archive are intact. Reading the file
+/// back from the disk proves that what landed on the disk is the same as what
+/// went in, which is what the user asked for.
+///
+/// `expected` may be empty, in which case the file comes from a package that
+/// was written before the MD5 fingerprint was stored.
+async fn verify_written_file(path : String, expected : String) -> Unit {
+  if expected == "" {
+    return
+  }
+  let actual = md5_hex(@fs.read_file(path).binary())
+  if actual != expected {
+    fail(
+      "md5 mismatch for " + path + ": expected " + expected + " got " + actual,
+    )
+  }
+}
+
+///|
 /// Write every entry of `manifest` into `dest`, without printing anything.
 async fn write_entries(
   file : @fs.File,
@@ -115,6 +138,8 @@ async fn write_entries(
     @fs.write_file(out_path, data, permission=e.mode)
     // `write_file`'s permission is subject to the umask, so set it explicitly.
     set_permissions(host, out_path, e.mode)
+    // Read the file back and confirm that the fingerprint is unchanged.
+    verify_written_file(out_path, e.md5)
   }
 }
 
@@ -130,6 +155,47 @@ pub async fn extract_to(pkg : String, dest : String) -> Unit {
   defer file.close()
   let (base, manifest) = locate_archive(file)
   write_entries(file, manifest, base, dest, host_platform())
+}
+
+///|
+/// Re-read every extracted file and confirm that its MD5 fingerprint is
+/// still the one that went into the package.
+///
+/// The payload is checked against the SHA-256 checksum while it is written,
+/// but that only proves the bytes in the archive are intact. Reading the
+/// files back from the disk proves that what landed on the disk is the same
+/// as what went in, which is what the user asked for.
+///
+/// Returns the number of files whose fingerprint did not match.
+async fn verify_extracted_md5(manifest : Manifest, dest : String) -> Int32 {
+  let mut mismatches = 0
+  let mut checked = 0
+  for e in manifest.entries {
+    let out_path = dest + "/" + e.path
+    if !@fs.exists(out_path) {
+      println("  md5 MISMATCH  " + e.path + "  (file is missing)")
+      mismatches = mismatches + 1
+      continue
+    }
+    let actual = md5_hex(@fs.read_file(out_path).binary())
+    checked = checked + 1
+    if e.md5 != "" && actual != e.md5 {
+      println(
+        "  md5 MISMATCH  " + e.path + "  expected " + e.md5 + " got " + actual,
+      )
+      mismatches = mismatches + 1
+    } else {
+      println("  md5  " + actual + "  " + e.path)
+    }
+  }
+  println(
+    "verified " +
+    checked.to_string() +
+    " files, " +
+    mismatches.to_string() +
+    " mismatches",
+  )
+  mismatches
 }
 
 ///|
@@ -174,6 +240,8 @@ pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
     // `write_file`'s permission is subject to the umask, so set it explicitly.
     set_permissions(host, out_path, e.mode)
     println("  " + e.path)
+    // Read the file back and confirm that the fingerprint is unchanged.
+    verify_written_file(out_path, e.md5)
   }
   // post_install runs once every file is in place.
   if run_scripts {
@@ -194,10 +262,18 @@ pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
   println(
     "unpacked " + manifest.entries.length().to_string() + " files -> " + dest,
   )
+  // Read the extracted files back and confirm that every MD5 fingerprint is
+  // still the one that went into the package.
+  let mismatches = verify_extracted_md5(manifest, dest)
+  if mismatches > 0 {
+    fail(
+      "md5 mismatch for " + mismatches.to_string() + " file(s) after unpacking",
+    )
+  }
 }
 
 ///|
-/// Check every entry of a package: magic, sizes and SHA-256 digests.
+/// Check every entry of a package: magic, sizes, SHA-256 and MD5 digests.
 pub async fn verify(pkg : String) -> Bool {
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
@@ -206,6 +282,10 @@ pub async fn verify(pkg : String) -> Bool {
     let data = entry_payload(file, e, base)
     if sha256_hex(data) != e.checksum {
       println("verify: checksum mismatch for " + e.path)
+      return false
+    }
+    if e.md5 != "" && md5_hex(data) != e.md5 {
+      println("verify: md5 mismatch for " + e.path)
       return false
     }
     if data.length().to_int64() != e.size {

@@ -366,6 +366,9 @@ async fn do_info(args : ArrayView[String]) -> Unit {
         "]  " +
         e.checksum,
       )
+      if e.md5 != "" {
+        println("      md5  " + e.md5)
+      }
     }
     println("total size:   " + total.to_string() + " B")
     println("stored size:  " + stored.to_string() + " B")

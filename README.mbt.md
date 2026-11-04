@@ -10,6 +10,10 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
 for everyday storage).
 
 - **SHA-256** checksums for every entry (verified on unpack).
+- **MD5** fingerprints for every entry: the files are scanned before they go
+  into the package, the fingerprints are listed, and after unpacking every
+  extracted file is read back and checked against the fingerprint it had.
+  The fingerprint of the produced file is reported as well.
 - **gzip** compression per entry, with an `auto` mode that only compresses
   when it actually helps.
 - **Cross-platform**: runs on Windows, Linux and macOS; packages carry their
@@ -157,6 +161,32 @@ lunapack pack -i ./myapp -o myapp.appkg \
 lunapack verify  myapp.appkg
 lunapack unpack  -i myapp.appkg -o /opt/myapp
 ```
+
+Packing prints the MD5 fingerprint of every file it scans, and the
+fingerprint of the file it produces:
+
+```
+  md5  6f5902ac237024bdd0c176cb93063dc4  a.txt
+  md5  3db2050fcf84bb631dcae417d3db518c  sub/b.txt
+scanned 2 files
+packed 2 files -> myapp.appkg
+output md5  21790538c83b9712c006da693907a5c5  myapp.appkg
+```
+
+Unpacking reads every extracted file back and checks its fingerprint against
+the one that went into the package, so a file that changed on the way to the
+disk is reported:
+
+```
+unpacked 2 files -> /opt/myapp
+  md5  6f5902ac237024bdd0c176cb93063dc4  a.txt
+  md5  3db2050fcf84bb631dcae417d3db518c  sub/b.txt
+verified 2 files, 0 mismatches
+```
+
+MD5 is not collision resistant, so it is only the fingerprint that can be
+compared with what the platform tooling shows; the integrity of the package
+rests on the SHA-256 checksum of every entry.
 
 On Windows, with the paths of a real .NET application:
 

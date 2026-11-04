@@ -15,7 +15,7 @@ pub const MAGIC : String = "APPKGD02"
 
 ///|
 /// Format version recorded in the manifest.
-pub const FORMAT_VERSION : Int32 = 2
+pub const FORMAT_VERSION : Int32 = 3
 
 ///|
 /// Checksum algorithm used for every entry payload.
@@ -63,6 +63,12 @@ pub struct Entry {
   codec : String
   /// Lowercase hex SHA-256 of the ORIGINAL (decompressed) content.
   checksum : String
+  /// Lowercase hex MD5 of the ORIGINAL (decompressed) content.
+  ///
+  /// MD5 is not collision resistant, so it is only a convenience fingerprint
+  /// that can be compared against what the platform tooling shows; the
+  /// integrity of the package rests on `checksum`.
+  md5 : String
   /// Byte offset of the payload inside the package.
   offset : Int64
 }
@@ -255,6 +261,7 @@ pub fn manifest_to_json(m : Manifest) -> String {
     s = s + ",\"stored_size\":" + e.stored_size.to_string()
     s = s + ",\"codec\":\"" + json_escape(e.codec) + "\""
     s = s + ",\"checksum\":\"" + e.checksum + "\""
+    s = s + ",\"md5\":\"" + e.md5 + "\""
     s = s + ",\"offset\":" + e.offset.to_string()
     s = s + "}"
     i = i + 1
@@ -399,6 +406,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       stored_size: get_i64_def(e, "stored_size", size),
       codec: get_str_def(e, "codec", "raw"),
       checksum: get_str(e, "checksum"),
+      md5: get_str_def(e, "md5", ""),
       offset: get_i64(e, "offset"),
     })
   }

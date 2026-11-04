@@ -4,6 +4,66 @@
 // and must go through constructors instead of record literals.
 
 ///|
+test "md5 matches the RFC 1321 test vectors" {
+  assert_true(
+    @LunaPack.md5_hex_of_string("") == "d41d8cd98f00b204e9800998ecf8427e",
+  )
+  assert_true(
+    @LunaPack.md5_hex_of_string("a") == "0cc175b9c0f1b6a831c399e269772661",
+  )
+  assert_true(
+    @LunaPack.md5_hex_of_string("abc") == "900150983cd24fb0d6963f7d28e17f72",
+  )
+  assert_true(
+    @LunaPack.md5_hex_of_string("message digest") ==
+    "f96b697d7cb7938d525a2f31aaf161d0",
+  )
+  assert_true(
+    @LunaPack.md5_hex_of_string("abcdefghijklmnopqrstuvwxyz") ==
+    "c3fcd3d76192e4007dfb496cca67e13b",
+  )
+  assert_true(
+    @LunaPack.md5_hex_of_string(
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+    ) ==
+    "d174ab98d277d9f5a5611c2c9f419d9f",
+  )
+  assert_true(
+    @LunaPack.md5_hex_of_string(
+      "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+    ) ==
+    "57edf4a22be3c955ac49da2e2107b67a",
+  )
+}
+
+///|
+test "md5 handles the block boundary" {
+  // 55, 56 and 59 bytes exercise the three padding branches.
+  let d55 = "1234567890123456789012345678901234567890123456789012345"
+  assert_true(
+    @LunaPack.md5_hex_of_string(d55) == "c9ccf168914a1bcfc3229f1948e67da0",
+  )
+  let d56 = d55 + "6"
+  assert_true(
+    @LunaPack.md5_hex_of_string(d56) == "49f193adce178490e34d1b3a4ec0064c",
+  )
+  // 59 bytes, so the message spans two blocks.
+  let d59 = d55 + "6789"
+  assert_true(
+    @LunaPack.md5_hex_of_string(d59) == "0b9619419451aacdba0001592fca361c",
+  )
+}
+
+///|
+test "md5 of a large input is stable" {
+  // A megabyte of 'a' has a well known MD5 digest.
+  let big = "a".repeat(1000000)
+  assert_true(
+    @LunaPack.md5_hex_of_string(big) == "7707d6ae4e027c70eea2a935c2296f21",
+  )
+}
+
+///|
 test "sha256 matches the NIST test vectors" {
   assert_true(
     @LunaPack.sha256_hex_of_string("") ==
@@ -150,7 +210,7 @@ async test "pack produces a manifest that round-trips" {
   )
   @LunaPack.pack(src, pkg, opts)
   let m = @LunaPack.read_package_manifest(pkg)
-  assert_true(m.format_version == 2)
+  assert_true(m.format_version == 3)
   assert_true(m.name == "demo")
   assert_true(m.version == "1.0.0")
   assert_true(m.os == "linux")

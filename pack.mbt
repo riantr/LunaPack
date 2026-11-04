@@ -26,10 +26,34 @@ pub async fn collect_files(root : String) -> Array[String] {
 }
 
 ///|
+/// Lowercase hex MD5 of the content of the file at `path`.
+///
+/// The file is read as a whole, so it needs to fit in memory; that is the
+/// same limitation the packing code has.
+pub async fn file_md5_hex(path : String) -> String {
+  md5_hex(@fs.read_file(path).binary())
+}
+
+///|
+/// Print the MD5 fingerprint of the file at `path`.
+///
+/// The fingerprint of the produced file is what a user compares against the
+/// value the platform tooling shows, so it is printed under a clear label.
+pub async fn report_output_md5(path : String) -> Unit {
+  if @fs.exists(path) {
+    println("output md5  " + file_md5_hex(path) + "  " + basename(path))
+  }
+}
+
+///|
 /// Write an archive containing `items`.
 ///
 /// Every item is a pair of (source file path, path inside the archive).
 /// Returns the manifest that was written.
+///
+/// The MD5 fingerprint of every source file is computed before it is written
+/// and printed as a scan list, so the fingerprints that go into the package
+/// can be compared with what the platform tooling reports.
 async fn write_archive(
   items : Array[(String, String)],
   output : String,
@@ -44,11 +68,17 @@ async fn write_archive(
   pkg.write(magic_bytes())
   let mut cursor : Int64 = 8
   let entries = []
+  let mut scanned = 0
   for it in items {
     let (src, target) = it
     let data = @fs.read_file(src)
     let raw = data.binary()
     let sum = sha256_hex(raw)
+    let fingerprint = md5_hex(raw)
+    // The scan list shows the fingerprint of every file before it goes into
+    // the package.
+    println("  md5  " + fingerprint + "  " + target)
+    scanned = scanned + 1
     // Preserve the executable bit in a portable way: `can_execute` maps to
     // the POSIX x-bit and to executable extensions on Windows.
     let exec = @fs.can_execute(src)
@@ -66,10 +96,12 @@ async fn write_archive(
       stored_size: stored.length().to_int64(),
       codec,
       checksum: sum,
+      md5: fingerprint,
       offset: cursor,
     })
     cursor = cursor + stored.length().to_int64()
   }
+  println("scanned " + scanned.to_string() + " files")
   let manifest = {
     format_version: FORMAT_VERSION,
     name: opts.name,
@@ -106,6 +138,7 @@ pub async fn pack(input : String, output : String, opts : PackOptions) -> Unit {
   }
   let m = write_archive(items, output, opts)
   println("packed " + m.entries.length().to_string() + " files -> " + output)
+  report_output_md5(output)
 }
 
 ///|
@@ -229,4 +262,5 @@ pub async fn bundle(
     output_exe +
     (if icon_copied { " (icon copied)" } else { "" }),
   )
+  report_output_md5(output_exe)
 }
