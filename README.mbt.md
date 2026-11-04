@@ -99,7 +99,7 @@ for everyday storage).
 * One format, two front ends
 
   The same library and the same container behind `lunapack` (a native binary)
-  and `moonx riantr/LunaPack/cmd/main@latest` (the WebAssembly build on the
+  and `moonx riantr/LunaPack@latest` (the WebAssembly build on the
   registry). The archive is found from the tail of the file in both cases, so
   `verify`, `info` and `unpack` work on a bundle exactly as they work on a
   plain package.
@@ -131,7 +131,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.6
+moon add riantr/LunaPack@0.1.7
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -139,7 +139,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.6",
+  "riantr/LunaPack@0.1.7",
 }
 ```
 
@@ -159,7 +159,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.6`, `>=0.1.6`, `0.1` and `v0.1.6` are all rejected. A bare
+`latest`, `^0.1.7`, `>=0.1.7`, `0.1` and `v0.1.7` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -178,9 +178,11 @@ to a file: every file in that package sees it, and an import statement inside
 a `.mbt` file is rejected outright — *"Invalid import declaration here. Move
 this declaration to `moon.pkg`."*
 
-The executable is the package `riantr/LunaPack/cmd/main`, and the registry
-stores the prebuilt WebAssembly module per package, so the coordinate that
-runs it is `riantr/LunaPack/cmd/main@latest`.
+The module is published as **one package that is both the library and the
+executable**: the root package `riantr/LunaPack` carries the whole public API
+*and* the entry point, so the registry stores the prebuilt WebAssembly module
+under the module's own name and the coordinate that runs it is the short
+`riantr/LunaPack@latest`. There is no second package to name.
 
 The module carries **no dependencies**: everything it needs comes with the
 MoonBit toolchain, so the published module carries none either and nothing has
@@ -195,6 +197,23 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.7
+
+- **The short coordinate runs.** `moonx riantr/LunaPack@latest` resolves and
+  starts the tool. The root package `riantr/LunaPack` is now the executable as
+  well as the library, so the registry stores the prebuilt WebAssembly module
+  under the module's own name and there is no second package to name. Before
+  this release the same coordinate failed with *"Prebuilt wasm asset does not
+  exist"*, because the entry point lived in a second package.
+- **The entry point left `cmd/main`.** The CLI is `cli.mbt` in the root package
+  and the `cmd/` directory is gone. A consumer's import path does not change:
+  `import { "riantr/LunaPack" @lib }` names the same API, and the generated
+  `pkg.generated.mbti` is byte-identical to the one 0.1.6 published.
+- **The price of the short coordinate is named, not hidden.** A main package's
+  blackbox tests are on a deprecation path and a dependency that imports a main
+  package is deprecated. Both are described under *Packages and targets*, with
+  the alternative that avoids them.
 
 ### What changed in 0.1.6
 
@@ -235,20 +254,33 @@ are private to the package, and `run_install_script` keeps its signature.
 
 | Package | Kind | Native | Wasm |
 |---|---|---:|---:|
-| `riantr/LunaPack` | library | yes | yes |
-| `riantr/LunaPack/cmd/main` | executable | yes | yes |
+| `riantr/LunaPack` | library **and** executable | yes | yes |
 
-Both packages declare `supported_targets = "native+wasm"`, and the whole module
+There is **one** package. It carries the whole public API *and* the entry
+point, which is what lets the coordinate be `riantr/LunaPack@latest`: the
+registry stores the prebuilt WebAssembly module per package, and the module's
+own name is the package's name.
+
+The package declares `supported_targets = "native+wasm"`, and the module
 type-checks on both backends — `moon check --target native` and `moon check
 --target wasm` are exit 0 for each. There is no `wasm-gc` target and no `js`
 target: a check for those has nothing to do, because no package of the module
 claims one.
 
 The checks are not warning-free, and the numbers are in the open rather than in
-a footnote: `--target native` reports **1 warning** (a deprecated call in a
-test) and `--target wasm` reports **5** (the same one, plus four in the
-Windows-only icon helpers, which the WebAssembly backend does not use). No
-gate runs with `--deny-warn`, and none of the warnings is an error.
+a footnote: `--target native` reports **2 warnings** (a deprecated call in a
+test, and the one below) and `--target wasm` reports **6** (the same two, plus
+four in the Windows-only icon helpers, which the WebAssembly backend does not
+use). No gate runs with `--deny-warn`, and none of the warnings is an error.
+
+The second warning is the price of the short coordinate, and it is worth naming
+exactly: *"Main package `riantr/LunaPack` uses blackbox-only test inputs
+(`_test.mbt` files) … Main packages will stop generating blackbox tests in a
+future release."* The blackbox tests of the public API run today, and a
+toolchain that stops generating them would take that coverage with it. The
+alternative — a library in a non-main package under `src/`, with the root as
+the entry point — keeps the tests and the import path of the library safe, at
+the price of the library moving to `riantr/LunaPack/src/lunapack`.
 
 ## Releases
 
@@ -263,9 +295,9 @@ Prebuilt binaries are attached to every
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.6`
+The release is built by a GitHub workflow when a version tag such as `v0.1.7`
 is pushed; the same tag is published to the Mooncakes registry, so
-`moonx riantr/LunaPack/cmd/main@latest` resolves to it. The tag is the source
+`moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
 builds anything, so a tag and the published module cannot disagree.
 
@@ -283,7 +315,7 @@ secret; locally the commands are:
 moon login                 # once
 moon publish --dry-run     # validate
 moon publish               # publish riantr/LunaPack
-moonx riantr/LunaPack/cmd/main@latest --input-exe=... --output-exe=... --Files=...
+moonx riantr/LunaPack@latest --input-exe=... --output-exe=... --Files=...
 ```
 
 The module publishes with `supported_targets = "native+wasm"`; `moonx` runs
@@ -561,7 +593,7 @@ Use `--skip-scripts` to unpack without running them.
 ### Via `moonx` (published on Mooncakes)
 
 ```bash
-moonx riantr/LunaPack/cmd/main@latest \
+moonx riantr/LunaPack@latest \
   --input-exe=[input-exe-path] \
   --output-exe=[output-exe-path] \
   --Files=[Pack-Folder]
@@ -569,7 +601,9 @@ moonx riantr/LunaPack/cmd/main@latest \
 
 The coordinate names the package that holds the entry point, because the
 registry stores the prebuilt WebAssembly module per package. The entry point
-lives in `cmd/main`, so the coordinate is `riantr/LunaPack/cmd/main@latest`.
+lives in the module's own package, so the coordinate is
+`riantr/LunaPack@latest` — the module name and the package name are the same
+string.
 
 | Flag | Meaning |
 | --- | --- |
@@ -627,11 +661,11 @@ has been on the disk for a while.
 
 ```bash
 moon build --release
-# -> _build/native/release/build/cmd/main/main.exe   (every platform)
+# -> _build/native/release/build/LunaPack.exe   (every platform)
 ```
 
-The toolchain calls the executable `main.exe` on every platform, Windows
-included, so the path is the same everywhere.
+The toolchain names the executable after the package, and calls it `LunaPack.exe`
+on every platform, Windows included, so the path is the same everywhere.
 
 ### Options
 
@@ -929,10 +963,10 @@ because they were run by hand, not because CI depends on them.
 
 ## Used By
 
-- `cmd/main` — the executable in this module, the only consumer of the library
-  inside this repository.
+- `cli.mbt` — the command line of this module, the front end over the library
+  that lives in the same package.
 - `scripts/test_linux.sh` — the end-to-end suite, which drives the binary that
-  `cmd/main` builds.
+  the module builds.
 
 Outside this repository: **none that the registry knows about.** The registry
 lists **0 dependents** for `riantr/LunaPack`, and nothing is claimed here that
