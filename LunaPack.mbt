@@ -317,11 +317,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       None => fail("missing field " + k)
     }
   }
-  let get_str_def = fn(
-    obj : @json.Json,
-    k : String,
-    dflt : String,
-  ) -> String {
+  let get_str_def = fn(obj : @json.Json, k : String, dflt : String) -> String {
     match json_field(obj, k) {
       Some(v) =>
         match json_string(v) {
