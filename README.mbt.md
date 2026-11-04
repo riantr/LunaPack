@@ -188,6 +188,23 @@ MD5 is not collision resistant, so it is only the fingerprint that can be
 compared with what the platform tooling shows; the integrity of the package
 rests on the SHA-256 checksum of every entry.
 
+Files that are already on the disk can be audited against the package, which
+is what the self-extracting bundle uses its cache for:
+
+```cmd
+lunapack verify BRLabeler.exe --extracted .lunapack\60844df795cb7f31
+```
+
+```
+verify: OK (392 files)
+verify: md5 mismatch for appsettings.json: expected 86ff00ef... got 3ddcb685...
+VERIFY FAILED
+```
+
+The bundle checks every file it writes as it extracts it, so the cache is
+verified once when it is filled. The check above is for auditing a cache
+that has been on the disk for a while.
+
 On Windows, with the paths of a real .NET application:
 
 ```cmd

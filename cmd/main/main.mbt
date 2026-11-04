@@ -170,7 +170,7 @@ fn usage() -> Unit {
   println("usage (native):")
   println("  lunapack pack   -i <input_dir> -o <output.appkg> [options]")
   println("  lunapack unpack -i <package>   -o <dest_dir> [--skip-scripts]")
-  println("  lunapack verify <package>")
+  println("  lunapack verify <package> [--extracted <dir>]")
   println("  lunapack info   <package>")
   println("")
   println("options:")
@@ -305,6 +305,10 @@ async fn do_unpack(args : ArrayView[String]) -> Unit {
 
 ///|
 /// The `verify` subcommand.
+///
+/// `verify <package>` checks the package itself. `verify <package> --extracted
+/// <dir>` also checks the files that are already in `dir` against the
+/// fingerprints of the package.
 async fn do_verify(args : ArrayView[String]) -> Unit {
   if args.length() < 2 {
     println("error: verify requires a package path")
@@ -312,7 +316,17 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
     return
   }
   try {
+    let flags = parse_flags(args, 1)
+    let extracted = flag_value(flags, "extracted")
     let ok = @lib.verify(args[1])
+    if extracted != "" {
+      if @lib.verify_extracted_dir(args[1], extracted) {
+        println("VERIFY OK")
+      } else {
+        println("VERIFY FAILED")
+      }
+      return
+    }
     if ok {
       println("VERIFY OK")
     } else {

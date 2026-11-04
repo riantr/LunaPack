@@ -110,6 +110,8 @@ pub fn utf8_bytes_to_string(Bytes) -> String
 
 pub async fn verify(String) -> Bool
 
+pub async fn verify_extracted_dir(String, String) -> Bool
+
 pub fn with_defaults(PackOptions, String, String, String, String) -> PackOptions
 
 pub fn with_main_program(PackOptions, String) -> PackOptions
