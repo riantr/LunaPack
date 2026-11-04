@@ -34,6 +34,12 @@ pub const NONCE_BYTES : Int32 = 12
 
 pub const PASSPHRASE_ITERATIONS : Int32 = 210000
 
+pub const PE_SUBSYSTEM_CUI : Int32 = 3
+
+pub const PE_SUBSYSTEM_GUI : Int32 = 2
+
+pub const PE_SUBSYSTEM_OFFSET : Int64 = 68
+
 pub const RT_GROUP_ICON : Int64 = 14
 
 pub const RT_ICON : Int64 = 3
@@ -46,7 +52,7 @@ pub const TAG_BYTES : Int32 = 16
 
 pub fn basename(String) -> String
 
-pub async fn bundle(String, String, Array[String], PackOptions) -> Unit
+pub async fn bundle(String, String, Array[String], PackOptions, String) -> Unit
 
 pub fn bytes_concat(Bytes, Bytes) -> Bytes
 
@@ -77,6 +83,8 @@ pub fn dirname(String) -> String
 pub async fn ensure_parent_dir(String) -> Unit
 
 pub async fn establish_encryption(EncryptionOptions) -> ActiveEncryption
+
+pub fn exit_with(Int32) -> Unit
 
 pub fn extract_icon(PeFile) -> (Int64, Bytes, Array[(Int64, Bytes)])? raise
 
@@ -160,6 +168,10 @@ pub fn passphrase_secret(String, Bytes, Int32) -> Bytes
 
 pub fn pbkdf2_sha512(Bytes, Bytes, Int32, Int32) -> Bytes
 
+pub fn pe_subsystem(Bytes) -> Int32
+
+pub async fn pe_subsystem_of(String) -> Int32
+
 pub fn poly1305(Bytes, BytesView) -> Bytes
 
 pub async fn probe_archive(String) -> (Int64, Manifest)?
@@ -193,6 +205,8 @@ pub fn script_platform_of(String) -> String
 pub fn seal_entry(PackageKey, Int32, String, Bytes) -> Bytes
 
 pub fn seal_to_public_key(Bytes) -> SealedPackage
+
+pub async fn set_pe_subsystem(String, Int32) -> Bool
 
 pub async fn set_permissions(String, String, Int32) -> Unit
 

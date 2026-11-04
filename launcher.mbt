@@ -75,12 +75,32 @@ pub fn package_tag_of(text : String) -> String {
 
 ///|
 /// Folder that caches the extracted payload of a bundle.
-fn cache_dir(exe_path : String, tag : String) -> String {
+///
+/// The folder next to the executable is the best place for it: the payload
+/// stays with the file it belongs to. When that folder cannot be written
+/// to - a read-only medium, a folder the user may not touch - the payload
+/// goes to the temporary folder of the system instead, under a name that
+/// depends on the package, so that it is found again on the next start.
+async fn cache_dir(exe_path : String, tag : String) -> String {
   let dir = dirname(exe_path)
-  if dir == "" {
-    return ""
+  if dir != "" {
+    let near = dir + "/.lunapack/" + tag
+    if @fs.exists(near) || writable_dir(near) {
+      return near
+    }
   }
-  dir + "/.lunapack/" + tag
+  // The temporary folder of the system, under a name of its own, so that
+  // the payload is only unpacked once.
+  @fs.tmpdir(prefix="lunapack-" + tag)
+}
+
+///|
+/// Can a folder be created at `path`?
+async fn writable_dir(path : String) -> Bool {
+  @fs.mkdir(path, recursive=true, allow_exist=true) catch {
+    _ => return false
+  }
+  true
 }
 
 ///|
@@ -191,6 +211,10 @@ async fn resolve_key(m : Manifest, exe_path : String) -> PackageKey? {
 /// Extract the payload carried by the running executable and start the
 /// bundled program.
 ///
+/// The arguments of the bundle are the arguments of the bundled program,
+/// and the exit code of the bundle is the exit code of the bundled program.
+/// A bundle that is started therefore behaves like the program it carries.
+///
 /// Returns false when the executable carries no archive, in which case the
 /// caller should behave like an ordinary command line tool.
 pub async fn try_launch_self_extracting() -> Bool {
@@ -210,7 +234,7 @@ pub async fn try_launch_self_extracting() -> Bool {
   }
   let key = resolve_key(m, exe)
   if m.encryption is Some(_) && key is None {
-    println("LunaPack: cannot decrypt the package")
+    eprintln("LunaPack: cannot decrypt the package")
     return false
   }
   let dir = match extract_to_cache(exe, exe, m, key) {
@@ -219,17 +243,43 @@ pub async fn try_launch_self_extracting() -> Bool {
       // The folder next to the executable is not usable, fall back to a
       // temporary directory.
       let d = @fs.tmpdir(prefix="lunapack")
-      println("LunaPack: extracting " + m.main_program + " to " + d)
+      eprintln("LunaPack: extracting " + m.main_program + " to " + d)
       extract_to(exe, d, key)
       d
     }
   }
   let program = dir + "/" + m.main_program
-  println("LunaPack: starting " + program)
-  try {
-    let _ = @process.run(program, [], cwd=dir)
+  eprintln("LunaPack: starting " + program)
+  // The arguments of the bundle belong to the bundled program.
+  let args = bundled_arguments()
+  let code = try {
+    let r = @process.run(program, args, cwd=dir)
+    r.exit_code
   } catch {
-    err => println("LunaPack: cannot start " + program + ": " + err.to_string())
+    err => {
+      eprintln("LunaPack: cannot start " + program + ": " + err.to_string())
+      1
+    }
   }
+  // The exit code of the bundle is the exit code of the program it
+  // carries, so that a script that starts the bundle sees it.
+  exit_with(code)
   true
+}
+
+///|
+/// The arguments that the bundled program receives.
+///
+/// The first argument is the path of the bundle itself, which the program
+/// does not need: it knows its own path. The rest are the arguments of the
+/// bundle, and they belong to the program.
+fn bundled_arguments() -> Array[String] {
+  let argv = @env.args()
+  let out = []
+  let mut i = 1
+  while i < argv.length() {
+    out.push(argv[i])
+    i = i + 1
+  }
+  out
 }

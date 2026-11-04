@@ -260,3 +260,84 @@ pub fn extract_icon(
   }
   Some((group_id, group_data, icons))
 }
+
+///|
+/// The subsystem of a windowed application.
+pub const PE_SUBSYSTEM_GUI : Int32 = 2
+
+///|
+/// The subsystem of a console application.
+pub const PE_SUBSYSTEM_CUI : Int32 = 3
+
+///|
+/// The offset of the subsystem field in the optional header of a PE image.
+///
+/// The value is at offset 68 of the optional header, in PE32 as well as in
+/// PE32+. 2 means a windowed application, 3 a console one.
+pub const PE_SUBSYSTEM_OFFSET : Int64 = 68
+
+///|
+/// The subsystem of a PE image, or 0 when it is not one.
+///
+/// The value decides whether Windows opens a console window for the
+/// process, so a bundle has to carry the subsystem of the program it
+/// carries: a windowed program that is bundled must not flash a console
+/// window when it is started.
+pub fn pe_subsystem(data : Bytes) -> Int32 {
+  if data.length() < 0x40 {
+    return 0
+  }
+  if data.at(0).to_int() != 'M'.to_int() || data.at(1).to_int() != 'Z'.to_int() {
+    return 0
+  }
+  let pe_off = u32_at(data, 0x3c)
+  // The optional header starts 24 bytes after the PE signature, and the
+  // subsystem sits 68 bytes into it.
+  let opt = pe_off + 24
+  if opt + PE_SUBSYSTEM_OFFSET + 2 > data.length().to_int64() {
+    return 0
+  }
+  u16_at(data, opt + PE_SUBSYSTEM_OFFSET)
+}
+
+///|
+/// The subsystem of the PE image at `path`, or 0 when it is not one.
+pub async fn pe_subsystem_of(path : String) -> Int32 {
+  let data = @fs.read_binary(path) catch { _ => return 0 }
+  pe_subsystem(data)
+}
+
+///|
+/// Set the subsystem of the PE image at `path`.
+///
+/// The value decides whether Windows opens a console window for the
+/// process. A bundle has to carry the subsystem of the program it carries,
+/// because the bundle is what Windows starts: a windowed program that is
+/// bundled into a console bundle flashes a console window on every start.
+///
+/// The change is written in place, at the offset of the field, and the
+/// file keeps its size.
+pub async fn set_pe_subsystem(path : String, subsystem : Int32) -> Bool {
+  if subsystem != PE_SUBSYSTEM_GUI && subsystem != PE_SUBSYSTEM_CUI {
+    return false
+  }
+  let data = @fs.read_binary(path) catch { _ => return false }
+  if pe_subsystem(data) == 0 {
+    return false
+  }
+  let pe_off = u32_at(data, 0x3c)
+  let opt = pe_off + 24
+  let at = opt + PE_SUBSYSTEM_OFFSET
+  if at + 2 > data.length().to_int64() {
+    return false
+  }
+  // The field is written directly: the file keeps its size and its
+  // layout, and only two bytes change.
+  let out = @fs.open(path, mode=@fs.Mode::ReadWrite)
+  defer out.close()
+  let bytes = FixedArray::make(2, b'\x00')
+  bytes[0] = (subsystem & 0xff).to_byte()
+  bytes[1] = ((subsystem >> 8) & 0xff).to_byte()
+  out.write_at(Bytes::from_array(bytes[:]), position=at)
+  true
+}

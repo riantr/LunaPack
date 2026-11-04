@@ -275,6 +275,9 @@ fn usage() -> Unit {
   println("")
   println("usage (native):")
   println("  lunapack pack   -i <input_dir> -o <output.appkg> [options]")
+  println(
+    "  lunapack bundle -i <exe> -o <output.exe> [--Files <dir>]... [options]",
+  )
   println("  lunapack unpack -i <package>   -o <dest_dir> [--skip-scripts]")
   println("  lunapack verify <package> [--extracted <dir>]")
   println("  lunapack info   <package>")
@@ -291,6 +294,9 @@ fn usage() -> Unit {
   println("  --pre-install <file>    script executed before extraction")
   println("  --post-install <file>   script executed after extraction")
   println("  --compression-method <m> none | gzip | lz4 | auto (default: auto)")
+  println(
+    "  --launcher <file>       launcher for the single file (default: this one)",
+  )
   println("")
   println("encryption:")
   println("  --encryption-method <m>  x25519 | passphrase")
@@ -351,7 +357,13 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
       let first = if file_dirs.length() > 0 { file_dirs[0] } else { "." }
       @lib.pack(first, output_exe, opts)
     } else {
-      @lib.bundle(input_exe, output_exe, file_dirs, opts)
+      @lib.bundle(
+        input_exe,
+        output_exe,
+        file_dirs,
+        opts,
+        flag_value(flags, "launcher"),
+      )
     }
   } catch {
     err => println("error: " + err.to_string())
@@ -408,6 +420,61 @@ async fn do_pack(args : ArrayView[String]) -> Unit {
       None => opts
     }
     @lib.pack(input, output, opts)
+  } catch {
+    err => println("error: " + err.to_string())
+  }
+}
+
+///|
+/// The `bundle` subcommand.
+///
+/// It makes a single file that starts on its own: the program, the files it
+/// needs and a launcher that unpacks them and starts the program.
+async fn do_bundle(args : ArrayView[String]) -> Unit {
+  let flags = parse_flags(args, 1)
+  let input = flag_value_any(flags, ["input", "i"])
+  let output = flag_value_any(flags, ["output", "o"])
+  if input == "" || output == "" {
+    println("error: bundle requires -i <input_exe> and -o <output_exe>")
+    usage()
+    return
+  }
+  try {
+    let base = build_options(flags)
+    let opts = @lib.with_defaults(
+      base,
+      if base.name == "" {
+        @lib.basename(input)
+      } else {
+        base.name
+      },
+      if base.version == "" {
+        "0.1.0"
+      } else {
+        base.version
+      },
+      if base.os == "" {
+        @lib.host_platform()
+      } else {
+        base.os
+      },
+      if base.arch == "" {
+        @lib.default_arch()
+      } else {
+        base.arch
+      },
+    )
+    let opts = match encryption_options(flags) {
+      Some(e) => @lib.with_encryption(opts, e)
+      None => opts
+    }
+    @lib.bundle(
+      input,
+      output,
+      flag_values(flags, "Files"),
+      opts,
+      flag_value(flags, "launcher"),
+    )
   } catch {
     err => println("error: " + err.to_string())
   }
@@ -589,6 +656,8 @@ async fn main {
   let first = argv[0]
   if first == "pack" {
     do_pack(argv)
+  } else if first == "bundle" {
+    do_bundle(argv)
   } else if first == "unpack" {
     do_unpack(argv)
   } else if first == "verify" {
