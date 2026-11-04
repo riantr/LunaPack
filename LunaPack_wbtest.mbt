@@ -126,3 +126,55 @@ async test "an extracted folder can be audited against the package" {
   @fs.remove(dest + "/a.txt")
   assert_true(!verify_extracted_dir(pkg, dest))
 }
+
+///|
+/// A missing interpreter has to be named in the error.
+///
+/// The spawn failure of the runtime names no file - "The system cannot find
+/// the file specified." - so without the name of the interpreter the message
+/// says nothing about what is missing. The interpreter here is one that
+/// cannot exist on any host, so the path is the same everywhere.
+async test "a missing interpreter is named in the error" {
+  let message = try {
+    let status = run_interpreter(
+      "lunapack-no-such-interpreter",
+      ["--version"],
+      ".",
+    )
+    "no error was raised, the status was " + status.to_string()
+  } catch {
+    err => err.to_string()
+  }
+  assert_true(message.contains("lunapack-no-such-interpreter"))
+}
+
+///|
+/// A script whose interpreter cannot be started must not stay behind.
+///
+/// The temporary script file is written into the destination directory, so a
+/// failure that skipped the cleanup would leave it there. The interpreter is
+/// one that cannot exist on any host, so the path is the same everywhere.
+async test "a script that could not be started is removed again" {
+  let dir = @fs.tmpdir(prefix="lunapack_cleanup")
+  let script = new_script("posix", "#!/bin/sh\nexit 0\n")
+  let message = try {
+    let status = run_script(
+      "lunapack-no-such-interpreter",
+      [],
+      "posix",
+      "pre_install",
+      script,
+      dir,
+    )
+    "no error was raised, the status was " + status.to_string()
+  } catch {
+    err => err.to_string()
+  }
+  // The interpreter is named in the error.
+  assert_true(message.contains("lunapack-no-such-interpreter"))
+  // And the script file is gone. The hidden files are included, because the
+  // script is written under a dot-prefixed name.
+  for name in @fs.readdir(dir) {
+    assert_true(!name.has_prefix(".lunapack_"))
+  }
+}
