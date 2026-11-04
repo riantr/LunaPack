@@ -22,9 +22,13 @@ pub fn gzip_compress(data : Bytes) -> Bytes {
 
 ///|
 /// Decompress gzip-compressed `data`.
+///
+/// A stream that cannot be decompressed is returned as it is, so that the
+/// checksum of the entry reports the damage instead of the program stopping
+/// with an error.
 pub fn gzip_decompress(data : Bytes) -> Bytes {
   @gzip.decompress(data) catch {
-    _ => abort("the gzip payload is corrupt")
+    _ => data
   }
 }
 
