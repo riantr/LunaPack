@@ -300,6 +300,17 @@ jobs:
   # ---------------------------------------------------------------------------
   release:
     name: Publish the GitHub Release
+    # The macOS runner is the scarce one: when none of them is free, that leg
+    # is cancelled and the release is made with the binaries that were built,
+    # with the missing one named in its notes. The other legs are not
+    # optional, so the release waits for them and stops if one of them
+    # failed.
+    if: >-
+      always() &&
+      needs.verify-tag.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.build-wasm.result == 'success' &&
+      needs.publish-registry.result == 'success'
     needs: [verify-tag, build, build-macos, build-wasm, publish-registry]
     runs-on: ubuntu-latest
 
