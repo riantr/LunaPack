@@ -1,17 +1,28 @@
-// gzip compression helpers built on moonbitlang/async/gzip.
+// gzip compression helpers built on moonbitlang/core/async/gzip.
 //
 // Payloads are compressed individually so that a package can mix compressed
 // and stored entries (text compresses well, already-compressed binaries do
 // not).
 
 ///|
-/// In-memory `@io.Writer` that accumulates everything written into an array.
+/// In-memory `@io.BinaryWriter` that accumulates everything written into an
+/// array.
 priv struct BufWriter {
   buf : Array[Byte]
 }
 
 ///|
-impl @io.Writer for BufWriter with fn write_once(self, buf, offset~, len~) {
+impl @io.BinaryWriterImpl for BufWriter with fn get_controller(_self) {
+  @io.BinaryWriterController::BinaryWriterController()
+}
+
+///|
+impl @io.BinaryWriterImpl for BufWriter with fn raw_write_impl(
+  self,
+  buf,
+  offset~,
+  len~,
+) {
   let mut i = 0
   while i < len {
     self.buf.push(buf[offset + i])
@@ -19,6 +30,9 @@ impl @io.Writer for BufWriter with fn write_once(self, buf, offset~, len~) {
   }
   len
 }
+
+///|
+impl @io.BinaryWriter for BufWriter
 
 ///|
 /// Compress `data` with gzip.
@@ -37,8 +51,7 @@ pub async fn gzip_decompress(data : Bytes) -> Bytes {
   // through an in-memory reader.
   let reader = @io.MemoryReader::MemoryReader(w => w.write(data))
   let dec = @gzip.Decoder::Decoder(reader)
-  let out = dec.read_all()
-  out.binary()
+  dec.read_all()
 }
 
 ///|

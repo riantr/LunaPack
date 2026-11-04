@@ -102,7 +102,7 @@ async fn extract_to_cache(
   }
   try {
     extract_to(pkg, dir)
-    @fs.write_file(marker, "ok")
+    @fs.write_text(marker, "ok")
     Some(dir)
   } catch {
     _ => None

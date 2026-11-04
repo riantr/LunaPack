@@ -124,8 +124,8 @@ fn flag_values(flags : Array[Flag], key : String) -> Array[String] {
 ///|
 /// Read the whole content of a file as UTF-8 text.
 async fn read_text_file(path : String) -> String {
-  let data = @fs.read_file(path)
-  @lib.utf8_bytes_to_string(data.binary())
+  let data = @fs.read_binary(path)
+  @lib.utf8_bytes_to_string(data)
 }
 
 ///|

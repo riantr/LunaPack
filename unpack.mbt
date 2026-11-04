@@ -108,7 +108,7 @@ async fn verify_written_file(path : String, expected : String) -> Unit {
   if expected == "" {
     return
   }
-  let actual = md5_hex(@fs.read_file(path).binary())
+  let actual = md5_hex(@fs.read_binary(path))
   if actual != expected {
     fail(
       "md5 mismatch for " + path + ": expected " + expected + " got " + actual,
@@ -135,8 +135,8 @@ async fn write_entries(
     }
     let out_path = dest + "/" + e.path
     mkdir_parent(dest, e.path)
-    @fs.write_file(out_path, data, permission=e.mode)
-    // `write_file`'s permission is subject to the umask, so set it explicitly.
+    @fs.write_binary(out_path, data, permission=e.mode)
+    // `write_binary`'s permission is subject to the umask, so set it explicitly.
     set_permissions(host, out_path, e.mode)
     // Read the file back and confirm that the fingerprint is unchanged.
     verify_written_file(out_path, e.md5)
@@ -177,7 +177,7 @@ async fn verify_extracted_md5(manifest : Manifest, dest : String) -> Int32 {
       mismatches = mismatches + 1
       continue
     }
-    let actual = md5_hex(@fs.read_file(out_path).binary())
+    let actual = md5_hex(@fs.read_binary(out_path))
     checked = checked + 1
     if e.md5 != "" && actual != e.md5 {
       println(
@@ -236,8 +236,8 @@ pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
     }
     let out_path = dest + "/" + e.path
     mkdir_parent(dest, e.path)
-    @fs.write_file(out_path, data, permission=e.mode)
-    // `write_file`'s permission is subject to the umask, so set it explicitly.
+    @fs.write_binary(out_path, data, permission=e.mode)
+    // `write_binary`'s permission is subject to the umask, so set it explicitly.
     set_permissions(host, out_path, e.mode)
     println("  " + e.path)
     // Read the file back and confirm that the fingerprint is unchanged.
@@ -295,7 +295,7 @@ pub async fn verify_extracted_dir(pkg : String, dir : String) -> Bool {
       ok = false
       continue
     }
-    let actual = md5_hex(@fs.read_file(out_path).binary())
+    let actual = md5_hex(@fs.read_binary(out_path))
     checked = checked + 1
     if e.md5 != "" && actual != e.md5 {
       println(
