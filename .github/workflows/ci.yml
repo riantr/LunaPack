@@ -97,6 +97,13 @@ jobs:
         shell: bash
         run: moon build --release --target wasm
 
+      # The end-to-end suite needs a real POSIX host, because it runs the
+      # install scripts and checks the permission bits.
+      - name: End-to-end suite
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/test_linux.sh
+
   # ---------------------------------------------------------------------------
   # The source must be formatted and its generated interface up to date.
   # ---------------------------------------------------------------------------
