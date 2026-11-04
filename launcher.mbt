@@ -97,10 +97,52 @@ async fn cache_dir(exe_path : String, tag : String) -> String {
 ///|
 /// Can a folder be created at `path`?
 async fn writable_dir(path : String) -> Bool {
-  @fs.mkdir(path, recursive=true, allow_exist=true) catch {
+  // The cache holds the payload of the bundle, and only the user who owns
+  // it has any business in it.
+  @fs.mkdir(path, recursive=true, allow_exist=true, permission=0o700) catch {
     _ => return false
   }
   true
+}
+
+///|
+/// Do the files in `dir` still hold what the package carries?
+///
+/// The cache is used again only when it is the cache of this package: a
+/// file that was changed after it was unpacked is not what the package says
+/// it is, and the payload is unpacked again in that case.
+async fn cache_matches(m : Manifest, dir : String) -> Bool {
+  for e in m.entries {
+    let path = dir + "/" + e.path
+    if !@fs.exists(path) {
+      return false
+    }
+    let data = @fs.read_binary(path)
+    if redundant_sha256(data) != e.checksum {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Does the file at `path` still hold what the package says it holds?
+///
+/// This is what runs before the program of a bundle is started: the file is
+/// read back from the disk and compared with the checksum of the package, so
+/// that a file that was changed after it was unpacked is not started.
+async fn program_matches(m : Manifest, path : String) -> Bool {
+  for e in m.entries {
+    if e.path != m.main_program {
+      continue
+    }
+    if !@fs.exists(path) {
+      return false
+    }
+    let data = @fs.read_binary(path)
+    return redundant_sha256(data) == e.checksum
+  }
+  false
 }
 
 ///|
@@ -118,15 +160,28 @@ async fn extract_to_cache(
     return None
   }
   let marker = dir + "/.lunapack-complete"
-  if @fs.exists(marker) {
+  if @fs.exists(marker) && cache_matches(m, dir) {
+    // The cache holds the files the package carries, so it is used again.
     return Some(dir)
   }
+  // The payload is unpacked into a folder of its own and only then does it
+  // take the place of the cache. A cache therefore never holds a payload
+  // that was only half unpacked, and a payload that was unpacked into the
+  // old cache is gone before the new one is put in its place.
+  let staging = dir + ".staging"
+  @fs.rmdir(staging, recursive=true, allow_missing=true)
+  @fs.mkdir(staging, recursive=true, allow_exist=true, permission=0o700)
   try {
-    extract_to(pkg, dir, key)
-    @fs.write_text(marker, "ok")
+    extract_to(pkg, staging, key)
+    @fs.write_text(staging + "/.lunapack-complete", "ok")
+    @fs.rmdir(dir, recursive=true, allow_missing=true)
+    @fs.rename(staging, dir, replace=true)
     Some(dir)
   } catch {
-    _ => None
+    _ => {
+      @fs.rmdir(staging, recursive=true, allow_missing=true)
+      None
+    }
   }
 }
 
@@ -177,7 +232,22 @@ async fn read_passphrase_file(path : String) -> String {
 /// found.
 async fn resolve_key(m : Manifest, exe_path : String) -> PackageKey? {
   match m.encryption {
-    None => None
+    None => {
+      // The package says that it is not encrypted. A key that waits for it
+      // anyway says that the package is not the one it says it is, so the
+      // bundle is refused instead of being started.
+      if @fs.exists(secret_key_path(exe_path)) {
+        fail(
+          "the package says that it is not encrypted, but a secret key file is next to it: the package was changed",
+        )
+      }
+      if @fs.exists(passphrase_path(exe_path)) {
+        fail(
+          "the package says that it is not encrypted, but a passphrase file is next to it: the package was changed",
+        )
+      }
+      None
+    }
     Some(info) => {
       let passphrase = if info.method_name == METHOD_PASSPHRASE {
         let path = passphrase_path(exe_path)
@@ -249,6 +319,16 @@ pub async fn try_launch_self_extracting() -> Bool {
     }
   }
   let program = dir + "/" + m.main_program
+  // The file that is about to be started is read back from the disk and
+  // compared with the package, so that a file that was changed after it was
+  // unpacked is not started.
+  if !program_matches(m, program) {
+    eprintln(
+      "LunaPack: the program in the cache does not match the package: refusing to start it",
+    )
+    exit_with(1)
+    return true
+  }
   eprintln("LunaPack: starting " + program)
   // The arguments of the bundle belong to the bundled program.
   let args = bundled_arguments()

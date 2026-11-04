@@ -73,7 +73,7 @@ async test "a changed file is reported as an md5 mismatch" {
   @fs.write_text(dest + "/a.txt", "tampered\n")
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
-  let (_base, manifest) = locate_archive(file)
+  let manifest = read_archive(file).manifest
   let mismatches = verify_extracted_md5(manifest, dest)
   assert_true(mismatches == 1)
 }
@@ -96,7 +96,7 @@ async test "a missing file is reported as an md5 mismatch" {
   @fs.remove(dest + "/a.txt")
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
-  let (_base, manifest) = locate_archive(file)
+  let manifest = read_archive(file).manifest
   let mismatches = verify_extracted_md5(manifest, dest)
   assert_true(mismatches == 1)
 }
@@ -177,4 +177,102 @@ async test "a script that could not be started is removed again" {
   for name in @fs.readdir(dir) {
     assert_true(!name.has_prefix(".lunapack_"))
   }
+}
+
+///|
+/// A path that walks out of the destination is not a path that may be
+/// written.
+test "a path that walks out of the destination is refused" {
+  assert_true(is_safe_path("a.txt"))
+  assert_true(is_safe_path("sub/a.txt"))
+  assert_true(is_safe_path("a/b/c.txt"))
+  assert_true(!is_safe_path("../a.txt"))
+  assert_true(!is_safe_path("sub/../../a.txt"))
+  assert_true(!is_safe_path(".."))
+  assert_true(!is_safe_path("/a.txt"))
+  assert_true(!is_safe_path("C:/a.txt"))
+  assert_true(!is_safe_path("a\\b.txt"))
+  assert_true(!is_safe_path(""))
+}
+
+///|
+/// A checksum that is not the same the second time is not to be trusted.
+test "a checksum that is not the same twice is refused" {
+  let data = string_to_utf8_bytes("hello")
+  let mut calls = 0
+  let refused = try {
+    ignore(
+      redundant_with(data, fn(d : Bytes) -> String {
+        calls = calls + 1
+        if calls == 1 {
+          sha256_hex(d)
+        } else {
+          "0000000000000000"
+        }
+      }),
+    )
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(refused)
+}
+
+///|
+/// A checksum that is the same twice is the checksum.
+test "a checksum that is the same twice is accepted" {
+  let data = string_to_utf8_bytes("hello")
+  let result = redundant_with(data, fn(d : Bytes) -> String { sha256_hex(d) })
+  assert_true(result == sha256_hex(data))
+}
+
+///|
+/// The cache of a bundle is used again only when it holds what the package
+/// carries.
+async test "the cache is only used again when it holds what the package carries" {
+  let src = @fs.tmpdir(prefix="lunapack_cache_src")
+  @fs.write_text(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let manifest = read_package_manifest(pkg)
+  let dir = @fs.tmpdir(prefix="lunapack_cache_dir")
+  extract_to(pkg, dir, None)
+  assert_true(cache_matches(manifest, dir))
+  // The file in the cache is changed after it was unpacked.
+  @fs.write_text(dir + "/a.txt", "tampered\n")
+  assert_true(!cache_matches(manifest, dir))
+}
+
+///|
+/// The program of a bundle is not started when it was changed after it was
+/// unpacked.
+async test "the program of a bundle is checked before it is started" {
+  let src = @fs.tmpdir(prefix="lunapack_program_src")
+  @fs.write_text(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_main_program(
+    with_defaults(
+      new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+      "demo",
+      "1.0.0",
+      "windows",
+      "x86_64",
+    ),
+    "a.txt",
+  )
+  pack(src, pkg, opts)
+  let manifest = read_package_manifest(pkg)
+  let dir = @fs.tmpdir(prefix="lunapack_program_dir")
+  extract_to(pkg, dir, None)
+  assert_true(program_matches(manifest, dir + "/a.txt"))
+  // The program is changed after it was unpacked.
+  @fs.write_text(dir + "/a.txt", "tampered\n")
+  assert_true(!program_matches(manifest, dir + "/a.txt"))
 }

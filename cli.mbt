@@ -192,7 +192,18 @@ async fn encryption_options(flags : Array[Flag]) -> EncryptionOptions? {
 /// Returns None when the package is not encrypted.
 async fn package_key(flags : Array[Flag], m : Manifest) -> PackageKey? {
   match m.encryption {
-    None => None
+    None => {
+      // The package says that it is not encrypted. A key that was given
+      // anyway says that the package is not the one it says it is, so it is
+      // refused instead of being opened.
+      if flag_value(flags, "secret-key") != "" ||
+        flag_value(flags, "passphrase-file") != "" {
+        fail(
+          "the package says that it is not encrypted, but a key was given: the package was changed",
+        )
+      }
+      None
+    }
     Some(info) => {
       // The passphrase is needed in two places: for a package that is sealed
       // with one, and for a secret key file that one protects. The same
@@ -270,6 +281,7 @@ fn usage() -> Unit {
   )
   println("  lunapack unpack -i <package>   -o <dest_dir> [--skip-scripts]")
   println("  lunapack verify <package> [--extracted <dir>]")
+  println("  lunapack sign   <package> --secret-key <file> [--output <file>]")
   println("  lunapack info   <package>")
   println("  lunapack keygen --public-key <file> --secret-key <file>")
   println("")
@@ -287,6 +299,13 @@ fn usage() -> Unit {
   println(
     "  --launcher <file>       launcher for the single file (default: this one)",
   )
+  println("")
+  println("verification:")
+  println(
+    "  --signature <file>      signature the host published for the package",
+  )
+  println("  --public-key <file>     public key of the host that signed it")
+  println("  --expected-sha256 <hex> digest the host published for the package")
   println("")
   println("encryption:")
   println("  --encryption-method <m>  x25519 | passphrase")
@@ -497,6 +516,12 @@ async fn do_unpack(args : ArrayView[String]) -> Unit {
 /// `verify <package>` checks the package itself. `verify <package> --extracted
 /// <dir>` also checks the files that are already in `dir` against the
 /// fingerprints of the package.
+///
+/// `verify <package> --signature <file> --public-key <file>` checks the
+/// signature that the host published next to the package, and
+/// `verify <package> --expected-sha256 <digest>` checks the digest that the
+/// host published. Both are the material of the host, so they are checked
+/// before the package is opened at all.
 async fn do_verify(args : ArrayView[String]) -> Unit {
   if args.length() < 2 {
     println("error: verify requires a package path")
@@ -505,6 +530,36 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
   }
   try {
     let flags = parse_flags(args, 1)
+    let signature_path = flag_value(flags, "signature")
+    let public_path = flag_value(flags, "public-key")
+    let expected = flag_value(flags, "expected-sha256")
+    if signature_path != "" {
+      let text = read_text_file(signature_path) catch {
+        err => fail("cannot read the signature file: " + err.to_string())
+      }
+      let signature = match signature_from_text(text) {
+        Some(s) => s
+        None => fail("the signature file is not one")
+      }
+      if public_path == "" {
+        fail(
+          "a signature is checked against a public key: --public-key is missing",
+        )
+      }
+      let public = load_public_key(public_path)
+      if !verify_package_signature(args[1], signature, public) {
+        println("VERIFY FAILED")
+        return
+      }
+      println("the signature of the package holds")
+    }
+    if expected != "" {
+      if !verify_package_digest(args[1], expected) {
+        println("VERIFY FAILED")
+        return
+      }
+      println("the digest of the package is the one that was expected")
+    }
     let extracted = flag_value(flags, "extracted")
     let m = read_package_manifest(args[1])
     let key = package_key(flags, m)
@@ -521,6 +576,42 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
       println("VERIFY OK")
     } else {
       println("VERIFY FAILED")
+    }
+  } catch {
+    err => println("error: " + err.to_string())
+  }
+}
+
+///|
+/// The `sign` subcommand.
+///
+/// It signs a package with the secret key and writes the signature next to
+/// it, so that whoever holds the public key can tell that the package is
+/// the one that was published.
+async fn do_sign(args : ArrayView[String]) -> Unit {
+  if args.length() < 2 {
+    println("error: sign requires a package path")
+    usage()
+    return
+  }
+  let flags = parse_flags(args, 1)
+  let secret_path = flag_value(flags, "secret-key")
+  if secret_path == "" {
+    println("error: sign requires --secret-key <file>")
+    usage()
+    return
+  }
+  let output = flag_value(flags, "output")
+  try {
+    let passphrase = read_passphrase(flags)
+    let secret = load_secret_key(secret_path, passphrase)
+    let signature = sign_package(args[1], secret)
+    let text = signature_to_text(signature)
+    if output == "" {
+      println(text)
+    } else {
+      @fs.write_text(output, text)
+      println("wrote the signature to " + output)
     }
   } catch {
     err => println("error: " + err.to_string())
@@ -629,10 +720,14 @@ async fn do_info(args : ArrayView[String]) -> Unit {
 async fn main {
   // A self-extracting bundle carries its payload inside this executable:
   // start the bundled program instead of acting as a command line tool.
+  //
+  // A bundle that is damaged is refused: the error is not swallowed, because
+  // a bundle that cannot be unpacked is not a program without arguments.
   let launched = try_launch_self_extracting() catch {
     err => {
-      println("LunaPack: cannot start the bundled program: " + err.to_string())
-      false
+      eprintln("LunaPack: " + err.to_string())
+      exit_with(1)
+      true
     }
   }
   if launched {
@@ -652,6 +747,8 @@ async fn main {
     do_unpack(argv)
   } else if first == "verify" {
     do_verify(argv)
+  } else if first == "sign" {
+    do_sign(argv)
   } else if first == "info" {
     do_info(argv)
   } else if first == "keygen" {

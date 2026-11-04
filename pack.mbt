@@ -67,114 +67,139 @@ pub fn report_md5(path : String, digest : String) -> Unit {
 /// When `digest` is given, the bytes that go into the archive are hashed as
 /// they are written, so the fingerprint of the archive is known without
 /// reading the file back.
+///
+/// The archive is written into a file of its own and only then does it take
+/// the place of the target, so a write that was cut short never leaves a
+/// half-written package behind.
 async fn write_archive(
   items : Array[(String, String)],
   output : String,
   opts : PackOptions,
   digest : Md5?,
 ) -> Manifest {
-  if @fs.exists(output) {
-    @fs.remove(output)
-  }
   ensure_parent_dir(output)
-  let pkg = @fs.create(output, allow_existing=true, permission=0o644)
-  defer pkg.close()
-  let magic = magic_bytes()
-  pkg.write(magic)
-  match digest {
-    Some(d) => d.update(magic)
-    None => ()
-  }
-  let mut cursor : Int64 = 8
-  let entries = []
-  let mut scanned = 0
-  // The encryption is established before the first entry is written,
-  // because the place of an entry in the package is part of its seal.
-  let active = match opts.encryption {
-    Some(e) => Some(establish_encryption(e))
-    None => None
-  }
-  let enc_key = match active {
-    Some(a) => Some(a.key)
-    None => None
-  }
-  let mut index = 0
-  for it in items {
-    let (src, target) = it
-    let raw = @fs.read_binary(src)
-    let sum = sha256_hex(raw)
-    let fingerprint = md5_hex(raw)
-    // The scan list shows the fingerprint of every file before it goes into
-    // the package.
-    println("  md5  " + fingerprint + "  " + target)
-    scanned = scanned + 1
-    // Preserve the executable bit in a portable way: `can_execute` maps to
-    // the POSIX x-bit and to executable extensions on Windows.
-    let exec = @fs.can_execute(src)
-    let mode : Int32 = if exec { 0o755 } else { 0o644 }
-    let (stored, codec) = compress_with(raw, opts.compression)
-    // The payload is encrypted after it is compressed: a ciphertext does
-    // not compress any further.
-    let payload = match enc_key {
-      Some(k) => seal_entry(k, index, target, stored)
-      None => stored
-    }
-    pkg.write(payload)
+  let tmp = output + ".lunapack-tmp"
+  @fs.remove(tmp, allow_missing=true)
+  errdefer @fs.remove(tmp, allow_missing=true)
+  let manifest = {
+    let pkg = @fs.create(tmp, allow_existing=true, permission=0o644)
+    defer pkg.close()
+    let magic = magic_bytes()
+    pkg.write(magic)
     match digest {
-      Some(d) => d.update(payload)
+      Some(d) => d.update(magic)
       None => ()
     }
-    entries.push({
-      path: target,
-      mode,
-      size: raw.length().to_int64(),
-      // The stored size is what the package holds: the encrypted payload.
-      stored_size: payload.length().to_int64(),
-      codec,
-      checksum: sum,
-      md5: fingerprint,
-      offset: cursor,
-    })
-    cursor = cursor + payload.length().to_int64()
-    index = index + 1
-  }
-  println("scanned " + scanned.to_string() + " files")
-  let manifest = {
-    format_version: FORMAT_VERSION,
-    name: opts.name,
-    version: opts.version,
-    os: opts.os,
-    arch: opts.arch,
-    checksum_algo: CHECKSUM_ALGO,
-    compression: opts.compression,
-    created_at: iso8601_utc(@env.now()),
-    main_program: opts.main_program,
-    pre_install: opts.pre_install,
-    post_install: opts.post_install,
-    encryption: match active {
-      Some(a) => Some(a.info)
+    let mut cursor : Int64 = 8
+    let entries = []
+    let mut scanned = 0
+    // The encryption is established before the first entry is written,
+    // because the place of an entry in the package is part of its seal.
+    let active = match opts.encryption {
+      Some(e) => Some(establish_encryption(e))
       None => None
-    },
-    entries,
-  }
-  let mjson = manifest_to_json(manifest)
-  let mbytes = string_to_utf8_bytes(mjson)
-  let moff = cursor
-  pkg.write(mbytes)
-  let mlen : Int64 = Int64::from_int(mbytes.length())
-  let footer = magic_bytes()
-  pkg.write(footer)
-  pkg.write(i64_to_le8(moff))
-  pkg.write(i64_to_le8(mlen))
-  match digest {
-    Some(d) => {
-      d.update(mbytes)
-      d.update(footer)
-      d.update(i64_to_le8(moff))
-      d.update(i64_to_le8(mlen))
     }
-    None => ()
+    let enc_key = match active {
+      Some(a) => Some(a.key)
+      None => None
+    }
+    let mut index = 0
+    for it in items {
+      let (src, target) = it
+      let raw = @fs.read_binary(src)
+      let sum = sha256_hex(raw)
+      let fingerprint = md5_hex(raw)
+      // The scan list shows the fingerprint of every file before it goes into
+      // the package.
+      println("  md5  " + fingerprint + "  " + target)
+      scanned = scanned + 1
+      // Preserve the executable bit in a portable way: `can_execute` maps to
+      // the POSIX x-bit and to executable extensions on Windows.
+      let exec = @fs.can_execute(src)
+      let mode : Int32 = if exec { 0o755 } else { 0o644 }
+      let (stored, codec) = compress_with(raw, opts.compression)
+      // The payload is encrypted after it is compressed: a ciphertext does
+      // not compress any further.
+      let payload = match enc_key {
+        Some(k) => seal_entry(k, index, target, stored)
+        None => stored
+      }
+      pkg.write(payload)
+      match digest {
+        Some(d) => d.update(payload)
+        None => ()
+      }
+      entries.push({
+        path: target,
+        mode,
+        size: raw.length().to_int64(),
+        // The stored size is what the package holds: the encrypted payload.
+        stored_size: payload.length().to_int64(),
+        codec,
+        checksum: sum,
+        md5: fingerprint,
+        offset: cursor,
+      })
+      cursor = cursor + payload.length().to_int64()
+      index = index + 1
+    }
+    println("scanned " + scanned.to_string() + " files")
+    let manifest = {
+      format_version: FORMAT_VERSION,
+      name: opts.name,
+      version: opts.version,
+      os: opts.os,
+      arch: opts.arch,
+      checksum_algo: CHECKSUM_ALGO,
+      compression: opts.compression,
+      created_at: iso8601_utc(@env.now()),
+      main_program: opts.main_program,
+      pre_install: opts.pre_install,
+      post_install: opts.post_install,
+      encryption: match active {
+        Some(a) => Some(a.info)
+        None => None
+      },
+      entries,
+    }
+    let mjson = manifest_to_json(manifest)
+    let mbytes = string_to_utf8_bytes(mjson)
+    // The integrity block sits between the last entry and the manifest. A
+    // package that carries one is still a package that an older LunaPack
+    // can read, because the older reader steps over the block and finds the
+    // manifest where it expects it.
+    let block_size = match enc_key {
+      Some(_) => INTEGRITY_BLOCK_BYTES_ENCRYPTED
+      None => INTEGRITY_BLOCK_BYTES
+    }
+    let moff = cursor + block_size.to_int64()
+    let mlen : Int64 = Int64::from_int(mbytes.length())
+    let block = match enc_key {
+      Some(k) => integrity_block_encrypted(k, moff, mlen, mbytes)
+      None => integrity_block(moff, mlen, mbytes)
+    }
+    pkg.write(block)
+    pkg.write(mbytes)
+    let footer = magic_bytes()
+    pkg.write(footer)
+    pkg.write(i64_to_le8(moff))
+    pkg.write(i64_to_le8(mlen))
+    match digest {
+      Some(d) => {
+        d.update(block)
+        d.update(mbytes)
+        d.update(footer)
+        d.update(i64_to_le8(moff))
+        d.update(i64_to_le8(mlen))
+      }
+      None => ()
+    }
+    // The bytes are on the disk before the file takes the place of the
+    // target, so the target is never a half-written package.
+    pkg.sync()
+    manifest
   }
+  @fs.rename(tmp, output, replace=true)
   manifest
 }
 
@@ -298,11 +323,14 @@ pub async fn bundle(
       None => None
     }
   }
-  if @fs.exists(output_exe) {
-    @fs.remove(output_exe)
-  }
-  // The fingerprint of the produced file is computed while it is written, so
-  // the file never has to be read back.
+  // The bundle is built in a file of its own and only then does it take the
+  // place of the target, so a write that was cut short never leaves a
+  // half-written bundle behind.
+  let work = output_exe + ".lunapack-tmp"
+  @fs.remove(work, allow_missing=true)
+  // The target keeps what it held: the bundle that is written takes the
+  // place of the target only when it is whole.
+  errdefer @fs.remove(work, allow_missing=true)
   let digest = Md5::Md5()
   match stub {
     Some(s) => {
@@ -310,14 +338,14 @@ pub async fn bundle(
       // written with the Windows resource API, which rewrites the file and
       // therefore needs it to be closed.
       {
-        let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
+        let out = @fs.create(work, allow_existing=true, permission=0o644)
         defer out.close()
         append_file(out, s, 0, None)
       }
       // Give the bundle the icon of the application it carries. This has to
       // happen before the payload is appended, because writing resources
       // rewrites the file.
-      if copy_icon(input_exe, output_exe) {
+      if copy_icon(input_exe, work) {
         icon_copied = true
       }
       // The bundle has to carry the subsystem of the program it carries:
@@ -325,15 +353,15 @@ pub async fn bundle(
       // bundled into a console bundle flashes a console window on every
       // start.
       let wanted = pe_subsystem_of(input_exe)
-      if wanted != 0 && set_pe_subsystem(output_exe, wanted) {
+      if wanted != 0 && set_pe_subsystem(work, wanted) {
         subsystem_copied = wanted == PE_SUBSYSTEM_GUI
       }
       // The stub is hashed now, because the icon and the subsystem have
       // changed its bytes.
-      let stub_size = @fs.file_size(output_exe)
-      digest.update(@fs.read_binary(output_exe))
+      let stub_size = @fs.file_size(work)
+      digest.update(@fs.read_binary(work))
       // Finally append the archive. The stub may have grown by the icon.
-      let out = @fs.open(output_exe, mode=@fs.Mode::ReadWrite)
+      let out = @fs.open(work, mode=@fs.Mode::ReadWrite)
       defer out.close()
       append_file(out, tmp, stub_size, Some(digest))
     }
@@ -348,7 +376,7 @@ pub async fn bundle(
       println(
         "hint: name one with --launcher <file> to get a file that starts on its own",
       )
-      let out = @fs.create(output_exe, allow_existing=true, permission=0o644)
+      let out = @fs.create(work, allow_existing=true, permission=0o644)
       defer out.close()
       append_file(out, input_exe, 0, Some(digest))
       let exe_size = @fs.file_size(input_exe)
@@ -356,6 +384,7 @@ pub async fn bundle(
     }
   }
   @fs.remove(tmp)
+  @fs.rename(work, output_exe, replace=true)
   println(
     "bundled " +
     m.entries.length().to_string() +

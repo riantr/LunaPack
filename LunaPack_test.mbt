@@ -268,7 +268,7 @@ async test "pack produces a manifest that round-trips" {
   )
   @LunaPack.pack(src, pkg, opts)
   let m = @LunaPack.read_package_manifest(pkg)
-  assert_true(m.format_version == 5)
+  assert_true(m.format_version == 6)
   assert_true(m.name == "demo")
   assert_true(m.version == "1.0.0")
   assert_true(m.os == "linux")

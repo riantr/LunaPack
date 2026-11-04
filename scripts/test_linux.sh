@@ -292,6 +292,118 @@ else
   fail "corrupted package was NOT rejected"
 fi
 
+section "the integrity of the manifest"
+# The manifest of a package carries the SHA-256 of its own bytes. A manifest
+# that was changed is refused, and the reason is named.
+cp "$WORK_DIR/pkg.appkg" "$WORK_DIR/manifest_bad.appkg"
+python3 - "$WORK_DIR/manifest_bad.appkg" linux-demo tampered!! <<'PY'
+import struct, sys
+p, old_name, new_name = sys.argv[1], sys.argv[2].encode(), sys.argv[3].encode()
+d = bytearray(open(p, "rb").read())
+mlen = struct.unpack_from("<q", d, len(d) - 8)[0]
+moff = struct.unpack_from("<q", d, len(d) - 16)[0]
+base = len(d) - (moff + mlen + 24)
+manifest = d[base + moff: base + moff + mlen]
+# The name is replaced by one of the same length, so the footer stays right
+# and the only thing that is wrong with the package is the manifest.
+old = b'"name":"' + old_name + b'"'
+new = b'"name":"' + new_name + b'"'
+at = manifest.find(old)
+if at < 0:
+    raise SystemExit("the name was not found in the manifest")
+manifest[at:at + len(old)] = new
+d[base + moff: base + moff + mlen] = manifest
+open(p, "wb").write(d)
+PY
+if "$BIN" verify "$WORK_DIR/manifest_bad.appkg" 2>&1 | grep -q "error:"; then
+  pass "a manifest that was changed is refused"
+else
+  fail "a manifest that was changed was NOT refused"
+fi
+
+# A sealed package carries a MAC of its manifest as well. The digest is not
+# a secret, so whoever holds the file can write one that matches the
+# manifest they wrote. The MAC is the guard that is left.
+cp "$WORK_DIR/secret.appkg" "$WORK_DIR/secret_bad.appkg"
+python3 - "$WORK_DIR/secret_bad.appkg" secret-demo tampered!!! <<'PY'
+import hashlib, struct, sys
+p, old_name, new_name = sys.argv[1], sys.argv[2].encode(), sys.argv[3].encode()
+d = bytearray(open(p, "rb").read())
+mlen = struct.unpack_from("<q", d, len(d) - 8)[0]
+moff = struct.unpack_from("<q", d, len(d) - 16)[0]
+base = len(d) - (moff + mlen + 24)
+manifest = d[base + moff: base + moff + mlen]
+old = b'"name":"' + old_name + b'"'
+new = b'"name":"' + new_name + b'"'
+at = manifest.find(old)
+if at < 0:
+    raise SystemExit("the name was not found in the manifest")
+manifest[at:at + len(old)] = new
+# The digest of the manifest is written again, which is what whoever holds
+# the file can do. The MAC of the manifest stays as it was.
+block = 72 if b'"encryption":{' in manifest else 40
+digest = hashlib.sha256(
+    struct.pack("<q", moff) + struct.pack("<q", mlen) + bytes(manifest)
+).digest()
+at = base + moff - block + 8
+d[at:at + 32] = digest
+d[base + moff: base + moff + mlen] = manifest
+open(p, "wb").write(d)
+PY
+if "$BIN" verify "$WORK_DIR/secret_bad.appkg" --secret-key "$WORK_DIR/recipient.key" 2>&1 \
+   | grep -q "error:"; then
+  pass "a sealed manifest that was changed is refused"
+else
+  fail "a sealed manifest that was changed was NOT refused"
+fi
+
+# A package that was cut short is refused: it is a damaged package, not a
+# file that is not a package.
+head -c 100 "$WORK_DIR/pkg.appkg" > "$WORK_DIR/truncated.appkg"
+if "$BIN" verify "$WORK_DIR/truncated.appkg" 2>&1 | grep -q "error:"; then
+  pass "a truncated package is refused"
+else
+  fail "a truncated package was NOT refused"
+fi
+
+# A file that is not a package is not a damaged package.
+printf 'not a package at all\n' > "$WORK_DIR/plain.txt"
+if "$BIN" verify "$WORK_DIR/plain.txt" 2>&1 | grep -q "error:"; then
+  fail "a plain file was treated as a damaged package"
+else
+  pass "a plain file is not a damaged package"
+fi
+
+section "the signature of the host"
+# The host signs the package with its secret key, and whoever holds the
+# public key can tell that the package is the one the host published.
+"$BIN" keygen --public-key "$WORK_DIR/host.pub" --secret-key "$WORK_DIR/host.key" > /dev/null
+"$BIN" sign "$WORK_DIR/pkg.appkg" --secret-key "$WORK_DIR/host.key" \
+  --output "$WORK_DIR/pkg.appkg.sig" > /dev/null
+[ -f "$WORK_DIR/pkg.appkg.sig" ] || fail "the signature was not written"
+grep -q "^lunapack-signature v1" "$WORK_DIR/pkg.appkg.sig" \
+  || fail "the signature file does not say what it is"
+"$BIN" verify "$WORK_DIR/pkg.appkg" --signature "$WORK_DIR/pkg.appkg.sig" \
+  --public-key "$WORK_DIR/host.pub" | grep -q "VERIFY OK" \
+  || fail "the signature of the host did not hold"
+pass "the signature of the host holds"
+
+# A package that was changed after it was signed does not match it.
+cp "$WORK_DIR/pkg.appkg" "$WORK_DIR/signed_bad.appkg"
+printf 'x' >> "$WORK_DIR/signed_bad.appkg"
+if "$BIN" verify "$WORK_DIR/signed_bad.appkg" --signature "$WORK_DIR/pkg.appkg.sig" \
+   --public-key "$WORK_DIR/host.pub" 2>&1 | grep -q "VERIFY FAILED"; then
+  pass "a package that was changed after it was signed does not match"
+else
+  fail "a changed package still matched the signature"
+fi
+
+# The digest that the host published is checked as well.
+HOST_DIGEST="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK_DIR/pkg.appkg")"
+"$BIN" verify "$WORK_DIR/pkg.appkg" --expected-sha256 "$HOST_DIGEST" \
+  | grep -q "VERIFY OK" || fail "the published digest did not hold"
+pass "the published digest holds"
+
 section "skip-scripts"
 rm -rf "$WORK_DIR/out2"
 "$BIN" unpack -i "$WORK_DIR/pkg.appkg" -o "$WORK_DIR/out2" --skip-scripts

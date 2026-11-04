@@ -7,6 +7,12 @@
 //   [8..)       entry payloads, stored back to back
 //   [moff..)    manifest, UTF-8 JSON
 //   last 24 B   footer: magic(8) + manifest_offset(8 LE) + manifest_length(8 LE)
+//
+// From v6 on there is an integrity block between the last entry and the
+// manifest. It holds a digest of the manifest and, for an encrypted
+// package, a MAC of it. The block is inside the region of the entries, so
+// the layout above does not change and a package that carries one is still
+// a package that an older LunaPack can read.
 
 ///|
 /// Magic marker at the head and inside the footer of every .appkg file.
@@ -22,8 +28,11 @@ pub const MAGIC : String = "APPKGD02"
 /// Format version recorded in the manifest.
 ///
 /// v3 adds the MD5 fingerprint of every entry next to its SHA-256 checksum.
-/// v4 adds the LZ4 codec. v5 adds the encryption of the entries.
-pub const FORMAT_VERSION : Int32 = 5
+/// v4 adds the LZ4 codec. v5 adds the encryption of the entries. v6 adds
+/// the integrity block: a digest of the manifest that says that the manifest
+/// is the one the packer wrote, and, for an encrypted package, a MAC of the
+/// manifest that says that nobody changed it since.
+pub const FORMAT_VERSION : Int32 = 6
 
 ///|
 /// Checksum algorithm used for every entry payload.

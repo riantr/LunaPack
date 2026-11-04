@@ -4,9 +4,23 @@ package "riantr/LunaPack"
 // Values
 pub const CHECKSUM_ALGO : String = "sha256"
 
-pub const FORMAT_VERSION : Int32 = 5
+pub const FORMAT_VERSION : Int32 = 6
 
 pub const GZIP_LEVEL : Int32 = 1
+
+pub const INTEGRITY_BLOCK_BYTES : Int32 = 40
+
+pub const INTEGRITY_BLOCK_BYTES_ENCRYPTED : Int32 = 72
+
+pub const INTEGRITY_DIGEST_BYTES : Int32 = 32
+
+pub const INTEGRITY_MAC_BYTES : Int32 = 32
+
+pub const INTEGRITY_MARKER : String = "LPMANIFU"
+
+pub const INTEGRITY_MARKER_BYTES : Int32 = 8
+
+pub const INTEGRITY_MARKER_ENCRYPTED : String = "LPMANIFE"
 
 pub const KEY_ALGORITHM : Int32 = 1
 
@@ -48,6 +62,10 @@ pub const SALT_BYTES : Int32 = 16
 
 pub const SHA512_BYTES : Int32 = 64
 
+pub const SIGNATURE_ALGORITHM : String = "ed25519"
+
+pub const SIGNATURE_HEADER : String = "lunapack-signature v1"
+
 pub const TAG_BYTES : Int32 = 16
 
 pub fn basename(String) -> String
@@ -79,6 +97,12 @@ pub fn default_arch() -> String
 pub fn derive_package_key(Bytes, Bytes) -> PackageKey
 
 pub fn dirname(String) -> String
+
+pub fn ed25519_public_key(Bytes) -> Bytes raise
+
+pub fn ed25519_sign(Bytes, Bytes) -> Bytes raise
+
+pub fn ed25519_verify(Bytes, Bytes, Bytes) -> Bool raise
 
 pub async fn ensure_parent_dir(String) -> Unit
 
@@ -112,7 +136,15 @@ pub fn host_platform() -> String
 
 pub fn i64_to_le8(Int64) -> Bytes
 
+pub fn integrity_block(Int64, Int64, Bytes) -> Bytes raise
+
+pub fn integrity_block_encrypted(PackageKey, Int64, Int64, Bytes) -> Bytes raise
+
 pub fn is_all_zero(Bytes) -> Bool
+
+pub fn is_integrity_block(Bytes) -> Bool
+
+pub fn is_integrity_block_encrypted(Bytes) -> Bool
 
 pub fn is_native_target() -> Bool
 
@@ -134,6 +166,12 @@ pub fn lz4_decompress_frame(Bytes, Int32) -> Bytes
 
 pub fn magic_bytes() -> Bytes
 
+pub fn manifest_digest(Int64, Int64, Bytes) -> Bytes raise
+
+pub fn manifest_mac(PackageKey, Int64, Int64, Bytes) -> Bytes
+
+pub fn manifest_mac_key(PackageKey) -> Bytes
+
 pub fn manifest_to_json(Manifest) -> String
 
 pub fn md5_hex(Bytes) -> String
@@ -148,6 +186,8 @@ pub fn new_pack_options(String, String, String, String, Script?, Script?, String
 
 pub fn new_package_key(Bytes, Bytes) -> PackageKey
 
+pub fn new_package_signature(String, String, String) -> PackageSignature
+
 pub fn new_script(String, String) -> Script
 
 pub fn new_sealed_package(Bytes, Bytes, Bytes, Bytes) -> SealedPackage
@@ -157,6 +197,8 @@ pub fn norm_sep(String) -> String
 pub fn open_entry(PackageKey, Int32, String, Bytes) -> Bytes?
 
 pub async fn pack(String, String, PackOptions) -> Unit
+
+pub async fn package_manifest_digest(String) -> String
 
 pub fn package_tag(Manifest) -> String
 
@@ -183,6 +225,10 @@ pub fn read_at(PeFile, Int64, Int64) -> Bytes
 pub async fn read_package_manifest(String) -> Manifest
 
 pub async fn recover_encryption(Encryption, String, String) -> PackageKey
+
+pub fn redundant_md5(Bytes) -> String raise
+
+pub fn redundant_sha256(Bytes) -> String raise
 
 pub fn relpath(String, String) -> String
 
@@ -222,6 +268,12 @@ pub fn shared_with_secret_key(Bytes, Bytes) -> Bytes
 
 pub fn shell_for(String) -> (String, Array[String], String)
 
+pub async fn sign_package(String, Bytes) -> PackageSignature
+
+pub fn signature_from_text(String) -> PackageSignature?
+
+pub fn signature_to_text(PackageSignature) -> String
+
 pub fn string_to_utf8_bytes(String) -> Bytes
 
 pub fn truncate_bytes(Bytes, Int32) -> Bytes
@@ -235,6 +287,10 @@ pub fn utf8_bytes_to_string(Bytes) -> String
 pub async fn verify(String, PackageKey?) -> Bool
 
 pub async fn verify_extracted_dir(String, String) -> Bool
+
+pub async fn verify_package_digest(String, String) -> Bool
+
+pub async fn verify_package_signature(String, PackageSignature, Bytes) -> Bool
 
 pub fn with_defaults(PackOptions, String, String, String, String) -> PackOptions
 
@@ -257,6 +313,8 @@ pub struct ActiveEncryption {
   key : PackageKey
   info : Encryption
 }
+
+type Archive
 
 pub struct Encryption {
   method_name : String
@@ -284,6 +342,8 @@ pub struct Entry {
   md5 : String
   offset : Int64
 }
+
+type Integrity
 
 pub struct Manifest {
   format_version : Int32
@@ -325,6 +385,12 @@ pub struct PackOptions {
 pub struct PackageKey {
   master : Bytes
   salt : Bytes
+}
+
+pub struct PackageSignature {
+  package_digest : String
+  manifest_digest : String
+  signature : String
 }
 
 pub struct PeFile {
