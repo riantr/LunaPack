@@ -80,18 +80,40 @@ pub async fn read_package_manifest(pkg : String) -> Manifest {
 }
 
 ///|
-/// Fetch and (if needed) decompress the payload of one entry.
-async fn entry_payload(file : @fs.File, e : Entry, base : Int64) -> Bytes {
+/// Fetch and (if needed) decrypt and decompress the payload of one entry.
+///
+/// The index of the entry is part of its seal, so it has to be the place the
+/// entry has in the manifest.
+async fn entry_payload(
+  file : @fs.File,
+  e : Entry,
+  base : Int64,
+  index : Int32,
+  key : PackageKey?,
+) -> Bytes {
   let stored = file.read_exactly_at(
     e.stored_size.to_int(),
     position=base + e.offset,
   )
+  let plain = match key {
+    Some(k) =>
+      match open_entry(k, index, e.path, stored) {
+        Some(d) => d
+        None =>
+          fail(
+            "the seal of " +
+            e.path +
+            " does not hold: the key is wrong, or the package is damaged",
+          )
+      }
+    None => stored
+  }
   if e.codec == "gzip" {
-    gzip_decompress(stored)
+    gzip_decompress(plain)
   } else if e.codec == "lz4" {
-    lz4_decompress_frame(stored, e.size.to_int())
+    lz4_decompress_frame(plain, e.size.to_int())
   } else {
-    stored
+    plain
   }
 }
 
@@ -126,9 +148,12 @@ async fn write_entries(
   base : Int64,
   dest : String,
   host : String,
+  key : PackageKey?,
 ) -> Unit {
+  let mut index = 0
   for e in manifest.entries {
-    let data = entry_payload(file, e, base)
+    let data = entry_payload(file, e, base, index, key)
+    index = index + 1
     if sha256_hex(data) != e.checksum {
       fail("checksum mismatch for " + e.path)
     }
@@ -150,13 +175,13 @@ async fn write_entries(
 ///
 /// Used by the self-extracting launcher, which does not want to list every
 /// file it writes.
-pub async fn extract_to(pkg : String, dest : String) -> Unit {
+pub async fn extract_to(pkg : String, dest : String, key : PackageKey?) -> Unit {
   let dest = norm_sep(dest)
   @fs.mkdir(dest, recursive=true, allow_exist=true)
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
   let (base, manifest) = locate_archive(file)
-  write_entries(file, manifest, base, dest, host_platform())
+  write_entries(file, manifest, base, dest, host_platform(), key)
 }
 
 ///|
@@ -205,7 +230,12 @@ async fn verify_extracted_md5(manifest : Manifest, dest : String) -> Int32 {
 ///
 /// `run_scripts` controls whether the embedded pre_install / post_install
 /// scripts are executed.
-pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
+pub async fn unpack(
+  pkg : String,
+  dest : String,
+  run_scripts : Bool,
+  key : PackageKey?,
+) -> Unit {
   let dest = norm_sep(dest)
   @fs.mkdir(dest, recursive=true, allow_exist=true)
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
@@ -228,8 +258,10 @@ pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
       None => ()
     }
   }
+  let mut index = 0
   for e in manifest.entries {
-    let data = entry_payload(file, e, base)
+    let data = entry_payload(file, e, base, index, key)
+    index = index + 1
     if sha256_hex(data) != e.checksum {
       fail("checksum mismatch for " + e.path)
     }
@@ -320,12 +352,14 @@ pub async fn verify_extracted_dir(pkg : String, dir : String) -> Bool {
 
 ///|
 /// Check every entry of a package: magic, sizes, SHA-256 and MD5 digests.
-pub async fn verify(pkg : String) -> Bool {
+pub async fn verify(pkg : String, key : PackageKey?) -> Bool {
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
   let (base, manifest) = locate_archive(file)
+  let mut index = 0
   for e in manifest.entries {
-    let data = entry_payload(file, e, base)
+    let data = entry_payload(file, e, base, index, key)
+    index = index + 1
     if sha256_hex(data) != e.checksum {
       println("verify: checksum mismatch for " + e.path)
       return false

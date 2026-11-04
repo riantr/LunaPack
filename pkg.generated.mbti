@@ -4,9 +4,21 @@ package "riantr/LunaPack"
 // Values
 pub const CHECKSUM_ALGO : String = "sha256"
 
-pub const FORMAT_VERSION : Int32 = 4
+pub const FORMAT_VERSION : Int32 = 5
 
 pub const GZIP_LEVEL : Int32 = 1
+
+pub const KEY_ALGORITHM : Int32 = 1
+
+pub const KEY_BYTES : Int32 = 32
+
+pub const KEY_HEADER_BYTES : Int32 = 42
+
+pub const KEY_MAGIC : String = "LUNAPK01"
+
+pub const KEY_SALT_BYTES : Int32 = 16
+
+pub const KEY_VERSION : Int32 = 1
 
 pub const LZ4_BLOCK_SIZE : Int32 = 4194304
 
@@ -14,17 +26,43 @@ pub const LZ4_MAGIC : UInt32 = 0x184D2204
 
 pub const MAGIC : String = "APPKGD02"
 
+pub const METHOD_PASSPHRASE : String = "passphrase"
+
+pub const METHOD_X25519 : String = "x25519"
+
+pub const NONCE_BYTES : Int32 = 12
+
+pub const PASSPHRASE_ITERATIONS : Int32 = 210000
+
 pub const RT_GROUP_ICON : Int64 = 14
 
 pub const RT_ICON : Int64 = 3
+
+pub const SALT_BYTES : Int32 = 16
+
+pub const SHA512_BYTES : Int32 = 64
+
+pub const TAG_BYTES : Int32 = 16
 
 pub fn basename(String) -> String
 
 pub async fn bundle(String, String, Array[String], PackOptions) -> Unit
 
+pub fn bytes_concat(Bytes, Bytes) -> Bytes
+
+pub fn bytes_to_hex(Bytes) -> String
+
+pub fn chacha20_xor(Bytes, Bytes, UInt32, BytesView) -> Bytes
+
+pub fn chacha20poly1305_open(Bytes, Bytes, BytesView, BytesView) -> Bytes?
+
+pub fn chacha20poly1305_seal(Bytes, Bytes, BytesView, BytesView) -> Bytes
+
 pub async fn collect_files(String) -> Array[String]
 
 pub fn compress_with(Bytes, String) -> (Bytes, String)
+
+pub fn compute_key_check(Bytes, Bytes, Bytes, Bytes) -> Bytes
 
 pub async fn copy_icon(String, String) -> Bool
 
@@ -32,13 +70,17 @@ pub fn current_exe_path() -> String?
 
 pub fn default_arch() -> String
 
+pub fn derive_package_key(Bytes, Bytes) -> PackageKey
+
 pub fn dirname(String) -> String
 
 pub async fn ensure_parent_dir(String) -> Unit
 
+pub async fn establish_encryption(EncryptionOptions) -> ActiveEncryption
+
 pub fn extract_icon(PeFile) -> (Int64, Bytes, Array[(Int64, Bytes)])? raise
 
-pub async fn extract_to(String, String) -> Unit
+pub async fn extract_to(String, String, PackageKey?) -> Unit
 
 pub async fn file_md5_hex(String) -> String
 
@@ -48,17 +90,35 @@ pub fn gzip_compress(Bytes) -> Bytes
 
 pub fn gzip_decompress(Bytes) -> Bytes
 
+pub fn hex_to_bytes(String) -> Bytes?
+
+pub fn hkdf_expand_sha512(Bytes, Bytes, Int32) -> Bytes
+
+pub fn hkdf_extract_sha512(Bytes, Bytes) -> Bytes
+
+pub fn hkdf_sha512(Bytes, Bytes, Bytes, Int32) -> Bytes
+
+pub fn hmac_sha512(Bytes, Bytes) -> Bytes
+
 pub fn host_platform() -> String
 
 pub fn i64_to_le8(Int64) -> Bytes
 
+pub fn is_all_zero(Bytes) -> Bool
+
 pub fn is_native_target() -> Bool
+
+pub async fn is_protected_key_file(String) -> Bool
 
 pub fn iso8601_utc(UInt64) -> String
 
 pub fn json_to_manifest(String) -> Manifest raise
 
 pub fn le8_to_i64(Bytes, Int32) -> Int64
+
+pub async fn load_public_key(String) -> Bytes
+
+pub async fn load_secret_key(String, String) -> Bytes
 
 pub fn lz4_compress_frame(Bytes) -> Bytes
 
@@ -72,11 +132,21 @@ pub fn md5_hex(Bytes) -> String
 
 pub fn md5_hex_of_string(String) -> String
 
+pub fn new_encryption(String, String, String, String, Int32, String) -> Encryption
+
+pub fn new_encryption_options(String, String, String, Int32) -> EncryptionOptions
+
 pub fn new_pack_options(String, String, String, String, Script?, Script?, String) -> PackOptions
+
+pub fn new_package_key(Bytes, Bytes) -> PackageKey
 
 pub fn new_script(String, String) -> Script
 
+pub fn new_sealed_package(Bytes, Bytes, Bytes, Bytes) -> SealedPackage
+
 pub fn norm_sep(String) -> String
+
+pub fn open_entry(PackageKey, Int32, String, Bytes) -> Bytes?
 
 pub async fn pack(String, String, PackOptions) -> Unit
 
@@ -86,11 +156,21 @@ pub fn package_tag_of(String) -> String
 
 pub fn parse_pe(Bytes) -> PeFile raise
 
+pub fn passphrase_secret(String, Bytes, Int32) -> Bytes
+
+pub fn pbkdf2_sha512(Bytes, Bytes, Int32, Int32) -> Bytes
+
+pub fn poly1305(Bytes, BytesView) -> Bytes
+
 pub async fn probe_archive(String) -> (Int64, Manifest)?
+
+pub fn random_bytes(Int32) -> Bytes
 
 pub fn read_at(PeFile, Int64, Int64) -> Bytes
 
 pub async fn read_package_manifest(String) -> Manifest
+
+pub async fn recover_encryption(Encryption, String, String) -> PackageKey
 
 pub fn relpath(String, String) -> String
 
@@ -100,9 +180,19 @@ pub async fn report_output_md5(String) -> Unit
 
 pub async fn run_install_script(String, String, Script, String) -> Int32
 
+pub async fn save_public_key(String, Bytes) -> Unit
+
+pub async fn save_secret_key(String, Bytes, String) -> Unit
+
+pub async fn save_secret_key_raw(String, Bytes) -> Unit
+
 pub fn script_applies(String, String) -> Bool
 
 pub fn script_platform_of(String) -> String
+
+pub fn seal_entry(PackageKey, Int32, String, Bytes) -> Bytes
+
+pub fn seal_to_public_key(Bytes) -> SealedPackage
 
 pub async fn set_permissions(String, String, Int32) -> Unit
 
@@ -110,29 +200,66 @@ pub fn sha256_hex(Bytes) -> String
 
 pub fn sha256_hex_of_string(String) -> String
 
+pub fn sha512(Bytes) -> Bytes
+
+pub fn sha512_hex(Bytes) -> String
+
+pub fn shared_with_secret_key(Bytes, Bytes) -> Bytes
+
 pub fn shell_for(String) -> (String, Array[String], String)
 
 pub fn string_to_utf8_bytes(String) -> Bytes
 
+pub fn truncate_bytes(Bytes, Int32) -> Bytes
+
 pub async fn try_launch_self_extracting() -> Bool
 
-pub async fn unpack(String, String, Bool) -> Unit
+pub async fn unpack(String, String, Bool, PackageKey?) -> Unit
 
 pub fn utf8_bytes_to_string(Bytes) -> String
 
-pub async fn verify(String) -> Bool
+pub async fn verify(String, PackageKey?) -> Bool
 
 pub async fn verify_extracted_dir(String, String) -> Bool
 
 pub fn with_defaults(PackOptions, String, String, String, String) -> PackOptions
 
+pub fn with_encryption(PackOptions, EncryptionOptions) -> PackOptions
+
 pub fn with_main_program(PackOptions, String) -> PackOptions
 
+pub fn x25519(Bytes, Bytes) -> Bytes
+
+pub fn x25519_public_key(Bytes) -> Bytes
+
 pub fn xxhash32(Bytes, Int32, Int32, UInt32) -> UInt32
+
+pub fn zero_bytes(Int32) -> Bytes
 
 // Errors
 
 // Types and methods
+pub struct ActiveEncryption {
+  key : PackageKey
+  info : Encryption
+}
+
+pub struct Encryption {
+  method_name : String
+  recipient : String
+  ephemeral : String
+  salt : String
+  iterations : Int32
+  key_check : String
+}
+
+pub struct EncryptionOptions {
+  method_name : String
+  public_key : String
+  passphrase : String
+  iterations : Int32
+}
+
 pub struct Entry {
   path : String
   mode : Int32
@@ -156,6 +283,7 @@ pub struct Manifest {
   main_program : String
   pre_install : Script?
   post_install : Script?
+  encryption : Encryption?
   entries : Array[Entry]
 }
 
@@ -177,6 +305,12 @@ pub struct PackOptions {
   post_install : Script?
   compression : String
   main_program : String
+  encryption : EncryptionOptions?
+}
+
+pub struct PackageKey {
+  master : Bytes
+  salt : Bytes
 }
 
 pub struct PeFile {
@@ -186,10 +320,47 @@ pub struct PeFile {
   resource_size : Int64
 }
 
+pub struct Poly1305 {
+  r0 : UInt64
+  r1 : UInt64
+  r2 : UInt64
+  r3 : UInt64
+  r4 : UInt64
+  s0 : UInt64
+  s1 : UInt64
+  s2 : UInt64
+  s3 : UInt64
+  mut h0 : UInt64
+  mut h1 : UInt64
+  mut h2 : UInt64
+  mut h3 : UInt64
+  mut h4 : UInt64
+  buffer : Array[Byte]
+}
+pub fn Poly1305::Poly1305(Bytes) -> Self
+pub fn Poly1305::finish(Self) -> Bytes
+pub fn Poly1305::update(Self, BytesView) -> Unit
+
 pub struct Script {
   platform : String
   body : String
 }
+
+pub struct SealedPackage {
+  shared : Bytes
+  ephemeral : Bytes
+  recipient : Bytes
+  salt : Bytes
+}
+
+pub struct Sha512 {
+  state : Array[UInt64]
+  pending : Array[Byte]
+  mut length : UInt64
+}
+pub fn Sha512::Sha512() -> Self
+pub fn Sha512::finish(Self) -> Bytes
+pub fn Sha512::update(Self, Bytes) -> Unit
 
 // Type aliases
 

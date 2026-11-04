@@ -91,6 +91,7 @@ async fn extract_to_cache(
   pkg : String,
   exe_path : String,
   m : Manifest,
+  key : PackageKey?,
 ) -> String? {
   let dir = cache_dir(exe_path, package_tag(m))
   if dir == "" {
@@ -101,11 +102,88 @@ async fn extract_to_cache(
     return Some(dir)
   }
   try {
-    extract_to(pkg, dir)
+    extract_to(pkg, dir, key)
     @fs.write_text(marker, "ok")
     Some(dir)
   } catch {
     _ => None
+  }
+}
+
+///|
+/// The path of the file that holds the secret key of an encrypted package.
+///
+/// The environment variable LUNAPACK_SECRET_KEY names the file; without it
+/// the file `<executable>.key` next to the executable is used.
+fn secret_key_path(exe_path : String) -> String {
+  match @env.get_env_var("LUNAPACK_SECRET_KEY") {
+    Some(p) => p
+    None => exe_path + ".key"
+  }
+}
+
+///|
+/// The path of the file that holds the passphrase of an encrypted package.
+///
+/// The environment variable LUNAPACK_PASSPHRASE_FILE names the file; without
+/// it the file `<executable>.pass` next to the executable is used.
+fn passphrase_path(exe_path : String) -> String {
+  match @env.get_env_var("LUNAPACK_PASSPHRASE_FILE") {
+    Some(p) => p
+    None => exe_path + ".pass"
+  }
+}
+
+///|
+/// The passphrase of an encrypted package, read from a file.
+async fn read_passphrase_file(path : String) -> String {
+  let text = utf8_bytes_to_string(@fs.read_binary(path))
+  let mut end = text.length()
+  while end > 0 {
+    let c = text[end - 1]
+    if c == '\n' || c == '\r' || c == ' ' || c == '\t' {
+      end = end - 1
+    } else {
+      break
+    }
+  }
+  text[0:end].to_owned()
+}
+
+///|
+/// The key of an encrypted package, found next to the executable.
+///
+/// Returns None when the package is not encrypted or when the key cannot be
+/// found.
+async fn resolve_key(m : Manifest, exe_path : String) -> PackageKey? {
+  match m.encryption {
+    None => None
+    Some(info) => {
+      let passphrase = if info.method_name == METHOD_PASSPHRASE {
+        let path = passphrase_path(exe_path)
+        if !@fs.exists(path) {
+          println(
+            "LunaPack: the package is encrypted and the passphrase file " +
+            path +
+            " is missing",
+          )
+          return None
+        }
+        read_passphrase_file(path)
+      } else {
+        ""
+      }
+      let key_path = secret_key_path(exe_path)
+      if info.method_name != METHOD_PASSPHRASE && !@fs.exists(key_path) {
+        println(
+          "LunaPack: the package is encrypted and the secret key file " +
+          key_path +
+          " is missing",
+        )
+        return None
+      }
+      Some(recover_encryption(info, key_path, passphrase))
+    }
   }
 }
 
@@ -130,19 +208,28 @@ pub async fn try_launch_self_extracting() -> Bool {
   if m.main_program == "" {
     return false
   }
-  let dir = match extract_to_cache(exe, exe, m) {
+  let key = resolve_key(m, exe)
+  if m.encryption is Some(_) && key is None {
+    println("LunaPack: cannot decrypt the package")
+    return false
+  }
+  let dir = match extract_to_cache(exe, exe, m, key) {
     Some(d) => d
     None => {
       // The folder next to the executable is not usable, fall back to a
       // temporary directory.
       let d = @fs.tmpdir(prefix="lunapack")
       println("LunaPack: extracting " + m.main_program + " to " + d)
-      extract_to(exe, d)
+      extract_to(exe, d, key)
       d
     }
   }
   let program = dir + "/" + m.main_program
   println("LunaPack: starting " + program)
-  let _ = @process.run(program, [], cwd=dir)
+  try {
+    let _ = @process.run(program, [], cwd=dir)
+  } catch {
+    err => println("LunaPack: cannot start " + program + ": " + err.to_string())
+  }
   true
 }
