@@ -159,7 +159,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.8
+moon add riantr/LunaPack@0.1.9
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -167,7 +167,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.8",
+  "riantr/LunaPack@0.1.9",
 }
 ```
 
@@ -187,7 +187,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.8`, `>=0.1.8`, `0.1` and `v0.1.8` are all rejected. A bare
+`latest`, `^0.1.9`, `>=0.1.9`, `0.1` and `v0.1.9` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
