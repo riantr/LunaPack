@@ -73,12 +73,27 @@ for everyday storage).
 
 * Every primitive is implemented here, and checked against its vector
 
-  SHA-512, HMAC, HKDF, PBKDF2, ChaCha20, Poly1305 and X25519 — the toolchain
-  ships none of them. Each one is checked against the vector that its standard
-  publishes (FIPS 180-4, RFC 4231, RFC 5869, RFC 8439, RFC 7748), and the
-  derivation is checked against the reference implementation itself: the master
-  key, the key and the nonce of a record, and the sealed record are compared
-  byte for byte with the values the reference produces.
+  SHA-512, HMAC, HKDF, PBKDF2, ChaCha20, Poly1305, X25519 and Ed25519 — the
+  toolchain ships none of them. Each one is checked against the vector that its
+  standard publishes (FIPS 180-4, RFC 4231, RFC 5869, RFC 8439, RFC 7748,
+  RFC 8032), and the derivation is checked against the reference implementation
+  itself: the master key, the key and the nonce of a record, and the sealed
+  record are compared byte for byte with the values the reference produces.
+
+* A package that says what it is, and a host that can prove it
+
+  The manifest of a package carries the SHA-256 of its own bytes, and a sealed
+  package carries a MAC of it as well, so a manifest that was changed is
+  refused instead of being obeyed. A damaged package is refused rather than
+  taken for something else, the package is written in one piece so a crash
+  cannot leave half of one behind, and the program of a bundle is checked
+  before it is started.
+
+  The one thing a package cannot settle by itself is whether it is the package
+  the publisher meant, because the digest inside it is not a secret. The host
+  settles it: `lunapack sign` writes a detached Ed25519 signature next to the
+  package and `lunapack verify --signature` checks it, or the host publishes
+  the digest and `lunapack verify --expected-sha256` checks that.
 
 * An icon that survives the round trip
 
@@ -122,6 +137,14 @@ data structures, reports and one command line. Concretely:
 | `@LunaPack.new_script(platform, body)` | an install script | `Script` |
 | `@LunaPack.recover_encryption(info, key, passphrase)` | the key of a sealed package | `PackageKey` |
 | `@LunaPack.x25519_public_key(secret)` | the public key of a secret key | `Bytes` |
+| `@LunaPack.ed25519_public_key(secret)` | the public key of a signing key | `Bytes` |
+| `@LunaPack.ed25519_sign(secret, message)` | a signature of a message | `Bytes` |
+| `@LunaPack.ed25519_verify(public, message, signature)` | whether a signature holds | `Bool` |
+| `@LunaPack.sign_package(pkg, secret)` | the signature of a package | `PackageSignature` |
+| `@LunaPack.verify_package_signature(pkg, sig, public)` | whether the signature holds | `Bool` |
+| `@LunaPack.verify_package_digest(pkg, digest)` | whether the package has that digest | `Bool` |
+| `@LunaPack.manifest_digest(offset, length, bytes)` | the digest of a manifest | `Bytes` |
+| `@LunaPack.manifest_mac(key, offset, length, bytes)` | the MAC of a manifest | `Bytes` |
 
 Every one of those is an explicit data value or a plain function: there is no
 hidden global state, and the same inputs give the same bytes — which is why
@@ -131,7 +154,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.7
+moon add riantr/LunaPack@0.1.8
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -139,7 +162,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.7",
+  "riantr/LunaPack@0.1.8",
 }
 ```
 
@@ -159,7 +182,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.7`, `>=0.1.7`, `0.1` and `v0.1.7` are all rejected. A bare
+`latest`, `^0.1.8`, `>=0.1.8`, `0.1` and `v0.1.8` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -197,6 +220,40 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.8
+
+- **The manifest carries its own integrity.** Every package now holds a block
+  with the SHA-256 of its manifest, and a sealed package holds a MAC of it as
+  well. A manifest that was changed is refused, and the reason is named.
+- **A damaged package is refused instead of being taken for something else.**
+  A file that carries the marker of a package but is not one is an error, not
+  a file that is not a package. A bundle that cannot be unpacked does not
+  fall back to printing its usage.
+- **A package is written in one piece.** The package is written into a file of
+  its own, flushed to the disk and only then does it take the place of the
+  target. A target that was a whole package is still a whole package after a
+  crash, and a file that is written is never half-written.
+- **The cache of a bundle is checked on every start, and the program is
+  checked before it runs.** A payload that was changed after it was unpacked is
+  unpacked again, and a program that does not match the package is not
+  started.
+- **The paths of the entries are checked.** A path that walks out of the
+  destination with `..` is refused before anything is written.
+- **Every checksum is computed twice**, and the MD5 is computed as well, so
+  that a fault in the machine is not mistaken for a fault in the package.
+- **The host can sign a package.** `lunapack sign` writes a detached
+  Ed25519 signature next to the package, and `lunapack verify --signature`
+  checks it. `lunapack verify --expected-sha256` checks a digest the host
+  published. Both are checked before the package is opened.
+- **The Ed25519 implementation is new**, and it is checked against vectors
+  that another implementation produced, so a signature that is right here is
+  right against every other implementation of RFC 8032.
+
+The published surface grows by the signature functions and the Ed25519 ones.
+The container layout does not change: the integrity block sits between the last
+entry and the manifest, so a package that carries one is still a package that
+an older LunaPack can read.
 
 ### What changed in 0.1.7
 
@@ -295,7 +352,7 @@ Prebuilt binaries are attached to every
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.7`
+The release is built by a GitHub workflow when a version tag such as `v0.1.8`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -419,15 +476,17 @@ lunapack unpack  -i myapp.exe -o ./out
 
 The container layout has not changed since v2: the marker names the layout, and
 the manifest carries its own `format_version`. The current manifest is version
-5, which adds the encryption of the entries. A package written by an older
-version still unpacks, because the fingerprint and the encryption are both
-optional.
+6, which adds the integrity block. A package written by an older version still
+unpacks, because the fingerprint, the encryption and the integrity block are
+all optional.
 
 ```
 +--------------------+  offset 0
 | magic "APPKGD02"   |  8 bytes
 +--------------------+  offset 8
 | entry payloads     |  stored back to back, raw, gzip, lz4 or sealed
++--------------------+
+| integrity block    |  40 bytes, or 72 for a sealed package
 +--------------------+
 | manifest (UTF-8    |
 | JSON)              |
@@ -442,11 +501,18 @@ A bundle is the same archive appended to an executable. The archive length is
 `manifest_offset + manifest_length + 24`, so the archive can be located from
 the tail of the file without scanning it.
 
+The integrity block sits between the last entry and the manifest, which keeps
+the layout above unchanged: a package that carries one is still a package that
+an older LunaPack can read, because the older reader steps over the block and
+finds the manifest where it expects it. The block holds a marker, the SHA-256
+of the manifest and — for a sealed package — the MAC of the manifest. What it
+is for is described under *The integrity of a package*.
+
 The manifest records the package metadata plus one record per entry:
 
 ```json
 {
-  "format_version": 5,
+  "format_version": 6,
   "name": "myapp",
   "version": "1.4.0",
   "os": "linux",
@@ -482,6 +548,71 @@ The manifest records the package metadata plus one record per entry:
 - `mode` holds UNIX permission bits (`0o644` / `0o755`); they are ignored on
   Windows.
 - `main_program` names the entry that is the application executable.
+
+### The integrity of a package
+
+A package is a file that anyone can change. The question is not whether the
+file can be changed — it can — but **what a change gets you**, and how much of
+it the reader notices. LunaPack answers that in layers, and each layer answers
+a different question.
+
+| Layer | What it is | What it stops |
+|---|---|---|
+| SHA-256 of every entry | in the manifest | a payload that was changed or corrupted |
+| MD5 of every entry | in the manifest | the same, by a second and independent algorithm |
+| SHA-256 of the manifest | in the integrity block | a manifest that was changed in place, a truncated write |
+| HMAC-SHA512 of the manifest | in the integrity block of a sealed package | a manifest that was rewritten by whoever holds the file |
+| The cache is checked on every start | in the launcher | a payload that was changed after it was unpacked |
+| The program is checked before it runs | in the launcher | a program that was changed between the check and the start |
+| A damaged package is refused | everywhere | a package that was cut short being taken for something else |
+| The paths of the entries are checked | everywhere | a path that writes outside the destination |
+| The package is written in one piece | everywhere | a target that is half a package after a crash |
+| The checksum is computed twice | in every checker | a fault in the machine that computes it |
+| The signature of the host | next to the package | a package that was rewritten from top to bottom |
+
+The honest limit of all of this is worth stating plainly. **The manifest of an
+unencrypted package cannot be authenticated by the package itself.** The digest
+that goes with it is not a secret, so whoever rewrites the file can compute a
+digest that matches the manifest they wrote. What the digest does catch is
+corruption, a write that was cut short and a manifest that was changed in
+place — which is what a transient fault does.
+
+For the case that nothing inside the file can settle, the host holds the
+material:
+
+```bash
+# The host signs the package with its secret key.
+lunapack sign myapp.appkg --secret-key host.key --output myapp.appkg.sig
+
+# Whoever holds the public key checks the signature.
+lunapack verify myapp.appkg --signature myapp.appkg.sig --public-key host.pub
+```
+
+The signature is an **Ed25519** one (RFC 8032), so the public key is enough to
+check it and the secret key is enough to make it. The same check works with
+nothing but a digest, for a channel that publishes one:
+
+```bash
+lunapack verify myapp.appkg --expected-sha256 <the digest the host published>
+```
+
+The Ed25519 implementation in this module is checked against vectors that were
+produced by an implementation that is not this one, so a signature that is
+right here is right against every other implementation of RFC 8032.
+
+What the layers mean for the reader in practice:
+
+- A package that was damaged is **refused**, not taken for a file that is not a
+  package. A bundle that cannot be unpacked is not a program without
+  arguments.
+- A package whose manifest was changed is refused, with the reason named.
+- A **sealed** package is refused when the key is wrong, when the manifest was
+  changed, and when a key is given for a package that says it is not sealed.
+  The key is the claim of the reader that the package is encrypted to them,
+  and a package that says the opposite has been changed.
+- A path in the manifest that walks out of the destination with `..` is refused
+  before anything is written.
+
 
 ### Compression
 
@@ -622,6 +753,7 @@ lunapack pack   -i <input_dir> -o <output.appkg> [options]
 lunapack bundle -i <exe> -o <output.exe> [--Files <dir>]... [options]
 lunapack unpack -i <package>   -o <dest_dir>    [--skip-scripts]
 lunapack verify <package>      [--extracted <dir>]
+lunapack sign   <package>      --secret-key <file> [--output <file>]
 lunapack info   <package>
 lunapack keygen --public-key <file> --secret-key <file>
 ```
@@ -634,6 +766,29 @@ package, which is what the self-extracting bundle uses its cache for:
 
 ```cmd
 lunapack verify BRLabeler.exe --extracted .lunapack\60844df795cb7f31
+```
+
+`verify <package> --signature <file> --public-key <file>` checks the signature
+that the host published next to the package, and `verify <package>
+--expected-sha256 <digest>` checks the digest the host published. Both are
+checked **before** the package is opened, so a package that does not match the
+material of the host is never unpacked at all.
+
+`sign` is the other side of that: it signs a package with the secret key of the
+host and writes the signature next to it.
+
+```cmd
+lunapack sign myapp.appkg --secret-key host.key --output myapp.appkg.sig
+```
+
+The signature file is a text, so a person can read what it says:
+
+```
+lunapack-signature v1
+algorithm ed25519
+package 0f2a...            <- the SHA-256 of the package
+manifest 8c41...           <- the SHA-256 of the manifest
+signature 3b90...          <- the Ed25519 signature of the two
 ```
 
 On a cache that is intact:
@@ -686,6 +841,9 @@ on every platform, Windows included, so the path is the same everywhere.
 | `--passphrase <text>` | the passphrase itself (visible in the process list) |
 | `--skip-scripts` | unpack without running the install scripts |
 | `--extracted <dir>` | with `verify`: also check the files already in `<dir>` |
+| `--signature <file>` | with `verify`: the signature the host published |
+| `--expected-sha256 <hex>` | with `verify`: the digest the host published |
+| `--output <file>` | with `sign`: where the signature is written |
 
 ### A worked example
 
@@ -764,7 +922,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **75 tests, 75 passed, 0 failed**.
+native` reports **109 tests, 109 passed, 0 failed**.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
 the install-script runner on a Windows host. Without a shell on `PATH` it
@@ -802,10 +960,43 @@ claim of coverage, and it is named here rather than left implied.
 
 The tests of the encryption check every primitive against the vector that its
 standard publishes — FIPS 180-4 for SHA-512, RFC 4231 for HMAC, RFC 5869 for
-HKDF, RFC 8439 for ChaCha20-Poly1305 and RFC 7748 for X25519 — and the
-derivation against the reference implementation itself: the master key, the
-key and the nonce of a record, the check of the key and the sealed record are
-compared byte for byte with the values that the reference produces.
+HKDF, RFC 8439 for ChaCha20-Poly1305, RFC 7748 for X25519 and RFC 8032 for
+Ed25519 — and the derivation against the reference implementation itself: the
+master key, the key and the nonce of a record, the check of the key and the
+sealed record are compared byte for byte with the values that the reference
+produces.
+
+### Every guard was taken out once
+
+A test that passes because the guard is not there says nothing, so every
+guard of the integrity stack was **removed from the code once** and the suite
+was run again. The test that covers the guard has to go red, for that reason
+alone, or the guard is not covered by a test at all.
+
+| Guard that was removed | The test that went red |
+|---|---|
+| the SHA-256 of the manifest | a package whose manifest was changed is refused |
+| the MAC of the manifest | a sealed package whose manifest was changed is refused |
+| the check of the cache | the cache is only used again when it holds what the package carries |
+| the check of the program | the program of a bundle is checked before it is started |
+| the refusal of a damaged package | a damaged package is not taken for a file that is not a package |
+| the write in one piece | a pack that fails leaves the target alone |
+| the comparison of the two checksums | a checksum that is not the same twice is refused |
+| the check of the signature | a signature does not hold for another public key |
+| the check of the paths | a path that walks out of the destination is refused |
+
+The battery that does this is `scripts/mutation_battery.ps1`. It restores the
+file it changed, so a run leaves the tree exactly as it was.
+
+One of the two guards of the *sealed* manifest needed a second look, and the
+reason is worth stating because it is the whole point of the design: a test
+that changes the manifest of a sealed package is caught by the **digest**
+first, so it proves nothing about the MAC. The test that covers the MAC
+therefore changes the manifest *and* recomputes the digest, which is exactly
+what an attacker who holds the file can do — and the MAC still catches it,
+because the MAC is keyed with the key of the package and the key is not in
+the package.
+
 
 ## What this is not
 
@@ -965,8 +1156,14 @@ because they were run by hand, not because CI depends on them.
 
 - `cli.mbt` — the command line of this module, the front end over the library
   that lives in the same package.
+- `integrity.mbt` — the integrity block: the digest and the MAC of the
+  manifest, and the checksums that are computed twice.
+- `ed25519.mbt` — the signature that the host publishes next to a package.
+- `signature.mbt` — the signature file and the checks of the host material.
 - `scripts/test_linux.sh` — the end-to-end suite, which drives the binary that
   the module builds.
+- `scripts/mutation_battery.ps1` — the development tool that takes every guard
+  out of the code once and checks that the test covering it goes red.
 
 Outside this repository: **none that the registry knows about.** The registry
 lists **0 dependents** for `riantr/LunaPack`, and nothing is claimed here that
@@ -983,3 +1180,8 @@ cannot be named.
 - The LZ4 codec is an implementation of the format, not a port of a library:
   what it produces is a standard `.lz4` frame, and the test suite checks the
   frames against the values the format publishes.
+- The Ed25519 signature is an implementation of RFC 8032, not a port of a
+  library. It is checked against vectors that another implementation produced,
+  so a signature that is right here is right against every other
+  implementation of the standard.
+
