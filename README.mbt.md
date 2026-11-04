@@ -30,14 +30,15 @@ Prebuilt binaries are attached to every
 | `lunapack-windows-x86_64.exe` | Windows |
 | `lunapack-linux-x86_64` | Linux |
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
-| `lunapack-wasm` | WebAssembly, for `moonx` |
+| `lunapack.wasm` | WebAssembly, for `moonx` |
+| `lunapack.core` | the compiled package the WebAssembly module needs |
 
 The release is built by a GitHub workflow when a version tag such as
-`v0.1.0` is pushed; the same version is published to the Mooncakes registry,
-so `moonx riantr/LunaPack@latest` resolves to it.
+`v0.1.1` is pushed; the same version is published to the Mooncakes registry,
+so `moonx riantr/LunaPack/cmd/main@latest` resolves to it.
 
 The registry requires a `0.x.y` version while it is in its early stage, so
-the first releases are numbered `0.1.0`, `0.2.0` and so on.
+the releases are numbered `0.1.0`, `0.1.1`, `0.1.2` and so on.
 
 ## Usage
 
@@ -78,7 +79,7 @@ Starting it extracts the payload and launches the bundled program:
 
 ```
 $ ./myapp.exe
-LunaPack: starting D:/apps/.lunapack/8e75898941d4c137/myapp.exe
+LunaPack: starting D:/apps/.lunapack/9c445884d23653fb/myapp.exe
 ```
 
 The payload is cached in `.lunapack/<hash>/` next to the executable, so the
@@ -95,7 +96,11 @@ shows the application's own icon instead of the launcher's:
 
 ```
 $ lunapack --input-exe=./BRLabeler.exe --output-exe=./BRLabeler.exe --Files=./build
+  md5  cb77181515d4680a960433f65ba05bef  BRLabeler.exe
+  ...
+scanned 392 files
 bundled 392 files -> ./BRLabeler.exe (icon copied)
+output md5  f5f06ca638d59a31e773c0a28358804d  BRLabeler.exe
 ```
 
 The icon is read from the application executable with a small PE reader and
@@ -120,14 +125,16 @@ lunapack unpack  -i myapp.exe -o ./out
 
 ```bash
 moon build --release
-# -> _build/native/release/build/cmd/main/main.exe   (Windows)
-# -> _build/native/release/build/cmd/main/main        (Linux / macOS)
+# -> _build/native/release/build/cmd/main/main.exe   (every platform)
 ```
+
+The toolchain calls the executable `main.exe` on every platform, Windows
+included, so the path is the same everywhere.
 
 ```
 lunapack pack   -i <input_dir> -o <output.appkg> [options]
 lunapack unpack -i <package>   -o <dest_dir>    [--skip-scripts]
-lunapack verify <package>
+lunapack verify <package>      [--extracted <dir>]
 lunapack info   <package>
 ```
 
@@ -144,6 +151,8 @@ Flags accept both `--flag=value` and `--flag value`.
 | `--pre-install <file>` | script executed *before* extraction |
 | `--post-install <file>` | script executed *after* extraction |
 | `--compression <mode>` | `none`, `gzip` or `auto` (default: `auto`) |
+| `--skip-scripts` | unpack without running the install scripts |
+| `--extracted <dir>` | with `verify`: also check the files already in `<dir>` |
 
 ### Example
 
@@ -170,8 +179,11 @@ fingerprint of the file it produces:
   md5  3db2050fcf84bb631dcae417d3db518c  sub/b.txt
 scanned 2 files
 packed 2 files -> myapp.appkg
-output md5  21790538c83b9712c006da693907a5c5  myapp.appkg
+output md5  63da650c906fe3ab1446b121a4edd4ca  myapp.appkg
 ```
+
+The fingerprint of the produced file changes from run to run, because the
+manifest records the time of creation.
 
 Unpacking reads every extracted file back and checks its fingerprint against
 the one that went into the package, so a file that changed on the way to the
@@ -195,9 +207,20 @@ is what the self-extracting bundle uses its cache for:
 lunapack verify BRLabeler.exe --extracted .lunapack\60844df795cb7f31
 ```
 
+On a cache that is intact:
+
+```
+verify: OK (392 files)
+verify: OK (392 files in .lunapack/60844df795cb7f31)
+VERIFY OK
+```
+
+After a file was changed on the disk:
+
 ```
 verify: OK (392 files)
 verify: md5 mismatch for appsettings.json: expected 86ff00ef... got 3ddcb685...
+verify: FAILED (392 files checked)
 VERIFY FAILED
 ```
 
@@ -237,8 +260,11 @@ D://src//WorkBuddy//Moonbit//LunaPack//_build//native//release//build//cmd//main
 moon login                 # once
 moon publish --dry-run     # validate
 moon publish               # publish riantr/LunaPack
-moonx riantr/LunaPack@latest --input-exe=... --output-exe=... --Files=...
+moonx riantr/LunaPack/cmd/main@latest --input-exe=... --output-exe=... --Files=...
 ```
+
+The registry refuses a version that already exists, so a release needs a new
+number in `moon.mod`.
 
 The module publishes with `supported_targets = "native+wasm"`; `moonx` runs
 the Wasm build, which reads and writes the real filesystem through the MoonBit
@@ -267,7 +293,12 @@ receives two environment variables:
 
 Use `--skip-scripts` to unpack without running them.
 
-## Package format (v2)
+## Package format
+
+The container layout has not changed since v2: the marker names the layout,
+and the manifest carries its own `format_version`. The current manifest is
+version 3, which adds the MD5 fingerprint of every entry. A package written
+by an older version still unpacks, because the fingerprint is optional.
 
 ```
 +--------------------+  offset 0
@@ -288,14 +319,14 @@ The manifest records the package metadata plus one record per entry:
 
 ```json
 {
-  "format_version": 2,
+  "format_version": 3,
   "name": "myapp",
   "version": "1.4.0",
   "os": "linux",
   "arch": "x86_64",
   "checksum_algo": "sha256",
   "compression": "auto",
-  "created_at": "2026-11-03T06:55:56Z",
+  "created_at": "2026-11-04T04:10:20Z",
   "main_program": "myapp.exe",
   "pre_install": { "platform": "posix", "body": "#!/bin/sh\n..." },
   "post_install": null,
@@ -307,6 +338,7 @@ The manifest records the package metadata plus one record per entry:
       "stored_size": 913,
       "codec": "gzip",
       "checksum": "0a77c24c45d0c61f906862c4706f5dd739166985e8fc5c6344dadd9220507b28",
+      "md5": "1520e796ba25554696b3cef6e913cc90",
       "offset": 8
     }
   ]
@@ -317,6 +349,9 @@ The manifest records the package metadata plus one record per entry:
   package.
 - `checksum` is the SHA-256 of the **original** content, so it validates the
   data the user actually gets, not the compressed form.
+- `md5` is the MD5 fingerprint of the same content. It is a convenience for
+  comparing against what the platform tooling shows, not the integrity
+  guarantee.
 - `mode` holds UNIX permission bits (`0o644` / `0o755`); they are ignored on
   Windows.
 - `main_program` names the entry that is the application executable.
@@ -332,9 +367,10 @@ moon test                      # unit + integration tests
 bash scripts/test_linux.sh     # end-to-end suite (Linux / WSL)
 ```
 
-`scripts/test_linux.sh` covers packing, bundling, checksums, compression, the
-executable bit, install-script execution, corruption detection and
-`--skip-scripts`.
+`scripts/test_linux.sh` covers packing, bundling, checksums, the MD5
+fingerprints, compression, the executable bit, install-script execution,
+corruption detection and `--skip-scripts`. It needs a real POSIX host, so the
+CI runs it on the Linux runner.
 
 ## Notes and limitations
 

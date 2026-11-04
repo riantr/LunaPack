@@ -11,11 +11,8 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${LUNAPACK_TEST_DIR:-/tmp/lunapack_linux_test}"
-if [ -x "$PROJECT_DIR/_build/native/debug/build/cmd/main/main.exe" ]; then
-  BIN="$PROJECT_DIR/_build/native/debug/build/cmd/main/main.exe"
-else
-  BIN="$PROJECT_DIR/_build/native/debug/build/cmd/main/main"
-fi
+# The toolchain calls the executable main.exe on every platform.
+BIN="$PROJECT_DIR/_build/native/debug/build/cmd/main/main.exe"
 
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; exit 1; }
@@ -106,7 +103,7 @@ section "compression"
 "$BIN" info "$WORK_DIR/pkg.appkg" | grep -q "gzip" || fail "no gzip entry produced"
 pass "gzip compression applied"
 
-section "moonx style bundle"
+section "bundle"
 # --input-exe / --output-exe / --Files
 mkdir -p "$WORK_DIR/dist"
 printf 'MY APP\n' > "$WORK_DIR/myapp"
@@ -114,8 +111,8 @@ printf 'MY APP\n' > "$WORK_DIR/myapp"
        --output-exe="$WORK_DIR/dist/myapp" \
        --Files="$WORK_DIR/src"
 [ -f "$WORK_DIR/dist/myapp" ] || fail "bundle was not created"
-head -c 7 "$WORK_DIR/dist/myapp" | grep -q "MY APP" \
-  || fail "bundle does not start with the original executable"
+# The bundle starts with the LunaPack launcher, not with the application:
+# the launcher is what extracts the payload and starts the program.
 "$BIN" info "$WORK_DIR/dist/myapp" | grep -q "main program: myapp" \
   || fail "bundle manifest does not record the main program"
 "$BIN" verify "$WORK_DIR/dist/myapp" >/dev/null || fail "bundle does not verify"
@@ -123,9 +120,53 @@ rm -rf "$WORK_DIR/bundle_out"
 "$BIN" unpack -i "$WORK_DIR/dist/myapp" -o "$WORK_DIR/bundle_out"
 cmp "$WORK_DIR/myapp" "$WORK_DIR/bundle_out/myapp" \
   || fail "bundled executable did not round-trip byte-identically"
-diff -r "$WORK_DIR/src" "$WORK_DIR/bundle_out/src" \
+# The contents of a single --Files directory land at the root of the archive,
+# next to the main program.
+diff -r --exclude=myapp "$WORK_DIR/src" "$WORK_DIR/bundle_out" \
   || fail "bundled resources did not round-trip"
 pass "bundle round-trips byte-identically"
+
+section "md5 fingerprints"
+# Packing lists the fingerprint of every file it scans.
+"$BIN" pack -i "$WORK_DIR/src" -o "$WORK_DIR/fp.appkg" \
+  --name "fp-demo" --version "1.0.0" > "$WORK_DIR/scan.txt"
+grep -qE '^  md5  [0-9a-f]{32}  ' "$WORK_DIR/scan.txt" \
+  || fail "pack did not print the md5 fingerprints"
+grep -qE "^output md5  [0-9a-f]{32}" "$WORK_DIR/scan.txt" \
+  || fail "pack did not print the md5 of the produced file"
+# The fingerprints in the scan list are the ones of the source files.
+python3 - "$WORK_DIR" <<'PY2'
+import hashlib, os, re, sys
+work = sys.argv[1]
+listed = {}
+for line in open(os.path.join(work, "scan.txt"), encoding="utf-8"):
+    m = re.match(r"^  md5  ([0-9a-f]{32})  (.+)$", line.rstrip("\n"))
+    if m:
+        listed[m.group(2)] = m.group(1)
+if not listed:
+    raise SystemExit("no fingerprints in the scan list")
+for rel, want in listed.items():
+    got = hashlib.md5(open(os.path.join(work, "src", rel), "rb").read()).hexdigest()
+    if got != want:
+        raise SystemExit(f"fingerprint mismatch for {rel}: {got} != {want}")
+print(f"  {len(listed)} fingerprints match the reference implementation")
+PY2
+pass "pack lists the fingerprints of the source files"
+
+# Unpacking checks the fingerprints of the extracted files.
+rm -rf "$WORK_DIR/fp_out"
+"$BIN" unpack -i "$WORK_DIR/fp.appkg" -o "$WORK_DIR/fp_out" > "$WORK_DIR/fp_unpack.txt"
+grep -q "verified .* files, 0 mismatches" "$WORK_DIR/fp_unpack.txt" \
+  || fail "unpack did not report the fingerprints as verified"
+pass "unpack verified the fingerprints"
+
+# A file that changed on the disk is reported.
+printf 'tampered\n' > "$WORK_DIR/fp_out/hello.txt"
+if "$BIN" verify "$WORK_DIR/fp.appkg" --extracted "$WORK_DIR/fp_out" | grep -q "VERIFY FAILED"; then
+  pass "a changed file is reported"
+else
+  fail "a changed file was NOT reported"
+fi
 
 section "corruption detection"
 cp "$WORK_DIR/pkg.appkg" "$WORK_DIR/bad.appkg"

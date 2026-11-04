@@ -83,6 +83,21 @@ fn flag_value(flags : Array[Flag], key : String) -> String {
 }
 
 ///|
+/// Is `key` present at all?
+///
+/// A flag that switches something on does not need a value, and the parser
+/// cannot tell a bare `--flag` from `--flag value`, so the presence of the
+/// flag is what counts.
+fn flag_has(flags : Array[Flag], key : String) -> Bool {
+  for f in flags {
+    if f.0 == key {
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// The value of the first of `keys` that is present, or "".
 fn flag_value_any(flags : Array[Flag], keys : Array[String]) -> String {
   for k in keys {
@@ -297,7 +312,7 @@ async fn do_unpack(args : ArrayView[String]) -> Unit {
     usage()
     return
   }
-  let skip = flag_value(flags, "skip-scripts") == "true"
+  let skip = flag_has(flags, "skip-scripts")
   @lib.unpack(input, output, !skip) catch {
     err => println("error: " + err.to_string())
   }
