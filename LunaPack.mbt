@@ -63,6 +63,28 @@ pub fn magic_bytes() -> Bytes {
   string_to_utf8_bytes(MAGIC)
 }
 
+///|
+/// The lines of a text, without the line endings.
+///
+/// The lines are trimmed, so a file that was written on another machine, with
+/// other line endings, is read the same way.
+pub fn text_lines(text : String) -> Array[String] {
+  let out = []
+  let mut start = 0
+  let mut i = 0
+  while i < text.length() {
+    if text[i] == '\n' {
+      out.push(text[start:i].trim().to_owned())
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if start < text.length() {
+    out.push(text[start:].trim().to_owned())
+  }
+  out
+}
+
 // -------------------------------------------------------------- structs ---
 
 ///|

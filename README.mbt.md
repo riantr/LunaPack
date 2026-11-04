@@ -137,9 +137,14 @@ data structures, reports and one command line. Concretely:
 | `@LunaPack.new_script(platform, body)` | an install script | `Script` |
 | `@LunaPack.recover_encryption(info, key, passphrase)` | the key of a sealed package | `PackageKey` |
 | `@LunaPack.x25519_public_key(secret)` | the public key of a secret key | `Bytes` |
-| `@LunaPack.ed25519_public_key(secret)` | the public key of a signing key | `Bytes` |
-| `@LunaPack.ed25519_sign(secret, message)` | a signature of a message | `Bytes` |
+| `@LunaPack.ed25519_public_key(seed)` | the public key of a signing seed | `Bytes` |
+| `@LunaPack.ed25519_sign(seed, message)` | a signature of a message | `Bytes` |
 | `@LunaPack.ed25519_verify(public, message, signature)` | whether a signature holds | `Bool` |
+| `@LunaPack.public_key_pair(secret)` | the two public keys of a secret key | `PublicKeyPair` |
+| `@LunaPack.ed25519_seed(secret)` | the signing seed of a secret key | `Bytes` |
+| `@LunaPack.save_public_key_pair(path, encryption, signing)` | the public key file of a pair | `Unit` |
+| `@LunaPack.load_public_key(path)` | the encryption public key of a file | `Bytes` |
+| `@LunaPack.load_signing_public_key(path)` | the signing public key of a file | `Bytes` |
 | `@LunaPack.sign_package(pkg, secret)` | the signature of a package | `PackageSignature` |
 | `@LunaPack.verify_package_signature(pkg, sig, public)` | whether the signature holds | `Bool` |
 | `@LunaPack.verify_package_digest(pkg, digest)` | whether the package has that digest | `Bool` |
@@ -220,6 +225,26 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.9
+
+- **The public key of a pair holds both of its public keys.** A pair serves two
+  purposes — the key a package is sealed to, and the key a signature is checked
+  with — and the file held only the first of them. `keygen` writes both now,
+  and the two are derived from the secret with a label of their own, so the key
+  that opens a package is not the key that signs one.
+- **The signature of a package holds.** In 0.1.8 the signature was checked
+  against the encryption public key, so a signature made with the secret key of
+  the pair never held: the feature was published and it did not work. The Linux
+  end-to-end suite found it, and the chain that the command line walks is held
+  by a unit test now, so it does not depend on a POSIX host to be checked.
+- **A damaged package says that it is damaged.** `verify` on a file that
+  carries the marker of a package but is not one says so, and a file that
+  carries no marker at all says that it is not a package. The two are not the
+  same thing, and the wording keeps them apart.
+
+A public key file of the older form — the 32 raw bytes of the encryption key —
+still seals a package. It cannot be used to check a signature, and it says so.
 
 ### What changed in 0.1.8
 
@@ -352,11 +377,17 @@ Prebuilt binaries are attached to every
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.8`
+The release is built by a GitHub workflow when a version tag such as `v0.1.9`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
 builds anything, so a tag and the published module cannot disagree.
+
+The macOS runners are the scarce ones, and a tag that is pushed when none of
+them is free leaves the macOS binary unbuilt. The release is made anyway, with
+the binaries that were built, and its notes name the one that is missing. A
+release that says what it holds is worth more than one that waits for a runner
+that may not come.
 
 The registry refuses a version that already exists, and it wants a `0.x.y`
 version while it is in its early stage, so the releases are numbered `0.1.0`,
@@ -596,6 +627,23 @@ nothing but a digest, for a channel that publishes one:
 lunapack verify myapp.appkg --expected-sha256 <the digest the host published>
 ```
 
+A pair of keys serves two purposes, so the public key of a pair holds **both**
+of its public keys:
+
+```
+lunapack-public-key v1
+x25519 751d2616ba1be8341b35f6cf2d73978e2cccecd1decd0f898b421a99618bc35f
+ed25519 a8414c851959a5449aad50fe53b9d976028fd3122248cf87331bd0e0a8ea526e
+```
+
+The `x25519` line is the key a package is **sealed to**, and the `ed25519` line
+is the key a signature is **checked with**. `pack` reads the first and `verify`
+reads the second. The two are derived from the same secret with a label of
+their own, so the key that opens a package is not the key that signs one, and
+a fault in one of them does not hand the other one over. A public key file of
+the older form holds the 32 raw bytes of the encryption key alone: it still
+seals a package, and it cannot be used to check a signature.
+
 The Ed25519 implementation in this module is checked against vectors that were
 produced by an implementation that is not this one, so a signature that is
 right here is right against every other implementation of RFC 8032.
@@ -680,6 +728,16 @@ lunapack unpack -i app.appkg -o ./out --secret-key recipient.key
 lunapack pack -i ./app -o app.appkg \
   --encryption-method passphrase --passphrase-file passphrase.txt
 lunapack unpack -i app.appkg -o ./out --passphrase-file passphrase.txt
+```
+
+The public key of a pair holds both of its public keys, because a pair serves
+two purposes: the key a package is sealed to and the key a signature is checked
+with. The file is a text, so a person can read what it holds:
+
+```
+lunapack-public-key v1
+x25519 751d2616ba1be8341b35f6cf2d73978e2cccecd1decd0f898b421a99618bc35f
+ed25519 a8414c851959a5449aad50fe53b9d976028fd3122248cf87331bd0e0a8ea526e
 ```
 
 A secret key that a passphrase protects is the better form: the raw form
@@ -922,7 +980,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **109 tests, 109 passed, 0 failed**.
+native` reports **115 tests, 115 passed, 0 failed**.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
 the install-script runner on a Windows host. Without a shell on `PATH` it
@@ -985,6 +1043,8 @@ alone, or the guard is not covered by a test at all.
 | the comparison of the two checksums | a checksum that is not the same twice is refused |
 | the check of the signature | a signature does not hold for another public key |
 | the check of the paths | a path that walks out of the destination is refused |
+| the signing key of a pair | the signing key of a pair checks a signature made with it |
+| the separation of the two roles | the two roles of a pair are separated |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -997,6 +1057,14 @@ therefore changes the manifest *and* recomputes the digest, which is exactly
 what an attacker who holds the file can do — and the MAC still catches it,
 because the MAC is keyed with the key of the package and the key is not in
 the package.
+
+The last two guards of the table are there because of a defect that the Linux
+end-to-end suite found in 0.1.8 and that the unit tests had not: `keygen`
+wrote the **encryption** public key, and the signature was checked against it,
+so a signature made with the secret key of the pair never held. The public key
+file holds both public keys now, and the chain that the command line walks —
+make a pair, sign a package, check the signature — is held by a unit test, so
+it no longer depends on a host with a POSIX shell to be checked.
 
 
 ## What this is not

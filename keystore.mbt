@@ -1,11 +1,26 @@
 // The key files.
 //
-// A public key is stored as the 32 raw bytes. A secret key is stored raw as
-// well, but the form that a passphrase protects is the one to use: the raw
-// form leaves the long-term secret key in clear text on disk, and anyone
-// who reads it can decrypt every package that was ever sealed for it.
+// A secret key is stored raw, or protected by a passphrase: the raw form
+// leaves the long-term secret key in clear text on disk, and anyone who reads
+// it can decrypt every package that was ever sealed for it.
 //
-// The layout of the protected form is the one of the reference
+// A pair of keys serves two purposes, and each purpose has a public key of
+// its own. The X25519 one is the key a package is sealed to, and the Ed25519
+// one is the key a signature is checked with. The two are derived from the
+// same secret with a label of their own, so that the key that opens a package
+// is not the key that signs one.
+//
+// The public key file therefore holds both of them, as a text a person can
+// read:
+//
+//   lunapack-public-key v1
+//   x25519 <the hex of the encryption public key>
+//   ed25519 <the hex of the signing public key>
+//
+// A public key file of the older form holds the 32 raw bytes of the
+// encryption public key alone, and is still read as such.
+//
+// The layout of the protected secret key file is the one of the reference
 // implementation, with a magic of its own:
 //
 //   offset  size  field
@@ -43,24 +58,148 @@ pub const KEY_SALT_BYTES : Int32 = 16
 pub const KEY_HEADER_BYTES : Int32 = 42
 
 ///|
+/// The first line of a public key file.
+pub const PUBLIC_KEY_HEADER : String = "lunapack-public-key v1"
+
+///|
+/// The name of the encryption public key in a public key file.
+pub const PUBLIC_KEY_ENCRYPTION : String = "x25519"
+
+///|
+/// The name of the signing public key in a public key file.
+pub const PUBLIC_KEY_SIGNING : String = "ed25519"
+
+///|
+/// The label of the derivation of the signing seed.
+const LABEL_SIGNING_SEED : String = "lunapack-v6|ed25519-seed"
+
+///|
+/// The two public keys of a pair.
+pub struct PublicKeyPair {
+  /// The X25519 public key: the key a package is sealed to.
+  encryption : Bytes
+  /// The Ed25519 public key: the key a signature is checked with.
+  signing : Bytes
+}
+
+///|
+/// The seed of the signing key of the secret key `secret`.
+///
+/// The seed is derived with HKDF-SHA512 and a label of its own, so the key
+/// that signs is not the key that decrypts: the two roles cannot be taken for
+/// one another, and a fault in one of them does not hand the other over.
+pub fn ed25519_seed(secret : Bytes) -> Bytes {
+  hkdf_sha512(
+    secret,
+    zero_bytes(SHA512_BYTES),
+    string_to_utf8_bytes(LABEL_SIGNING_SEED),
+    KEY_BYTES,
+  )
+}
+
+///|
+/// The two public keys of the secret key `secret`.
+pub fn public_key_pair(secret : Bytes) -> PublicKeyPair raise {
+  {
+    encryption: x25519_public_key(secret),
+    signing: ed25519_public_key(ed25519_seed(secret)),
+  }
+}
+
+///|
 /// Write the public key of a pair to `path`.
+///
+/// This is the older form: the 32 raw bytes of the encryption public key
+/// alone. A file written this way cannot be used to check a signature; use
+/// `save_public_key_pair` for a pair that serves both purposes.
 pub async fn save_public_key(path : String, public_key : Bytes) -> Unit {
   @fs.write_binary(path, public_key)
 }
 
 ///|
-/// Read the public key from `path`.
+/// Write the two public keys of a pair to `path`.
+///
+/// The file is a text, so that a person can read what it holds.
+pub async fn save_public_key_pair(
+  path : String,
+  encryption : Bytes,
+  signing : Bytes,
+) -> Unit {
+  let text = PUBLIC_KEY_HEADER +
+    "\n" +
+    PUBLIC_KEY_ENCRYPTION +
+    " " +
+    bytes_to_hex(encryption) +
+    "\n" +
+    PUBLIC_KEY_SIGNING +
+    " " +
+    bytes_to_hex(signing) +
+    "\n"
+  @fs.write_text(path, text)
+}
+
+///|
+/// Read the encryption public key from `path`.
+///
+/// A file that holds the two public keys of a pair gives the X25519 one, and
+/// a file that holds the 32 raw bytes of an older pair gives those: the
+/// encryption public key is the same in both.
 pub async fn load_public_key(path : String) -> Bytes {
   let data = @fs.read_binary(path)
-  if data.length() != KEY_BYTES {
+  if data.length() == KEY_BYTES {
+    return data
+  }
+  match public_key_of(data, PUBLIC_KEY_ENCRYPTION) {
+    Some(key) => key
+    None =>
+      fail(
+        "the public key file does not hold a public key of the kind that is needed",
+      )
+  }
+}
+
+///|
+/// Read the signing public key from `path`.
+///
+/// It is the Ed25519 public key of the pair: the one a signature of a package
+/// is checked with. A file of the older form holds the encryption public key
+/// alone, so it cannot be used here.
+pub async fn load_signing_public_key(path : String) -> Bytes {
+  let data = @fs.read_binary(path)
+  if data.length() == KEY_BYTES {
     fail(
-      "the public key file must hold exactly " +
-      KEY_BYTES.to_string() +
-      " bytes, but it holds " +
-      data.length().to_string(),
+      "this public key file holds only the encryption public key of an older pair: make a new pair with keygen to sign with it",
     )
   }
-  data
+  match public_key_of(data, PUBLIC_KEY_SIGNING) {
+    Some(key) => key
+    None =>
+      fail(
+        "the public key file does not hold the signing public key that is needed",
+      )
+  }
+}
+
+///|
+/// The public key named `algorithm` in the bytes of a public key file.
+///
+/// Returns None when the file is not a public key file or does not hold a
+/// key of that algorithm.
+fn public_key_of(data : Bytes, algorithm : String) -> Bytes? {
+  let lines = text_lines(utf8_bytes_to_string(data))
+  if lines.length() < 3 {
+    return None
+  }
+  if lines[0] != PUBLIC_KEY_HEADER {
+    return None
+  }
+  let prefix = algorithm + " "
+  for line in lines {
+    if line.has_prefix(prefix) {
+      return hex_to_bytes(line[prefix.length():].to_owned())
+    }
+  }
+  None
 }
 
 ///|

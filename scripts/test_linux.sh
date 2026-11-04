@@ -360,24 +360,34 @@ fi
 # A package that was cut short is refused: it is a damaged package, not a
 # file that is not a package.
 head -c 100 "$WORK_DIR/pkg.appkg" > "$WORK_DIR/truncated.appkg"
-if "$BIN" verify "$WORK_DIR/truncated.appkg" 2>&1 | grep -q "error:"; then
-  pass "a truncated package is refused"
+if "$BIN" verify "$WORK_DIR/truncated.appkg" 2>&1 | grep -q "damaged"; then
+  pass "a truncated package is refused as a damaged package"
 else
   fail "a truncated package was NOT refused"
 fi
 
 # A file that is not a package is not a damaged package.
 printf 'not a package at all\n' > "$WORK_DIR/plain.txt"
-if "$BIN" verify "$WORK_DIR/plain.txt" 2>&1 | grep -q "error:"; then
-  fail "a plain file was treated as a damaged package"
-else
+PLAIN="$("$BIN" verify "$WORK_DIR/plain.txt" 2>&1 || true)"
+if echo "$PLAIN" | grep -q "not a LunaPack file" &&
+   ! echo "$PLAIN" | grep -q "damaged"; then
   pass "a plain file is not a damaged package"
+else
+  fail "a plain file was taken for a damaged package"
 fi
 
 section "the signature of the host"
 # The host signs the package with its secret key, and whoever holds the
 # public key can tell that the package is the one the host published.
 "$BIN" keygen --public-key "$WORK_DIR/host.pub" --secret-key "$WORK_DIR/host.key" > /dev/null
+# The public key of a pair holds both of its public keys: the one a package
+# is sealed to and the one a signature is checked with.
+grep -q "^lunapack-public-key v1" "$WORK_DIR/host.pub" \
+  || fail "the public key file does not say what it is"
+grep -q "^x25519 " "$WORK_DIR/host.pub" \
+  || fail "the public key file does not hold the encryption public key"
+grep -q "^ed25519 " "$WORK_DIR/host.pub" \
+  || fail "the public key file does not hold the signing public key"
 "$BIN" sign "$WORK_DIR/pkg.appkg" --secret-key "$WORK_DIR/host.key" \
   --output "$WORK_DIR/pkg.appkg.sig" > /dev/null
 [ -f "$WORK_DIR/pkg.appkg.sig" ] || fail "the signature was not written"

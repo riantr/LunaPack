@@ -304,12 +304,14 @@ fn usage() -> Unit {
   println(
     "  --signature <file>      signature the host published for the package",
   )
-  println("  --public-key <file>     public key of the host that signed it")
+  println(
+    "  --public-key <file>     public key of the host that signed it (ed25519)",
+  )
   println("  --expected-sha256 <hex> digest the host published for the package")
   println("")
   println("encryption:")
   println("  --encryption-method <m>  x25519 | passphrase")
-  println("  --public-key <file>      public key of the recipient")
+  println("  --public-key <file>      public key of the recipient (x25519)")
   println("  --secret-key <file>      secret key of the recipient")
   println("  --passphrase-file <file> file that holds the passphrase")
   println(
@@ -546,7 +548,7 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
           "a signature is checked against a public key: --public-key is missing",
         )
       }
-      let public = load_public_key(public_path)
+      let public = load_signing_public_key(public_path)
       if !verify_package_signature(args[1], signature, public) {
         println("VERIFY FAILED")
         return
@@ -636,8 +638,8 @@ async fn do_keygen(args : ArrayView[String]) -> Unit {
   }
   try {
     let secret = random_bytes(32)
-    let public = x25519_public_key(secret)
-    save_public_key(public_path, public)
+    let pair = public_key_pair(secret)
+    save_public_key_pair(public_path, pair.encryption, pair.signing)
     let passphrase = read_passphrase(flags)
     if passphrase == "" {
       save_secret_key_raw(secret_path, secret)

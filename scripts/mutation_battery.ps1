@@ -154,5 +154,36 @@ Run-Mutation 'path safety' 'unpack.mbt' `
   '' '' `
   'a path that walks out of the destination is refused'
 
+# 10. The signing key of a pair is the encryption key.
+#
+# This is the defect that the Linux end-to-end suite found in 0.1.8: the
+# public key file held the key a package is sealed to, and the signature was
+# checked against a key that was not the one that made it. The chain that the
+# command line walks is held here, so that it does not depend on a host with
+# a POSIX shell.
+Run-Mutation 'L7 key pair' 'keystore.mbt' `
+  '  {
+    encryption: x25519_public_key(secret),
+    signing: ed25519_public_key(ed25519_seed(secret)),
+  }' `
+  '  {
+    encryption: x25519_public_key(secret),
+    signing: x25519_public_key(secret),
+  }' `
+  '' '' `
+  'the signing key of a pair checks a signature made with it'
+
+# 11. The signing key is not separated from the encryption key.
+Run-Mutation 'L7 separation' 'keystore.mbt' `
+  '  hkdf_sha512(
+    secret,
+    zero_bytes(SHA512_BYTES),
+    string_to_utf8_bytes(LABEL_SIGNING_SEED),
+    KEY_BYTES,
+  )' `
+  '  secret' `
+  '' '' `
+  'the two roles of a pair are separated'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

@@ -134,10 +134,20 @@ async fn find_integrity(
 async fn read_archive(file : @fs.File) -> Archive {
   let total = file.size()
   if total < FOOTER_BYTES {
+    if carries_marker(file) {
+      fail(
+        "the file carries the marker of a LunaPack file, but it is too small to be one: it is damaged",
+      )
+    }
     fail("not a LunaPack file (too small)")
   }
   let footer = file.read_exactly_at(24, position=total - 24)
   if !has_marker(footer) {
+    if carries_marker(file) {
+      fail(
+        "the file carries the marker of a LunaPack file, but its footer is damaged: it is damaged",
+      )
+    }
     fail("not a LunaPack file (bad magic)")
   }
   let moff = le8_to_i64(footer, 8)

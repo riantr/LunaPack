@@ -63,6 +63,9 @@ fn signature_message(package_digest : Bytes) -> Bytes {
 ///|
 /// Sign the package at `path` with the secret key `secret`.
 ///
+/// The secret key is the one of the pair: the seed of the signing key is
+/// derived from it, so the key that signs is not the key that decrypts.
+///
 /// The result says which package it belongs to: the digest of the package
 /// and the digest of its manifest.
 pub async fn sign_package(path : String, secret : Bytes) -> PackageSignature {
@@ -73,7 +76,10 @@ pub async fn sign_package(path : String, secret : Bytes) -> PackageSignature {
     None => fail("the digest of the package could not be read")
   }
   let manifest_digest = package_manifest_digest(path)
-  let signature = ed25519_sign(secret, signature_message(digest_bytes))
+  let signature = ed25519_sign(
+    ed25519_seed(secret),
+    signature_message(digest_bytes),
+  )
   new_package_signature(digest, manifest_digest, bytes_to_hex(signature))
 }
 
@@ -88,25 +94,6 @@ pub fn signature_to_text(sig : PackageSignature) -> String {
   out = out + "package " + sig.package_digest + "\n"
   out = out + "manifest " + sig.manifest_digest + "\n"
   out = out + "signature " + sig.signature + "\n"
-  out
-}
-
-///|
-/// The lines of a text, without the line endings.
-fn text_lines(text : String) -> Array[String] {
-  let out = []
-  let mut start = 0
-  let mut i = 0
-  while i < text.length() {
-    if text[i] == '\n' {
-      out.push(text[start:i].trim().to_owned())
-      start = i + 1
-    }
-    i = i + 1
-  }
-  if start < text.length() {
-    out.push(text[start:].trim().to_owned())
-  }
   out
 }
 
@@ -169,6 +156,9 @@ pub fn signature_from_text(text : String) -> PackageSignature? {
 
 ///|
 /// Does the signature hold for the package at `path`?
+///
+/// `public` is the signing public key of the host: the Ed25519 one, not the
+/// one a package is sealed to.
 ///
 /// The digest of the package is computed again and compared with the digest
 /// the signature was made over, and the signature itself is checked with

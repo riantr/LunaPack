@@ -54,6 +54,12 @@ pub const PE_SUBSYSTEM_GUI : Int32 = 2
 
 pub const PE_SUBSYSTEM_OFFSET : Int64 = 68
 
+pub const PUBLIC_KEY_ENCRYPTION : String = "x25519"
+
+pub const PUBLIC_KEY_HEADER : String = "lunapack-public-key v1"
+
+pub const PUBLIC_KEY_SIGNING : String = "ed25519"
+
 pub const RT_GROUP_ICON : Int64 = 14
 
 pub const RT_ICON : Int64 = 3
@@ -99,6 +105,8 @@ pub fn derive_package_key(Bytes, Bytes) -> PackageKey
 pub fn dirname(String) -> String
 
 pub fn ed25519_public_key(Bytes) -> Bytes raise
+
+pub fn ed25519_seed(Bytes) -> Bytes
 
 pub fn ed25519_sign(Bytes, Bytes) -> Bytes raise
 
@@ -160,6 +168,8 @@ pub async fn load_public_key(String) -> Bytes
 
 pub async fn load_secret_key(String, String) -> Bytes
 
+pub async fn load_signing_public_key(String) -> Bytes
+
 pub fn lz4_compress_frame(Bytes) -> Bytes
 
 pub fn lz4_decompress_frame(Bytes, Int32) -> Bytes
@@ -218,6 +228,8 @@ pub fn poly1305(Bytes, BytesView) -> Bytes
 
 pub async fn probe_archive(String) -> (Int64, Manifest)?
 
+pub fn public_key_pair(Bytes) -> PublicKeyPair raise
+
 pub fn random_bytes(Int32) -> Bytes
 
 pub fn read_at(PeFile, Int64, Int64) -> Bytes
@@ -239,6 +251,8 @@ pub async fn report_output_md5(String) -> Unit
 pub async fn run_install_script(String, String, Script, String) -> Int32
 
 pub async fn save_public_key(String, Bytes) -> Unit
+
+pub async fn save_public_key_pair(String, Bytes, Bytes) -> Unit
 
 pub async fn save_secret_key(String, Bytes, String) -> Unit
 
@@ -275,6 +289,8 @@ pub fn signature_from_text(String) -> PackageSignature?
 pub fn signature_to_text(PackageSignature) -> String
 
 pub fn string_to_utf8_bytes(String) -> Bytes
+
+pub fn text_lines(String) -> Array[String]
 
 pub fn truncate_bytes(Bytes, Int32) -> Bytes
 
@@ -420,6 +436,11 @@ pub struct Poly1305 {
 pub fn Poly1305::Poly1305(Bytes) -> Self
 pub fn Poly1305::finish(Self) -> Bytes
 pub fn Poly1305::update(Self, BytesView) -> Unit
+
+pub struct PublicKeyPair {
+  encryption : Bytes
+  signing : Bytes
+}
 
 pub struct Script {
   platform : String

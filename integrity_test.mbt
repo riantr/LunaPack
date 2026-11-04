@@ -330,7 +330,7 @@ async test "a path that walks out of the destination is refused" {
 async test "the signature of a package holds" {
   let pkg = make_package("lunapack_signed")
   let secret = @LunaPack.random_bytes(32)
-  let public = @LunaPack.ed25519_public_key(secret)
+  let public = @LunaPack.public_key_pair(secret).signing
   let signature = @LunaPack.sign_package(pkg, secret)
   assert_true(@LunaPack.verify_package_signature(pkg, signature, public))
 }
@@ -339,7 +339,7 @@ async test "the signature of a package holds" {
 async test "a package that was changed after it was signed does not match" {
   let pkg = make_package("lunapack_signed_changed")
   let secret = @LunaPack.random_bytes(32)
-  let public = @LunaPack.ed25519_public_key(secret)
+  let public = @LunaPack.public_key_pair(secret).signing
   let signature = @LunaPack.sign_package(pkg, secret)
   let data = @fs.read_binary(pkg)
   @fs.write_binary(pkg, with_byte(data, 30, b'Z'))
@@ -350,7 +350,7 @@ async test "a package that was changed after it was signed does not match" {
 async test "a signature does not hold for another public key" {
   let pkg = make_package("lunapack_signed_other")
   let secret = @LunaPack.random_bytes(32)
-  let other = @LunaPack.ed25519_public_key(@LunaPack.random_bytes(32))
+  let other = @LunaPack.public_key_pair(@LunaPack.random_bytes(32)).signing
   let signature = @LunaPack.sign_package(pkg, secret)
   assert_true(!@LunaPack.verify_package_signature(pkg, signature, other))
 }

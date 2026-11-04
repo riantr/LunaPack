@@ -70,9 +70,15 @@ jobs:
           - os: ubuntu-latest
             name: Linux
             binary: lunapack-linux-x86_64
+          # The macOS runners are the scarce ones: a tag that is pushed when
+          # none of them is free leaves this leg without a runner. The leg does
+          # not hold the release then: the release is made with the binaries
+          # that were built, and it says which one is missing.
           - os: macos-15
             name: macOS
             binary: lunapack-macos-aarch64
+            continue-on-error: true
+            timeout-minutes: 10
           - os: windows-latest
             name: Windows
             binary: lunapack-windows-x86_64.exe
@@ -286,6 +292,16 @@ jobs:
           if [ -z "$NOTES" ]; then
             NOTES="LunaPack $VERSION"
           fi
+          # A binary that could not be built is named in the notes, so that the
+          # release says what it holds instead of pretending to be complete.
+          for name in lunapack-linux-x86_64 lunapack-macos-aarch64 lunapack-windows-x86_64.exe lunapack.wasm; do
+            if [ ! -f "artifacts/$name" ]; then
+              NOTES="$NOTES
+
+The binary \`$name\` is not part of this release: the runner that builds it was
+not available when the tag was pushed."
+            fi
+          done
           # A tag that already carries a release is reused, so re-running the
           # workflow replaces the assets instead of failing.
           if gh release view "$TAG" >/dev/null 2>&1; then
