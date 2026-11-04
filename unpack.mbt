@@ -273,6 +273,51 @@ pub async fn unpack(pkg : String, dest : String, run_scripts : Bool) -> Unit {
 }
 
 ///|
+/// Check the files in `dir` against the manifest of `pkg`.
+///
+/// This audits what is already on the disk, which is what the user asked
+/// for: the files that were extracted must still carry the fingerprint they
+/// had in the package. It works on a folder that was filled by `unpack` and
+/// on the cache folder of a self-extracting bundle.
+///
+/// Returns false when a file is missing or its fingerprint changed.
+pub async fn verify_extracted_dir(pkg : String, dir : String) -> Bool {
+  let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
+  defer file.close()
+  let (_base, manifest) = locate_archive(file)
+  let dir = norm_sep(dir)
+  let mut ok = true
+  let mut checked = 0
+  for e in manifest.entries {
+    let out_path = dir + "/" + e.path
+    if !@fs.exists(out_path) {
+      println("verify: missing " + e.path)
+      ok = false
+      continue
+    }
+    let actual = md5_hex(@fs.read_file(out_path).binary())
+    checked = checked + 1
+    if e.md5 != "" && actual != e.md5 {
+      println(
+        "verify: md5 mismatch for " +
+        e.path +
+        ": expected " +
+        e.md5 +
+        " got " +
+        actual,
+      )
+      ok = false
+    }
+  }
+  if ok {
+    println("verify: OK (" + checked.to_string() + " files in " + dir + ")")
+  } else {
+    println("verify: FAILED (" + checked.to_string() + " files checked)")
+  }
+  ok
+}
+
+///|
 /// Check every entry of a package: magic, sizes, SHA-256 and MD5 digests.
 pub async fn verify(pkg : String) -> Bool {
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)

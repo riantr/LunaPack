@@ -100,3 +100,29 @@ async test "a missing file is reported as an md5 mismatch" {
   let mismatches = verify_extracted_md5(manifest, dest)
   assert_true(mismatches == 1)
 }
+
+///|
+async test "an extracted folder can be audited against the package" {
+  let src = @fs.tmpdir(prefix="lunapack_audit_src")
+  @fs.write_file(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let dest = @fs.tmpdir(prefix="lunapack_audit_dest")
+  unpack(pkg, dest, false)
+  // The extracted folder matches the package.
+  assert_true(verify_extracted_dir(pkg, dest))
+  // A file that changed on the disk is reported.
+  @fs.write_file(dest + "/a.txt", "tampered\n")
+  assert_true(!verify_extracted_dir(pkg, dest))
+  // A file that is gone is reported too.
+  @fs.write_file(dest + "/a.txt", "hello\n")
+  @fs.remove(dest + "/a.txt")
+  assert_true(!verify_extracted_dir(pkg, dest))
+}
