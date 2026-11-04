@@ -418,11 +418,14 @@ pub fn lz4_compress_frame(data : Bytes) -> Bytes {
 /// frame format does not carry it, so the caller has to know it.
 pub fn lz4_decompress_frame(src : Bytes, size : Int32) -> Bytes {
   if src.length() < 7 {
-    abort("not an LZ4 frame (too small)")
+    // A frame that is broken is returned as it is, so that the checksum of
+    // the entry reports the damage instead of the program stopping with an
+    // error.
+    return src
   }
   let magic = read_le32(src, 0)
   if magic != LZ4_MAGIC {
-    abort("not an LZ4 frame (bad magic)")
+    return src
   }
   let flg = src.at(4).to_uint()
   let mut p = 6
@@ -440,7 +443,7 @@ pub fn lz4_decompress_frame(src : Bytes, size : Int32) -> Bytes {
   let mut written = 0
   while true {
     if p + 4 > src.length() {
-      abort("the LZ4 frame is truncated")
+      return src
     }
     let header = read_le32(src, p)
     p = p + 4
@@ -451,7 +454,7 @@ pub fn lz4_decompress_frame(src : Bytes, size : Int32) -> Bytes {
     let stored = (header & 0x80000000U) != 0U
     let len = (header & 0x7FFFFFFFU).reinterpret_as_int()
     if p + len > src.length() {
-      abort("the LZ4 frame is truncated")
+      return src
     }
     if stored {
       let mut i = 0
