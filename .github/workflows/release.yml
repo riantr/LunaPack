@@ -90,6 +90,9 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         env:
+          # Optional: pin the toolchain by setting the MOONBIT_VERSION
+          # repository variable. When it is empty the latest release is
+          # installed, which is what the installers do by default.
           MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
         run: |
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
@@ -99,6 +102,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
+          # Optional: pin the toolchain by setting the MOONBIT_VERSION
+          # repository variable. When it is empty the latest release is
+          # installed, which is what the installers do by default.
           MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
         run: |
           Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
@@ -153,6 +159,9 @@ jobs:
       - name: Install MoonBit
         shell: bash
         env:
+          # Optional: pin the toolchain by setting the MOONBIT_VERSION
+          # repository variable. When it is empty the latest release is
+          # installed, which is what the installers do by default.
           MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
         run: |
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
@@ -201,6 +210,9 @@ jobs:
       - name: Install MoonBit
         shell: bash
         env:
+          # Optional: pin the toolchain by setting the MOONBIT_VERSION
+          # repository variable. When it is empty the latest release is
+          # installed, which is what the installers do by default.
           MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
         run: |
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
