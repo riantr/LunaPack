@@ -366,8 +366,8 @@ the price of the library moving to `riantr/LunaPack/src/lunapack`.
 
 ## Releases
 
-Prebuilt binaries are attached to every
-[GitHub release](https://github.com/riantr/LunaPack/releases):
+The binaries of a release are attached to its
+[GitHub release page](https://github.com/riantr/LunaPack/releases):
 
 | Asset | Platform |
 | --- | --- |
@@ -376,7 +376,6 @@ Prebuilt binaries are attached to every
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-
 The release is built by a GitHub workflow when a version tag such as `v0.1.9`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
