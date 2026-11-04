@@ -267,7 +267,7 @@ pub fn manifest_to_json(m : Manifest) -> String {
 /// Read a field out of a JSON object.
 ///
 /// `Json::value` is deprecated; the pattern match is the recommended form.
-fn json_field(obj : @builtin.Json, key : String) -> @builtin.Json? {
+fn json_field(obj : @json.Json, key : String) -> @json.Json? {
   match obj {
     Object(o) => o.get(key)
     _ => None
@@ -276,7 +276,7 @@ fn json_field(obj : @builtin.Json, key : String) -> @builtin.Json? {
 
 ///|
 /// The string carried by a JSON node, if it is a string.
-fn json_string(j : @builtin.Json) -> String? {
+fn json_string(j : @json.Json) -> String? {
   match j {
     String(s) => Some(s)
     _ => None
@@ -285,7 +285,7 @@ fn json_string(j : @builtin.Json) -> String? {
 
 ///|
 /// The number carried by a JSON node, if it is a number.
-fn json_number(j : @builtin.Json) -> Double? {
+fn json_number(j : @json.Json) -> Double? {
   match j {
     Number(n, ..) => Some(n)
     _ => None
@@ -294,7 +294,7 @@ fn json_number(j : @builtin.Json) -> Double? {
 
 ///|
 /// The array carried by a JSON node, if it is an array.
-fn json_array(j : @builtin.Json) -> Array[@builtin.Json]? {
+fn json_array(j : @json.Json) -> Array[@json.Json]? {
   match j {
     Array(a) => Some(a)
     _ => None
@@ -307,7 +307,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
   let j = @json.parse(text) catch {
     err => fail("invalid manifest JSON: " + err.to_string())
   }
-  let get_str = fn(obj : @builtin.Json, k : String) -> String raise {
+  let get_str = fn(obj : @json.Json, k : String) -> String raise {
     match json_field(obj, k) {
       Some(v) =>
         match json_string(v) {
@@ -318,7 +318,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
     }
   }
   let get_str_def = fn(
-    obj : @builtin.Json,
+    obj : @json.Json,
     k : String,
     dflt : String,
   ) -> String {
@@ -331,7 +331,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       None => dflt
     }
   }
-  let get_i64 = fn(obj : @builtin.Json, k : String) -> Int64 raise {
+  let get_i64 = fn(obj : @json.Json, k : String) -> Int64 raise {
     match json_field(obj, k) {
       Some(v) =>
         match json_number(v) {
@@ -341,7 +341,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       None => fail("missing field " + k)
     }
   }
-  let get_i64_def = fn(obj : @builtin.Json, k : String, dflt : Int64) -> Int64 {
+  let get_i64_def = fn(obj : @json.Json, k : String, dflt : Int64) -> Int64 {
     match json_field(obj, k) {
       Some(v) =>
         match json_number(v) {
@@ -351,7 +351,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       None => dflt
     }
   }
-  let get_int_def = fn(obj : @builtin.Json, k : String, dflt : Int32) -> Int32 {
+  let get_int_def = fn(obj : @json.Json, k : String, dflt : Int32) -> Int32 {
     match json_field(obj, k) {
       Some(v) =>
         match json_number(v) {
@@ -361,7 +361,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       None => dflt
     }
   }
-  let get_script = fn(obj : @builtin.Json, k : String) -> Script? {
+  let get_script = fn(obj : @json.Json, k : String) -> Script? {
     match json_field(obj, k) {
       Some(v) =>
         match json_field(v, "body") {
