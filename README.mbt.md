@@ -5,12 +5,35 @@
 executable together with its resources into a single distributable file, and
 unpacks it again on the target machine with integrity checking.
 
+Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
+(mirrored to [gitee.com/ren-yongxiang/lunaPack](https://gitee.com/ren-yongxiang/lunaPack)
+for everyday storage).
+
 - **SHA-256** checksums for every entry (verified on unpack).
 - **gzip** compression per entry, with an `auto` mode that only compresses
   when it actually helps.
 - **Cross-platform**: runs on Windows, Linux and macOS; packages carry their
   install scripts with the platform they target.
 - **Native and Wasm**: usable as a standalone binary or through `moonx`.
+
+## Releases
+
+Prebuilt binaries are attached to every
+[GitHub release](https://github.com/riantr/LunaPack/releases):
+
+| Asset | Platform |
+| --- | --- |
+| `lunapack-windows-x86_64.exe` | Windows |
+| `lunapack-linux-x86_64` | Linux |
+| `lunapack-macos-aarch64` | macOS (Apple Silicon) |
+| `lunapack-wasm` | WebAssembly, for `moonx` |
+
+The release is built by a GitHub workflow when a version tag such as
+`v0.1.0` is pushed; the same version is published to the Mooncakes registry,
+so `moonx riantr/LunaPack@latest` resolves to it.
+
+The registry requires a `0.x.y` version while it is in its early stage, so
+the first releases are numbered `0.1.0`, `0.2.0` and so on.
 
 ## Usage
 
