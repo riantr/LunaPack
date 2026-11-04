@@ -40,11 +40,15 @@ the first releases are numbered `0.1.0`, `0.2.0` and so on.
 ### Via `moonx` (published on Mooncakes)
 
 ```bash
-moonx riantr/LunaPack@latest \
+moonx riantr/LunaPack/cmd/main@latest \
   --input-exe=[input-exe-path] \
   --output-exe=[output-exe-path] \
   --Files=[Pack-Folder]
 ```
+
+The coordinate names the package that holds the entry point, because the
+registry stores the prebuilt WebAssembly module per package. The entry point
+lives in `cmd/main`, so the coordinate is `riantr/LunaPack/cmd/main@latest`.
 
 | Flag | Meaning |
 | --- | --- |

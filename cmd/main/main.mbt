@@ -4,7 +4,7 @@
 //
 // 1. The `moonx` style, used when the package is published to Mooncakes:
 //
-//      moonx riantr/LunaPack@latest \
+//      moonx riantr/LunaPack/cmd/main@latest \
 //        --input-exe=[input-exe-path] \
 //        --output-exe=[output-exe-path] \
 //        --Files=[Pack-Folder]
@@ -162,7 +162,9 @@ fn usage() -> Unit {
   println("LunaPack - application distribution packer (MoonBit)")
   println("")
   println("usage (moonx):")
-  println("  moonx riantr/LunaPack@latest --input-exe=[input-exe-path] \\")
+  println(
+    "  moonx riantr/LunaPack/cmd/main@latest --input-exe=[input-exe-path] \\",
+  )
   println("       --output-exe=[output-exe-path] --Files=[Pack-Folder]")
   println("")
   println("usage (native):")
