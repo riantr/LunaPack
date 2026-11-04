@@ -268,7 +268,7 @@ async test "pack produces a manifest that round-trips" {
   )
   @LunaPack.pack(src, pkg, opts)
   let m = @LunaPack.read_package_manifest(pkg)
-  assert_true(m.format_version == 4)
+  assert_true(m.format_version == 5)
   assert_true(m.name == "demo")
   assert_true(m.version == "1.0.0")
   assert_true(m.os == "linux")
@@ -293,7 +293,7 @@ async test "pack produces a manifest that round-trips" {
   assert_true(back.entries[0].checksum == m.entries[0].checksum)
   assert_true(back.entries[0].size == m.entries[0].size)
   // And the package itself must verify.
-  assert_true(@LunaPack.verify(pkg))
+  assert_true(@LunaPack.verify(pkg, None))
 }
 
 ///|
@@ -315,7 +315,7 @@ async test "unpack restores the original tree" {
     "auto",
   )
   @LunaPack.pack(src, pkg, opts)
-  @LunaPack.unpack(pkg, dest, false)
+  @LunaPack.unpack(pkg, dest, false, None)
   let a = @fs.read_binary(dest + "/hello.txt")
   assert_true(@LunaPack.utf8_bytes_to_string(a) == "hello")
   let b = @fs.read_binary(dest + "/sub/nested.txt")
@@ -366,7 +366,7 @@ async test "bundle appends an archive to the executable" {
   assert_true(m.entries.length() == 2)
   // And the payload must extract byte-identically.
   let dest = outdir + "/extracted"
-  @LunaPack.unpack(bundle_path, dest, false)
+  @LunaPack.unpack(bundle_path, dest, false, None)
   let a = @fs.read_binary(dest + "/app.exe")
   assert_true(
     @LunaPack.utf8_bytes_to_string(a) == "pretend this is an executable",

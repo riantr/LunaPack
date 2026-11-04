@@ -16,6 +16,9 @@ for everyday storage).
   The fingerprint of the produced file is reported as well.
 - **gzip** and **LZ4** compression per entry. LZ4 is implemented in this
   package and trades a larger result for a much shorter packing time.
+- **encryption** of the entries, either to the owner of a public key or with
+  a passphrase. The mechanism is the one of the reference implementation this
+  package follows.
 - **Cross-platform**: runs on Windows, Linux and macOS; packages carry their
   install scripts with the platform they target.
 - **Native and Wasm**: usable as a standalone binary or through `moonx`.
@@ -34,11 +37,11 @@ Prebuilt binaries are attached to every
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 
 The release is built by a GitHub workflow when a version tag such as
-`v0.1.3` is pushed; the same version is published to the Mooncakes registry,
+`v0.1.4` is pushed; the same version is published to the Mooncakes registry,
 so `moonx riantr/LunaPack/cmd/main@latest` resolves to it.
 
 The registry requires a `0.x.y` version while it is in its early stage, so
-the releases are numbered `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3` and so on.
+the releases are numbered `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4` and so on.
 
 ## Usage
 
@@ -155,6 +158,10 @@ Flags accept both `--flag=value` and `--flag value`.
 | `--pre-install <file>` | script executed *before* extraction |
 | `--post-install <file>` | script executed *after* extraction |
 | `--compression-method <m>` | `none`, `gzip`, `lz4` or `auto` (default: `auto`) |
+| `--encryption-method <m>` | `x25519` or `passphrase` (default: none) |
+| `--public-key <file>` | the public key of the recipient |
+| `--secret-key <file>` | the secret key of the recipient |
+| `--passphrase-file <file>` | the file that holds the passphrase |
 | `--skip-scripts` | unpack without running the install scripts |
 | `--extracted <dir>` | with `verify`: also check the files already in `<dir>` |
 
@@ -183,6 +190,65 @@ The LZ4 implementation lives in this package, because the MoonBit toolchain
 ships none. What it produces is a standard `.lz4` frame, so the `lz4` tool
 decompresses it, and this package decompresses what that tool produces. Both
 directions are covered by the test suite.
+
+### Encryption
+
+`--encryption-method` seals the entries of a package. There are two methods:
+
+| Method | What it does |
+| --- | --- |
+| `x25519` | the package is sealed to the owner of a public key; only the owner of the secret key can open it |
+| `passphrase` | the package is sealed with a passphrase |
+
+The mechanism is the one of the reference implementation this package
+follows. A key is established with the recipient, HKDF-SHA512 turns it into
+the key of the package, and every entry is sealed on its own with
+ChaCha20-Poly1305 under a key and a nonce that are derived for it. The
+additional data of an entry holds its place in the package and its name, so
+that neither can be changed without the seal breaking. A check in the
+manifest tells a wrong key from a damaged package.
+
+The key exchange is the one part that is different. The reference uses the
+sntrup761 KEM, which the toolchain has no counterpart of, so this package
+uses X25519 - the curve that the reference itself carries as a part of its
+own `sntrup761x25519-sha512` method.
+
+```bash
+# Make a pair of keys. The public key goes to the machine that seals the
+# packages, the secret key to the machine that opens them.
+lunapack keygen --public-key recipient.pub --secret-key recipient.key
+
+# Seal a package to the owner of the public key.
+lunapack pack -i ./app -o app.appkg \
+  --encryption-method x25519 --public-key recipient.pub
+
+# Open it again with the secret key.
+lunapack unpack -i app.appkg -o ./out --secret-key recipient.key
+
+# Or with a passphrase.
+lunapack pack -i ./app -o app.appkg \
+  --encryption-method passphrase --passphrase-file passphrase.txt
+lunapack unpack -i app.appkg -o ./out --passphrase-file passphrase.txt
+```
+
+A secret key that a passphrase protects is the better form: the raw form
+leaves the secret key in clear text on disk, and anyone who reads it can
+open every package that was ever sealed for it.
+
+```bash
+lunapack keygen --public-key recipient.pub --secret-key recipient.key \
+  --passphrase-file passphrase.txt
+```
+
+The self-extracting bundle finds its key next to itself: the file
+`<bundle>.key` for a public key, the file `<bundle>.pass` for a passphrase.
+The environment variables `LUNAPACK_SECRET_KEY` and
+`LUNAPACK_PASSPHRASE_FILE` name the files instead.
+
+Every primitive is implemented in this package, because the toolchain ships
+none of them: SHA-512, HMAC, HKDF, PBKDF2, ChaCha20, Poly1305 and X25519.
+Each one is checked against the vector that its standard publishes, and the
+derivation is checked against the reference implementation itself.
 
 ### Example
 
@@ -330,15 +396,15 @@ Use `--skip-scripts` to unpack without running them.
 
 The container layout has not changed since v2: the marker names the layout,
 and the manifest carries its own `format_version`. The current manifest is
-version 4, which adds the MD5 fingerprint of every entry and the LZ4 codec.
-A package written
-by an older version still unpacks, because the fingerprint is optional.
+version 5, which adds the encryption of the entries. A package written
+by an older version still unpacks, because the fingerprint and the
+encryption are both optional.
 
 ```
 +--------------------+  offset 0
 | magic "APPKGD02"   |  8 bytes
 +--------------------+  offset 8
-| entry payloads     |  stored back to back, raw, gzip or lz4
+| entry payloads     |  stored back to back, raw, gzip, lz4 or sealed
 +--------------------+
 | manifest (UTF-8    |
 | JSON)              |
@@ -412,6 +478,14 @@ reference implementation produces, and the interoperability with the `lz4`
 tool in both directions. That last test is skipped where the tool is not
 installed.
 
+The tests of the encryption check every primitive against the vector that
+its standard publishes - FIPS 180-4 for SHA-512, RFC 4231 for HMAC, RFC
+5869 for HKDF, RFC 8439 for ChaCha20-Poly1305 and RFC 7748 for X25519 - and
+the derivation against the reference implementation itself: the master key,
+the key and the nonce of a record, the check of the key and the sealed
+record are compared byte for byte with the values that the reference
+produces.
+
 ## Notes and limitations
 
 - `main` must return `Unit` in this MoonBit version, so the process exit code
@@ -425,6 +499,13 @@ installed.
   file is never read back for that. The launcher stub is the one exception:
   it is hashed after the icon was written into it, because writing the icon
   changes its bytes.
+- The big integers of the core are not constant time, so the X25519 of this
+  package is not either. The control flow of the ladder does not depend on
+  the secret, but the time of the arithmetic does. For the use here - a key
+  exchange on the machine that holds the secret key - that is not the
+  threat, but it is a reason to look elsewhere when it is.
+- The encryption protects the content of the entries. The names of the
+  entries and their sizes are in the manifest, which is not encrypted.
 - The launcher stub is the LunaPack executable of the machine that built the
   bundle, so a bundle runs on the platform it was created on. Under `moonx`
   (Wasm) no native stub exists, so the bundle falls back to carrying the

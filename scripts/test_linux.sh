@@ -180,6 +180,61 @@ diff -r "$WORK_DIR/src" "$WORK_DIR/lz4_out" \
   || fail "the lz4 package did not round-trip"
 pass "the lz4 codec round-trips"
 
+section "the encryption"
+# A package that is sealed to a recipient round-trips with the secret key.
+"$BIN" keygen --public-key "$WORK_DIR/recipient.pub" --secret-key "$WORK_DIR/recipient.key" > /dev/null
+"$BIN" pack -i "$WORK_DIR/src" -o "$WORK_DIR/secret.appkg" \
+  --name "secret-demo" --version "1.0.0" \
+  --encryption-method x25519 --public-key "$WORK_DIR/recipient.pub" > /dev/null
+"$BIN" info "$WORK_DIR/secret.appkg" | grep -q 'encryption:   x25519' \
+  || fail "the encryption was not recorded in the manifest"
+rm -rf "$WORK_DIR/secret_out"
+"$BIN" unpack -i "$WORK_DIR/secret.appkg" -o "$WORK_DIR/secret_out" \
+  --secret-key "$WORK_DIR/recipient.key" > /dev/null
+diff -r "$WORK_DIR/src" "$WORK_DIR/secret_out" \
+  || fail "the encrypted package did not round-trip"
+pass "the encrypted package round-trips"
+
+# The content of a file is not readable in the package any more.
+if grep -q "hello lunapack" "$WORK_DIR/secret.appkg" 2>/dev/null; then
+  fail "the content is still readable in the package"
+fi
+pass "the content is not readable in the package"
+
+# Another secret key does not open it.
+"$BIN" keygen --public-key "$WORK_DIR/other.pub" --secret-key "$WORK_DIR/other.key" > /dev/null
+if "$BIN" unpack -i "$WORK_DIR/secret.appkg" -o "$WORK_DIR/secret_out2" \
+  --secret-key "$WORK_DIR/other.key" 2>&1 | grep -q "error:"; then
+  pass "a wrong secret key is refused"
+else
+  fail "a wrong secret key was NOT refused"
+fi
+
+# The passphrase method works as well.
+printf 'a passphrase\n' > "$WORK_DIR/pass.txt"
+"$BIN" pack -i "$WORK_DIR/src" -o "$WORK_DIR/pass.appkg" \
+  --name "pass-demo" --version "1.0.0" \
+  --encryption-method passphrase --passphrase-file "$WORK_DIR/pass.txt" > /dev/null
+rm -rf "$WORK_DIR/pass_out"
+"$BIN" unpack -i "$WORK_DIR/pass.appkg" -o "$WORK_DIR/pass_out" \
+  --passphrase-file "$WORK_DIR/pass.txt" > /dev/null
+diff -r "$WORK_DIR/src" "$WORK_DIR/pass_out" \
+  || fail "the package with a passphrase did not round-trip"
+pass "the passphrase method round-trips"
+
+# A secret key that a passphrase protects works as well.
+"$BIN" keygen --public-key "$WORK_DIR/prot.pub" --secret-key "$WORK_DIR/prot.key" \
+  --passphrase-file "$WORK_DIR/pass.txt" > /dev/null
+"$BIN" pack -i "$WORK_DIR/src" -o "$WORK_DIR/prot.appkg" \
+  --name "prot-demo" --version "1.0.0" \
+  --encryption-method x25519 --public-key "$WORK_DIR/prot.pub" > /dev/null
+rm -rf "$WORK_DIR/prot_out"
+"$BIN" unpack -i "$WORK_DIR/prot.appkg" -o "$WORK_DIR/prot_out" \
+  --secret-key "$WORK_DIR/prot.key" --passphrase-file "$WORK_DIR/pass.txt" > /dev/null
+diff -r "$WORK_DIR/src" "$WORK_DIR/prot_out" \
+  || fail "the package with a protected secret key did not round-trip"
+pass "a protected secret key round-trips"
+
 section "corruption detection"
 cp "$WORK_DIR/pkg.appkg" "$WORK_DIR/bad.appkg"
 python3 - "$WORK_DIR/bad.appkg" <<'PY'

@@ -129,6 +129,93 @@ async fn read_text_file(path : String) -> String {
 }
 
 ///|
+/// The passphrase of the encryption, from a file or from the command line.
+///
+/// The file is the better choice: a passphrase that is given on the command
+/// line can be seen by every process on the machine.
+async fn read_passphrase(flags : Array[Flag]) -> String {
+  let file = flag_value(flags, "passphrase-file")
+  if file != "" {
+    let text = read_text_file(file) catch {
+      err => fail("cannot read the passphrase file: " + err.to_string())
+    }
+    // The line ending at the end of the file is not part of the passphrase.
+    let mut end = text.length()
+    while end > 0 {
+      let c = text[end - 1]
+      if c == '\n' || c == '\r' || c == ' ' || c == '\t' {
+        end = end - 1
+      } else {
+        break
+      }
+    }
+    return text[0:end].to_owned()
+  }
+  flag_value(flags, "passphrase")
+}
+
+///|
+/// The encryption of the package, from the flags.
+///
+/// Returns None when the package is not to be encrypted.
+async fn encryption_options(flags : Array[Flag]) -> @lib.EncryptionOptions? {
+  let mut kind = flag_value(flags, "encryption-method")
+  if kind == "" {
+    kind = flag_value(flags, "encryption")
+  }
+  if kind == "" || kind == "none" {
+    return None
+  }
+  if kind != @lib.METHOD_X25519 && kind != @lib.METHOD_PASSPHRASE {
+    fail("--encryption-method must be x25519 or passphrase")
+  }
+  let public_key = flag_value(flags, "public-key")
+  let passphrase = if kind == @lib.METHOD_PASSPHRASE {
+    read_passphrase(flags)
+  } else {
+    ""
+  }
+  if kind == @lib.METHOD_X25519 && public_key == "" {
+    fail("--encryption-method x25519 needs --public-key")
+  }
+  if kind == @lib.METHOD_PASSPHRASE && passphrase == "" {
+    fail("--encryption-method passphrase needs --passphrase-file")
+  }
+  Some(
+    @lib.new_encryption_options(
+      kind,
+      public_key,
+      passphrase,
+      @lib.PASSPHRASE_ITERATIONS,
+    ),
+  )
+}
+
+///|
+/// The key of an encrypted package, from the flags.
+///
+/// Returns None when the package is not encrypted.
+async fn package_key(
+  flags : Array[Flag],
+  m : @lib.Manifest,
+) -> @lib.PackageKey? {
+  match m.encryption {
+    None => None
+    Some(info) => {
+      // The passphrase is needed in two places: for a package that is sealed
+      // with one, and for a secret key file that one protects. The same
+      // flag serves both.
+      let passphrase = read_passphrase(flags)
+      let secret = flag_value(flags, "secret-key")
+      if info.method_name != @lib.METHOD_PASSPHRASE && secret == "" {
+        fail("the package is encrypted: it needs --secret-key")
+      }
+      Some(@lib.recover_encryption(info, secret, passphrase))
+    }
+  }
+}
+
+///|
 /// Build the pack options shared by both front ends.
 async fn build_options(flags : Array[Flag]) -> @lib.PackOptions {
   let empty = @lib.new_pack_options("", "", "", "", None, None, "auto")
@@ -191,6 +278,7 @@ fn usage() -> Unit {
   println("  lunapack unpack -i <package>   -o <dest_dir> [--skip-scripts]")
   println("  lunapack verify <package> [--extracted <dir>]")
   println("  lunapack info   <package>")
+  println("  lunapack keygen --public-key <file> --secret-key <file>")
   println("")
   println("options:")
   println("  --input-exe <path>      application executable to distribute")
@@ -203,6 +291,15 @@ fn usage() -> Unit {
   println("  --pre-install <file>    script executed before extraction")
   println("  --post-install <file>   script executed after extraction")
   println("  --compression-method <m> none | gzip | lz4 | auto (default: auto)")
+  println("")
+  println("encryption:")
+  println("  --encryption-method <m>  x25519 | passphrase")
+  println("  --public-key <file>      public key of the recipient")
+  println("  --secret-key <file>      secret key of the recipient")
+  println("  --passphrase-file <file> file that holds the passphrase")
+  println(
+    "  --passphrase <text>      the passphrase (visible in the process list)",
+  )
 }
 
 ///|
@@ -245,6 +342,10 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
     },
   )
   try {
+    let opts = match encryption_options(flags) {
+      Some(e) => @lib.with_encryption(opts, e)
+      None => opts
+    }
     if input_exe == "" {
       // No executable given: write a plain archive instead.
       let first = if file_dirs.length() > 0 { file_dirs[0] } else { "." }
@@ -268,39 +369,46 @@ async fn do_pack(args : ArrayView[String]) -> Unit {
     usage()
     return
   }
-  let compression = flag_value(flags, "compression")
+  let compression = flag_value_any(flags, ["compression-method", "compression"])
   if compression != "" &&
     compression != "none" &&
     compression != "gzip" &&
+    compression != "lz4" &&
     compression != "auto" {
-    println("error: --compression must be none, gzip or auto")
+    println("error: --compression-method must be none, gzip, lz4 or auto")
     return
   }
-  let base = build_options(flags)
-  let opts = @lib.with_defaults(
-    base,
-    if base.name == "" {
-      @lib.basename(input)
-    } else {
-      base.name
-    },
-    if base.version == "" {
-      "0.1.0"
-    } else {
-      base.version
-    },
-    if base.os == "" {
-      @lib.host_platform()
-    } else {
-      base.os
-    },
-    if base.arch == "" {
-      @lib.default_arch()
-    } else {
-      base.arch
-    },
-  )
-  @lib.pack(input, output, opts) catch {
+  try {
+    let base = build_options(flags)
+    let opts = @lib.with_defaults(
+      base,
+      if base.name == "" {
+        @lib.basename(input)
+      } else {
+        base.name
+      },
+      if base.version == "" {
+        "0.1.0"
+      } else {
+        base.version
+      },
+      if base.os == "" {
+        @lib.host_platform()
+      } else {
+        base.os
+      },
+      if base.arch == "" {
+        @lib.default_arch()
+      } else {
+        base.arch
+      },
+    )
+    let opts = match encryption_options(flags) {
+      Some(e) => @lib.with_encryption(opts, e)
+      None => opts
+    }
+    @lib.pack(input, output, opts)
+  } catch {
     err => println("error: " + err.to_string())
   }
 }
@@ -317,7 +425,11 @@ async fn do_unpack(args : ArrayView[String]) -> Unit {
     return
   }
   let skip = flag_has(flags, "skip-scripts")
-  @lib.unpack(input, output, !skip) catch {
+  try {
+    let m = @lib.read_package_manifest(input)
+    let key = package_key(flags, m)
+    @lib.unpack(input, output, !skip, key)
+  } catch {
     err => println("error: " + err.to_string())
   }
 }
@@ -337,7 +449,9 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
   try {
     let flags = parse_flags(args, 1)
     let extracted = flag_value(flags, "extracted")
-    let ok = @lib.verify(args[1])
+    let m = @lib.read_package_manifest(args[1])
+    let key = package_key(flags, m)
+    let ok = @lib.verify(args[1], key)
     if extracted != "" {
       if @lib.verify_extracted_dir(args[1], extracted) {
         println("VERIFY OK")
@@ -351,6 +465,39 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
     } else {
       println("VERIFY FAILED")
     }
+  } catch {
+    err => println("error: " + err.to_string())
+  }
+}
+
+///|
+/// The `keygen` subcommand.
+///
+/// It makes a pair of keys: the public key goes to the machine that seals
+/// the packages, the secret key to the machine that opens them.
+async fn do_keygen(args : ArrayView[String]) -> Unit {
+  let flags = parse_flags(args, 1)
+  let public_path = flag_value(flags, "public-key")
+  let secret_path = flag_value(flags, "secret-key")
+  if public_path == "" || secret_path == "" {
+    println(
+      "error: keygen requires --public-key <file> and --secret-key <file>",
+    )
+    usage()
+    return
+  }
+  try {
+    let secret = @lib.random_bytes(32)
+    let public = @lib.x25519_public_key(secret)
+    @lib.save_public_key(public_path, public)
+    let passphrase = read_passphrase(flags)
+    if passphrase == "" {
+      @lib.save_secret_key_raw(secret_path, secret)
+    } else {
+      @lib.save_secret_key(secret_path, secret, passphrase)
+    }
+    println("wrote the public key to " + public_path)
+    println("wrote the secret key to " + secret_path)
   } catch {
     err => println("error: " + err.to_string())
   }
@@ -382,6 +529,13 @@ async fn do_info(args : ArrayView[String]) -> Unit {
       (if m.pre_install is Some(_) { "yes" } else { "no" }) +
       " post=" +
       (if m.post_install is Some(_) { "yes" } else { "no" }),
+    )
+    println(
+      "encryption:   " +
+      (match m.encryption {
+        Some(e) => e.method_name
+        None => "none"
+      }),
     )
     println("entries:      " + m.entries.length().to_string())
     let mut total = 0L
@@ -441,6 +595,8 @@ async fn main {
     do_verify(argv)
   } else if first == "info" {
     do_info(argv)
+  } else if first == "keygen" {
+    do_keygen(argv)
   } else if first == "--help" || first == "-h" || first == "help" {
     usage()
   } else {

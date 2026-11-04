@@ -22,7 +22,8 @@ pub const MAGIC : String = "APPKGD02"
 /// Format version recorded in the manifest.
 ///
 /// v3 adds the MD5 fingerprint of every entry next to its SHA-256 checksum.
-pub const FORMAT_VERSION : Int32 = 4
+/// v4 adds the LZ4 codec. v5 adds the encryption of the entries.
+pub const FORMAT_VERSION : Int32 = 5
 
 ///|
 /// Checksum algorithm used for every entry payload.
@@ -118,6 +119,8 @@ pub struct Manifest {
   pre_install : Script?
   /// Script executed in the destination directory after extraction.
   post_install : Script?
+  /// How the entries are encrypted, if they are.
+  encryption : Encryption?
   entries : Array[Entry]
 }
 
@@ -134,6 +137,8 @@ pub struct PackOptions {
   compression : String
   /// Name of the entry that is the main program, empty if there is none.
   main_program : String
+  /// How the entries are encrypted, if they are.
+  encryption : EncryptionOptions?
 }
 
 ///|
@@ -157,6 +162,26 @@ pub fn new_pack_options(
     post_install,
     compression,
     main_program: "",
+    encryption: None,
+  }
+}
+
+///|
+/// Return a copy of `opts` that encrypts the package.
+pub fn with_encryption(
+  opts : PackOptions,
+  encryption : EncryptionOptions,
+) -> PackOptions {
+  {
+    name: opts.name,
+    version: opts.version,
+    os: opts.os,
+    arch: opts.arch,
+    pre_install: opts.pre_install,
+    post_install: opts.post_install,
+    compression: opts.compression,
+    main_program: opts.main_program,
+    encryption: Some(encryption),
   }
 }
 
@@ -172,6 +197,7 @@ pub fn with_main_program(opts : PackOptions, name : String) -> PackOptions {
     post_install: opts.post_install,
     compression: opts.compression,
     main_program: name,
+    encryption: opts.encryption,
   }
 }
 
@@ -193,6 +219,7 @@ pub fn with_defaults(
     post_install: opts.post_install,
     compression: opts.compression,
     main_program: opts.main_program,
+    encryption: opts.encryption,
   }
 }
 
@@ -241,6 +268,28 @@ fn script_to_json(o : Script?) -> String {
 }
 
 ///|
+/// Serialize the encryption of a package as a nested JSON object.
+fn encryption_to_json(e : Encryption?) -> String {
+  match e {
+    Some(x) =>
+      "{\"method\":\"" +
+      json_escape(x.method_name) +
+      "\",\"recipient\":\"" +
+      json_escape(x.recipient) +
+      "\",\"ephemeral\":\"" +
+      json_escape(x.ephemeral) +
+      "\",\"salt\":\"" +
+      json_escape(x.salt) +
+      "\",\"iterations\":" +
+      x.iterations.to_string() +
+      ",\"key_check\":\"" +
+      json_escape(x.key_check) +
+      "\"}"
+    None => "null"
+  }
+}
+
+///|
 /// Serialize a manifest into the canonical UTF-8 JSON representation.
 pub fn manifest_to_json(m : Manifest) -> String {
   let mut s = "{"
@@ -255,6 +304,7 @@ pub fn manifest_to_json(m : Manifest) -> String {
   s = s + ",\"main_program\":\"" + json_escape(m.main_program) + "\""
   s = s + ",\"pre_install\":" + script_to_json(m.pre_install)
   s = s + ",\"post_install\":" + script_to_json(m.post_install)
+  s = s + ",\"encryption\":" + encryption_to_json(m.encryption)
   s = s + ",\"entries\":["
   let mut i = 0
   while i < m.entries.length() {
@@ -395,6 +445,32 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       None => None
     }
   }
+  let get_encryption = fn(obj : @json.Json) -> Encryption? {
+    match json_field(obj, "encryption") {
+      Some(v) =>
+        match v {
+          Object(_) => {
+            let method_name = get_str_def(v, "method", "none")
+            if method_name == "none" {
+              None
+            } else {
+              Some(
+                new_encryption(
+                  method_name,
+                  get_str_def(v, "recipient", ""),
+                  get_str_def(v, "ephemeral", ""),
+                  get_str_def(v, "salt", ""),
+                  get_int_def(v, "iterations", 0),
+                  get_str_def(v, "key_check", ""),
+                ),
+              )
+            }
+          }
+          _ => None
+        }
+      None => None
+    }
+  }
   let entries_arr = match json_field(j, "entries") {
     Some(v) =>
       match json_array(v) {
@@ -429,6 +505,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
     main_program: get_str_def(j, "main_program", ""),
     pre_install: get_script(j, "pre_install"),
     post_install: get_script(j, "post_install"),
+    encryption: get_encryption(j),
     entries,
   }
 }

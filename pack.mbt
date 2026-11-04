@@ -88,6 +88,17 @@ async fn write_archive(
   let mut cursor : Int64 = 8
   let entries = []
   let mut scanned = 0
+  // The encryption is established before the first entry is written,
+  // because the place of an entry in the package is part of its seal.
+  let active = match opts.encryption {
+    Some(e) => Some(establish_encryption(e))
+    None => None
+  }
+  let enc_key = match active {
+    Some(a) => Some(a.key)
+    None => None
+  }
+  let mut index = 0
   for it in items {
     let (src, target) = it
     let raw = @fs.read_binary(src)
@@ -102,22 +113,30 @@ async fn write_archive(
     let exec = @fs.can_execute(src)
     let mode : Int32 = if exec { 0o755 } else { 0o644 }
     let (stored, codec) = compress_with(raw, opts.compression)
-    pkg.write(stored)
+    // The payload is encrypted after it is compressed: a ciphertext does
+    // not compress any further.
+    let payload = match enc_key {
+      Some(k) => seal_entry(k, index, target, stored)
+      None => stored
+    }
+    pkg.write(payload)
     match digest {
-      Some(d) => d.update(stored)
+      Some(d) => d.update(payload)
       None => ()
     }
     entries.push({
       path: target,
       mode,
       size: raw.length().to_int64(),
-      stored_size: stored.length().to_int64(),
+      // The stored size is what the package holds: the encrypted payload.
+      stored_size: payload.length().to_int64(),
       codec,
       checksum: sum,
       md5: fingerprint,
       offset: cursor,
     })
-    cursor = cursor + stored.length().to_int64()
+    cursor = cursor + payload.length().to_int64()
+    index = index + 1
   }
   println("scanned " + scanned.to_string() + " files")
   let manifest = {
@@ -132,6 +151,10 @@ async fn write_archive(
     main_program: opts.main_program,
     pre_install: opts.pre_install,
     post_install: opts.post_install,
+    encryption: match active {
+      Some(a) => Some(a.info)
+      None => None
+    },
     entries,
   }
   let mjson = manifest_to_json(manifest)

@@ -48,7 +48,7 @@ async test "the extracted files are checked against their md5 fingerprint" {
   )
   pack(src, pkg, opts)
   let dest = @fs.tmpdir(prefix="lunapack_md5_dest")
-  unpack(pkg, dest, false)
+  unpack(pkg, dest, false, None)
   // Every file is written back with the fingerprint it had in the package.
   let data = @fs.read_binary(dest + "/a.txt")
   assert_true(md5_hex(data) == md5_hex_of_string("hello\n"))
@@ -68,7 +68,7 @@ async test "a changed file is reported as an md5 mismatch" {
   )
   pack(src, pkg, opts)
   let dest = @fs.tmpdir(prefix="lunapack_md5_dest2")
-  unpack(pkg, dest, false)
+  unpack(pkg, dest, false, None)
   // Change the file on the disk after it was extracted.
   @fs.write_text(dest + "/a.txt", "tampered\n")
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
@@ -92,7 +92,7 @@ async test "a missing file is reported as an md5 mismatch" {
   )
   pack(src, pkg, opts)
   let dest = @fs.tmpdir(prefix="lunapack_md5_dest3")
-  unpack(pkg, dest, false)
+  unpack(pkg, dest, false, None)
   @fs.remove(dest + "/a.txt")
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
@@ -115,7 +115,7 @@ async test "an extracted folder can be audited against the package" {
   )
   pack(src, pkg, opts)
   let dest = @fs.tmpdir(prefix="lunapack_audit_dest")
-  unpack(pkg, dest, false)
+  unpack(pkg, dest, false, None)
   // The extracted folder matches the package.
   assert_true(verify_extracted_dir(pkg, dest))
   // A file that changed on the disk is reported.
