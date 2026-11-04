@@ -56,85 +56,125 @@ fn md5_rotl32(x : UInt64, n : Int32) -> UInt64 {
 }
 
 ///|
-/// Lowercase hex MD5 digest of `data` (32 characters).
-pub fn md5_hex(data : Bytes) -> String {
+/// The state of an MD5 that is fed in pieces.
+///
+/// A file that is written while it is hashed does not have to be held in
+/// memory, and it never has to be read back to be hashed.
+pub struct Md5 {
+  /// The four state words.
+  state : Array[UInt64]
+  /// The bytes that did not fill a block yet.
+  pending : Array[Byte]
+  /// The number of bytes that were fed in.
+  mut length : Int64
+}
+
+///|
+/// A fresh MD5 computation.
+pub fn Md5::Md5() -> Md5 {
+  {
+    state: [0x67452301UL, 0xefcdab89UL, 0x98badcfeUL, 0x10325476UL],
+    pending: [],
+    length: 0,
+  }
+}
+
+///|
+/// Compress one 64-byte block of `block` into `state`.
+fn md5_compress(
+  state : Array[UInt64],
+  block : Array[Byte],
+  off : Int32,
+  s : Array[Int32],
+  t : Array[UInt64],
+) -> Unit {
+  let x : Array[UInt64] = []
+  let mut k = 0
+  while k < 16 {
+    let b0b = block[off + k * 4].to_uint64()
+    let b1b = block[off + k * 4 + 1].to_uint64()
+    let b2b = block[off + k * 4 + 2].to_uint64()
+    let b3b = block[off + k * 4 + 3].to_uint64()
+    // The words are read little-endian.
+    x.push(b0b | (b1b << 8) | (b2b << 16) | (b3b << 24))
+    k = k + 1
+  }
+  let mut a = state[0]
+  let mut b = state[1]
+  let mut c = state[2]
+  let mut d = state[3]
+  k = 0
+  while k < 64 {
+    let (f, g) = if k < 16 {
+      // F(b, c, d) = (b AND c) OR (NOT b AND d)
+      ((b & c) | ((b ^ MD5_M32) & d), k)
+    } else if k < 32 {
+      // G(b, c, d) = (b AND d) OR (c AND NOT d)
+      ((b & d) | (c & (d ^ MD5_M32)), (5 * k + 1) % 16)
+    } else if k < 48 {
+      // H(b, c, d) = b XOR c XOR d
+      (b ^ c ^ d, (3 * k + 5) % 16)
+    } else {
+      // I(b, c, d) = c XOR (b OR NOT d)
+      (c ^ (b | (d ^ MD5_M32)), 7 * k % 16)
+    }
+    let tmp = d
+    d = c
+    c = b
+    let sum = md5_add32(md5_add32(md5_add32(a, f), t[k]), x[g])
+    b = md5_add32(b, md5_rotl32(sum, s[k]))
+    a = tmp
+    k = k + 1
+  }
+  state[0] = md5_add32(state[0], a)
+  state[1] = md5_add32(state[1], b)
+  state[2] = md5_add32(state[2], c)
+  state[3] = md5_add32(state[3], d)
+}
+
+///|
+/// Feed `data` into the computation.
+pub fn Md5::update(self : Md5, data : Bytes) -> Unit {
   let s = md5_s()
   let t = md5_t()
   let n = data.length()
-  // Message length in bits, as a 64-bit value.
-  let bitlen = n.to_int64() * 8
-  // Build the padded message: data || 0x80 || zeros || 64-bit little-endian
-  // length.
-  let msg : Array[Byte] = []
+  self.length = self.length + n.to_int64()
   let mut i = 0
   while i < n {
-    msg.push(data.at((i : Int32)))
+    self.pending.push(data.at(i))
     i = i + 1
+    if self.pending.length() == 64 {
+      md5_compress(self.state, self.pending, 0, s, t)
+      self.pending.clear()
+    }
   }
-  msg.push(b'\x80')
-  while msg.length() % 64 != 56 {
-    msg.push(b'\x00')
-  }
+}
+
+///|
+/// The digest of everything that was fed in.
+pub fn Md5::finish(self : Md5) -> String {
+  let s = md5_s()
+  let t = md5_t()
+  // The padded message: the pending bytes || 0x80 || zeros || the length.
   // MD5 stores the length little-endian, unlike SHA-256.
+  let bitlen = self.length * 8
+  self.pending.push(b'\x80')
+  while self.pending.length() % 64 != 56 {
+    self.pending.push(b'\x00')
+  }
   let mut j = 0
   while j < 8 {
-    msg.push(((bitlen >> (j * 8)) & 0xffL).to_byte())
+    self.pending.push(((bitlen >> (j * 8)) & 0xffL).to_byte())
     j = j + 1
   }
-  let mut a0 : UInt64 = 0x67452301UL
-  let mut b0 : UInt64 = 0xefcdab89UL
-  let mut c0 : UInt64 = 0x98badcfeUL
-  let mut d0 : UInt64 = 0x10325476UL
-  // Compress each 64-byte block.
   let mut off = 0
-  while off < msg.length() {
-    let x : Array[UInt64] = []
-    let mut k = 0
-    while k < 16 {
-      let b0b = msg[off + k * 4].to_uint64()
-      let b1b = msg[off + k * 4 + 1].to_uint64()
-      let b2b = msg[off + k * 4 + 2].to_uint64()
-      let b3b = msg[off + k * 4 + 3].to_uint64()
-      // The words are read little-endian.
-      x.push(b0b | (b1b << 8) | (b2b << 16) | (b3b << 24))
-      k = k + 1
-    }
-    let mut a = a0
-    let mut b = b0
-    let mut c = c0
-    let mut d = d0
-    k = 0
-    while k < 64 {
-      let (f, g) = if k < 16 {
-        // F(b, c, d) = (b AND c) OR (NOT b AND d)
-        ((b & c) | ((b ^ MD5_M32) & d), k)
-      } else if k < 32 {
-        // G(b, c, d) = (b AND d) OR (c AND NOT d)
-        ((b & d) | (c & (d ^ MD5_M32)), (5 * k + 1) % 16)
-      } else if k < 48 {
-        // H(b, c, d) = b XOR c XOR d
-        (b ^ c ^ d, (3 * k + 5) % 16)
-      } else {
-        // I(b, c, d) = c XOR (b OR NOT d)
-        (c ^ (b | (d ^ MD5_M32)), 7 * k % 16)
-      }
-      let tmp = d
-      d = c
-      c = b
-      let sum = md5_add32(md5_add32(md5_add32(a, f), t[k]), x[g])
-      b = md5_add32(b, md5_rotl32(sum, s[k]))
-      a = tmp
-      k = k + 1
-    }
-    a0 = md5_add32(a0, a)
-    b0 = md5_add32(b0, b)
-    c0 = md5_add32(c0, c)
-    d0 = md5_add32(d0, d)
+  while off < self.pending.length() {
+    md5_compress(self.state, self.pending, off, s, t)
     off = off + 64
   }
   // The digest is the four state words in little-endian order.
   let mut out = ""
-  for v in [a0, b0, c0, d0] {
+  for v in self.state {
     let mut byte_idx = 0
     while byte_idx < 4 {
       let byte = ((v >> (byte_idx * 8)) & 0xffUL).to_int()
@@ -145,6 +185,14 @@ pub fn md5_hex(data : Bytes) -> String {
     }
   }
   out
+}
+
+///|
+/// Lowercase hex MD5 digest of `data` (32 characters).
+pub fn md5_hex(data : Bytes) -> String {
+  let digest = Md5::Md5()
+  digest.update(data)
+  digest.finish()
 }
 
 ///|

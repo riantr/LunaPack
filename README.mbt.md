@@ -14,8 +14,8 @@ for everyday storage).
   into the package, the fingerprints are listed, and after unpacking every
   extracted file is read back and checked against the fingerprint it had.
   The fingerprint of the produced file is reported as well.
-- **gzip** compression per entry, with an `auto` mode that only compresses
-  when it actually helps.
+- **gzip** and **LZ4** compression per entry. LZ4 is implemented in this
+  package and trades a larger result for a much shorter packing time.
 - **Cross-platform**: runs on Windows, Linux and macOS; packages carry their
   install scripts with the platform they target.
 - **Native and Wasm**: usable as a standalone binary or through `moonx`.
@@ -154,9 +154,35 @@ Flags accept both `--flag=value` and `--flag value`.
 | `--arch <arch>` | target arch tag (default: detected) |
 | `--pre-install <file>` | script executed *before* extraction |
 | `--post-install <file>` | script executed *after* extraction |
-| `--compression <mode>` | `none`, `gzip` or `auto` (default: `auto`) |
+| `--compression-method <m>` | `none`, `gzip`, `lz4` or `auto` (default: `auto`) |
 | `--skip-scripts` | unpack without running the install scripts |
 | `--extracted <dir>` | with `verify`: also check the files already in `<dir>` |
+
+### Compression
+
+`--compression-method` picks the codec of the entries:
+
+| Method | What it does |
+| --- | --- |
+| `none` | store the files as they are |
+| `gzip` | gzip every entry |
+| `lz4` | LZ4 every entry |
+| `auto` | gzip every entry, but keep the raw bytes when gzip would make the entry bigger (the default) |
+
+LZ4 does no entropy coding at all, so it is much faster than gzip while
+producing a larger result. That is the trade to make when a package is built
+often and unpacked rarely. Measured on an application of 392 files and 332 MB:
+
+| | gzip | LZ4 |
+| --- | --- | --- |
+| packing | 39 s | **16 s** |
+| unpacking | 21 s | **19 s** |
+| size of the package | **139 MB** | 175 MB |
+
+The LZ4 implementation lives in this package, because the MoonBit toolchain
+ships none. What it produces is a standard `.lz4` frame, so the `lz4` tool
+decompresses it, and this package decompresses what that tool produces. Both
+directions are covered by the test suite.
 
 ### Example
 
@@ -304,14 +330,15 @@ Use `--skip-scripts` to unpack without running them.
 
 The container layout has not changed since v2: the marker names the layout,
 and the manifest carries its own `format_version`. The current manifest is
-version 3, which adds the MD5 fingerprint of every entry. A package written
+version 4, which adds the MD5 fingerprint of every entry and the LZ4 codec.
+A package written
 by an older version still unpacks, because the fingerprint is optional.
 
 ```
 +--------------------+  offset 0
 | magic "APPKGD02"   |  8 bytes
 +--------------------+  offset 8
-| entry payloads     |  stored back to back, raw or gzip
+| entry payloads     |  stored back to back, raw, gzip or lz4
 +--------------------+
 | manifest (UTF-8    |
 | JSON)              |
@@ -326,7 +353,7 @@ The manifest records the package metadata plus one record per entry:
 
 ```json
 {
-  "format_version": 3,
+  "format_version": 4,
   "name": "myapp",
   "version": "1.4.0",
   "os": "linux",
@@ -379,6 +406,12 @@ fingerprints, compression, the executable bit, install-script execution,
 corruption detection and `--skip-scripts`. It needs a real POSIX host, so the
 CI runs it on the Linux runner.
 
+The unit tests cover the LZ4 implementation as well: the round trip for
+every shape of payload, the xxHash of the frame header against the value the
+reference implementation produces, and the interoperability with the `lz4`
+tool in both directions. That last test is skipped where the tool is not
+installed.
+
 ## Notes and limitations
 
 - `main` must return `Unit` in this MoonBit version, so the process exit code
@@ -388,6 +421,10 @@ CI runs it on the Linux runner.
   POSIX hosts.
 - The checksum is computed over the original content; `verify` therefore has
   to decompress every entry.
+- The fingerprint of the produced file is computed while it is written, so the
+  file is never read back for that. The launcher stub is the one exception:
+  it is hashed after the icon was written into it, because writing the icon
+  changes its bytes.
 - The launcher stub is the LunaPack executable of the machine that built the
   bundle, so a bundle runs on the platform it was created on. Under `moonx`
   (Wasm) no native stub exists, so the bundle falls back to carrying the

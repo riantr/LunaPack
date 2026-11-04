@@ -37,6 +37,44 @@ test "md5 matches the RFC 1321 test vectors" {
 }
 
 ///|
+/// The bytes of `data` between `from` and `to`.
+fn slice_of(data : Bytes, from : Int32, to : Int32) -> Bytes {
+  let out = FixedArray::make((to - from).to_int64().to_int(), b'\x00')
+  let mut i = from
+  while i < to {
+    out[i - from] = data.at(i)
+    i = i + 1
+  }
+  Bytes::from_array(out[:])
+}
+
+///|
+/// The digest of data that is fed in pieces is the same as the digest of the
+/// data as a whole.
+test "md5 of data that is fed in pieces" {
+  let data = @LunaPack.string_to_utf8_bytes(
+    "the quick brown fox jumps over the lazy dog, again and again",
+  )
+  let whole = @LunaPack.md5_hex(data)
+  // The pieces do not fall on the block boundary, so the pending bytes have
+  // to be carried over.
+  for piece in [1, 7, 63, 64, 65, 100] {
+    let digest = @LunaPack.Md5::Md5()
+    let mut at = 0
+    while at < data.length() {
+      let end = if data.length() - at < piece {
+        data.length()
+      } else {
+        at + piece
+      }
+      digest.update(slice_of(data, at, end))
+      at = end
+    }
+    assert_true(digest.finish() == whole)
+  }
+}
+
+///|
 test "md5 handles the block boundary" {
   // 55, 56 and 59 bytes exercise the three padding branches.
   let d55 = "1234567890123456789012345678901234567890123456789012345"
@@ -174,7 +212,7 @@ async test "gzip round trip" {
 async test "compression is skipped when it does not help" {
   // A tiny payload grows when gzipped, so it must stay uncompressed.
   let tiny = @LunaPack.string_to_utf8_bytes("hi")
-  let (stored, codec) = @LunaPack.compress_if_smaller(tiny, false)
+  let (stored, codec) = @LunaPack.compress_with(tiny, "auto")
   assert_true(codec == "raw")
   assert_true(stored == tiny)
   // A large repetitive payload must shrink.
@@ -185,10 +223,30 @@ async test "compression is skipped when it does not help" {
     i = i + 1
   }
   let bigb = @LunaPack.string_to_utf8_bytes(big)
-  let (stored2, codec2) = @LunaPack.compress_if_smaller(bigb, false)
+  let (stored2, codec2) = @LunaPack.compress_with(bigb, "auto")
   assert_true(codec2 == "gzip")
   assert_true(stored2.length() < bigb.length())
   assert_true(@LunaPack.gzip_decompress(stored2) == bigb)
+}
+
+///|
+async test "every compression method round-trips" {
+  let mut big = ""
+  let mut i = 0
+  while i < 200 {
+    big = big + "the quick brown fox jumps over the lazy dog "
+    i = i + 1
+  }
+  let data = @LunaPack.string_to_utf8_bytes(big)
+  let (raw, raw_codec) = @LunaPack.compress_with(data, "none")
+  assert_true(raw_codec == "raw")
+  assert_true(raw == data)
+  let (gz, gz_codec) = @LunaPack.compress_with(data, "gzip")
+  assert_true(gz_codec == "gzip")
+  assert_true(@LunaPack.gzip_decompress(gz) == data)
+  let (lz4, lz4_codec) = @LunaPack.compress_with(data, "lz4")
+  assert_true(lz4_codec == "lz4")
+  assert_true(@LunaPack.lz4_decompress_frame(lz4, data.length()) == data)
 }
 
 ///|
@@ -210,7 +268,7 @@ async test "pack produces a manifest that round-trips" {
   )
   @LunaPack.pack(src, pkg, opts)
   let m = @LunaPack.read_package_manifest(pkg)
-  assert_true(m.format_version == 3)
+  assert_true(m.format_version == 4)
   assert_true(m.name == "demo")
   assert_true(m.version == "1.0.0")
   assert_true(m.os == "linux")

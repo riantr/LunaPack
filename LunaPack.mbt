@@ -22,7 +22,7 @@ pub const MAGIC : String = "APPKGD02"
 /// Format version recorded in the manifest.
 ///
 /// v3 adds the MD5 fingerprint of every entry next to its SHA-256 checksum.
-pub const FORMAT_VERSION : Int32 = 3
+pub const FORMAT_VERSION : Int32 = 4
 
 ///|
 /// Checksum algorithm used for every entry payload.

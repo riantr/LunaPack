@@ -115,7 +115,9 @@ pub fn dirname(p : String) -> String {
 /// Create the parent directory of `path` when it does not exist yet.
 pub async fn ensure_parent_dir(path : String) -> Unit {
   let parent = dirname(path)
-  if parent != "" {
+  // The parent of a path at the root of a drive is the drive itself, and
+  // that exists already; creating it would fail.
+  if parent != "" && !@fs.exists(parent) {
     @fs.mkdir(parent, recursive=true, allow_exist=true)
   }
 }
