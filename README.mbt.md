@@ -388,6 +388,12 @@ the binaries that were built, and its notes name the one that is missing. A
 release that says what it holds is worth more than one that waits for a runner
 that may not come.
 
+The release *run* shows red in that case, and the run is not the release: the
+job that publishes the release is green and the release page holds the
+binaries. The red comes from the macOS leg, which GitHub cancels when it has
+waited for a runner for a quarter of an hour. A run that is red because a
+runner was not free is a fact about the runners, not about the release.
+
 The registry refuses a version that already exists, and it wants a `0.x.y`
 version while it is in its early stage, so the releases are numbered `0.1.0`,
 `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, `0.1.5` and so on.
