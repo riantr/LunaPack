@@ -69,16 +69,16 @@ jobs:
         include:
           - os: ubuntu-latest
             name: Linux
+            source: main
             binary: lunapack-linux-x86_64
-            asset: lunapack-linux-x86_64
           - os: macos-15
             name: macOS
+            source: main
             binary: lunapack-macos-aarch64
-            asset: lunapack-macos-aarch64
           - os: windows-latest
             name: Windows
+            source: main.exe
             binary: lunapack-windows-x86_64.exe
-            asset: lunapack-windows-x86_64.exe
 
     steps:
       - name: Checkout
@@ -122,8 +122,11 @@ jobs:
       - name: Collect the binary
         shell: bash
         run: |
+          # The build directory also holds intermediate artefacts named
+          # main.core, main.c and so on, so the executable is copied by its
+          # exact name.
           mkdir -p dist
-          cp _build/native/release/build/cmd/main/main* "dist/${{ matrix.binary }}"
+          cp "_build/native/release/build/cmd/main/${{ matrix.source }}" "dist/${{ matrix.binary }}"
           chmod +x "dist/${{ matrix.binary }}" || true
           ls -la dist/
 
@@ -137,7 +140,7 @@ jobs:
       - name: Upload the artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.asset }}
+          name: binary-${{ matrix.binary }}
           path: dist/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 7
@@ -179,8 +182,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp _build/wasm/release/build/cmd/main/main.wasm dist/
-          cp _build/wasm/release/build/cmd/main/main.core dist/
+          cp _build/wasm/release/build/cmd/main/main.wasm dist/lunapack.wasm
+          # The .core file holds the compiled package the wasm module needs.
+          cp _build/wasm/release/build/cmd/main/main.core dist/lunapack.core
           ls -la dist/
 
       - name: Upload the artifact
@@ -264,6 +268,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - name: Download the artifacts
         uses: actions/download-artifact@v4
@@ -282,19 +287,22 @@ jobs:
           VERSION: ${{ needs.verify-tag.outputs.version }}
         shell: bash
         run: |
+          # The annotated tag carries the release notes, so they are used as
+          # they are instead of being generated again.
+          NOTES=$(git tag -l --format='%(contents)' "$TAG")
+          if [ -z "$NOTES" ]; then
+            NOTES="LunaPack $VERSION"
+          fi
           # A tag that already carries a release is reused, so re-running the
           # workflow replaces the assets instead of failing.
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" artifacts/* --clobber
+            gh release edit "$TAG" --title "LunaPack $VERSION" --notes "$NOTES"
             echo "updated the existing release $TAG"
           else
             gh release create "$TAG" artifacts/* \
               --title "LunaPack $VERSION" \
-              --generate-notes \
-              --notes-start-tag "$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null || echo "")" \
-              || gh release create "$TAG" artifacts/* \
-                   --title "LunaPack $VERSION" \
-                   --generate-notes
+              --notes "$NOTES"
           fi
 
       - name: Verify the release
