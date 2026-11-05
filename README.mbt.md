@@ -1379,7 +1379,7 @@ cannot be named.
 
 ## Attribution
 
-- License: Apache-2.0 (see `LICENSE`).
+- License: MIT (see `LICENSE`).
 - The mechanism of the encryption and the shape of the container follow the
   reference implementation this package follows. Every primitive it needs is
   implemented in this package, because the MoonBit toolchain ships none of

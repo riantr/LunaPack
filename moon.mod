@@ -9,7 +9,7 @@ readme = "README.mbt.md"
 
 repository = "https://github.com/riantr/LunaPack"
 
-license = "Apache-2.0"
+license = "MIT"
 
 keywords = [ "packaging", "distribution", "cli" ]
 
