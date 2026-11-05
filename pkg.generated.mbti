@@ -244,6 +244,8 @@ pub fn redundant_sha256(Bytes) -> String raise
 
 pub fn relpath(String, String) -> String
 
+pub async fn remove_dir(String) -> Unit
+
 pub fn report_md5(String, String) -> Unit
 
 pub async fn report_output_md5(String) -> Unit

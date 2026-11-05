@@ -169,19 +169,36 @@ async fn extract_to_cache(
   // that was only half unpacked, and a payload that was unpacked into the
   // old cache is gone before the new one is put in its place.
   let staging = dir + ".staging"
-  @fs.rmdir(staging, recursive=true, allow_missing=true)
+  remove_dir(staging)
   @fs.mkdir(staging, recursive=true, allow_exist=true, permission=0o700)
   try {
     extract_to(pkg, staging, key)
     @fs.write_text(staging + "/.lunapack-complete", "ok")
-    @fs.rmdir(dir, recursive=true, allow_missing=true)
+    remove_dir(dir)
     @fs.rename(staging, dir, replace=true)
     Some(dir)
   } catch {
     _ => {
-      @fs.rmdir(staging, recursive=true, allow_missing=true)
+      remove_dir(staging)
       None
     }
+  }
+}
+
+///|
+/// Remove the folder at `path` and everything below it, whether it is there
+/// or not.
+///
+/// `@fs.rmdir` takes `allow_missing`, but the flag only covers the removal of
+/// the folder itself: a recursive removal opens the folder first, and that
+/// fails when there is none. So the folder is looked at before it is
+/// removed.
+pub async fn remove_dir(path : String) -> Unit {
+  if !@fs.exists(path) {
+    return
+  }
+  @fs.rmdir(path, recursive=true, allow_missing=true) catch {
+    _ => ()
   }
 }
 

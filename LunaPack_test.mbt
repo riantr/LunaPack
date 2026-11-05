@@ -625,3 +625,23 @@ test "the subsystem of a PE image is read" {
   // Something that is not a PE image has no subsystem.
   assert_true(@LunaPack.pe_subsystem(Bytes::from_array([b'x', b'y'])) == 0)
 }
+
+///|
+/// A folder that is not there is not an error.
+///
+/// The recursive removal of a folder opens it first, and that fails when
+/// there is none. The flag of the toolchain only covers the removal of the
+/// folder itself, so the folder has to be looked at before it is removed.
+async test "a folder that is not there is removed without an error" {
+  let dir = @fs.tmpdir(prefix="lunapack_rm")
+  let missing = dir + "/nothing-here"
+  // Removing a folder that was never there is fine.
+  @LunaPack.remove_dir(missing)
+  // And removing one that is there takes everything below it with it.
+  @fs.mkdir(missing + "/deep", recursive=true, allow_exist=true)
+  @fs.write_text(missing + "/deep/file.txt", "content")
+  @LunaPack.remove_dir(missing)
+  assert_true(!@fs.exists(missing))
+  // And removing it a second time is fine as well.
+  @LunaPack.remove_dir(missing)
+}

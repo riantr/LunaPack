@@ -25,8 +25,6 @@ registry. The package has **no dependencies**, so nothing has to be resolved
 when it is fetched.
 
 Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
-(mirrored to [gitee.com/ren-yongxiang/lunaPack](https://gitee.com/ren-yongxiang/lunaPack)
-for everyday storage).
 
 ## Features
 
