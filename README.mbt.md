@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.10
+moon add riantr/LunaPack@0.1.11
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.10",
+  "riantr/LunaPack@0.1.11",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.10`, `>=0.1.10`, `0.1` and `v0.1.10` are all rejected. A bare
+`latest`, `^0.1.11`, `>=0.1.11`, `0.1` and `v0.1.11` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -224,6 +224,22 @@ the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
 
+### What changed in 0.1.11
+
+- **The native build builds on every platform again.** The Windows-only
+  `GetModuleFileNameW` declaration was guarded with `target="native"`, which
+  is true on Linux and macOS as well, so the linker looked for a Windows
+  symbol there and the release workflow could not build those two binaries.
+  The declaration and its caller are guarded with
+  `all(target="native", platform="windows")` now; on other platforms the
+  launcher keeps the `argv[0]` fallback it had before 0.1.10. The Windows
+  build and the Wasm build were never affected, and the container layout
+  does not change.
+
+Version 0.1.10 had already reached the registry when the release workflow
+reported this, and a published version cannot be replaced, so this is a
+patch release. `moonx riantr/LunaPack@latest` resolves to 0.1.11.
+
 ### What changed in 0.1.10
 
 - **The command that was typed is the command that runs.** `--input-file` and
@@ -241,10 +257,11 @@ ran would be a claim, not a fact.
   no longer lets an intact extracted directory hide a damaged package, and
   `unpack` honours `--signature`, `--public-key` and `--expected-sha256`
   before it writes a single file.
-- **The launcher knows which file it is.** It locates itself with
-  `GetModuleFileNameW` instead of `argv[0]`, which a caller can forge. A bundle
-  carries its own copy of the launcher, so a bundle made before this release
-  has to be rebuilt to pick up the fix.
+- **On Windows the launcher knows which file it is.** It locates itself with
+  `GetModuleFileNameW` instead of `argv[0]`, which a caller can forge. A
+  bundle carries its own copy of the launcher, so a bundle made before this
+  release has to be rebuilt to pick up the fix. On other platforms the
+  launcher keeps the `argv[0]` fallback it had before.
 - **A package cannot turn off its own integrity.** A format 6 package whose
   integrity marker is missing or damaged is refused rather than downgraded to
   "legacy"; real format 5 packages are still read, with a warning. A non-PE
@@ -259,7 +276,7 @@ ran would be a claim, not a fact.
 
 A deep QA pass found these defects. **127 tests pass on the native backend and
 on the Wasm backend** now. The container layout does not change, so a package
-written by 0.1.9 is still read by 0.1.10, and the other way round.
+written by 0.1.9 is still read by 0.1.11, and the other way round.
 
 ### What changed in 0.1.9
 
@@ -388,8 +405,8 @@ The checks are not warning-free, and the numbers are in the open rather than in
 a footnote: `--target native` reports **2 warnings** (a deprecated call in a
 test, and the one below) and `--target wasm` reports **6** (the same two,
 three in the Windows-only icon helpers, which the WebAssembly backend does not
-use, and one for the UTF-16 import that only the native launcher needs). No
-gate runs with `--deny-warn`, and none of the warnings is an error.
+use, and one for the UTF-16 import that only the Windows native launcher
+needs). No gate runs with `--deny-warn`, and none of the warnings is an error.
 
 The second warning is the price of the short coordinate, and it is worth naming
 exactly: *"Main package `riantr/LunaPack` uses blackbox-only test inputs
@@ -412,7 +429,7 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.10`
+The release is built by a GitHub workflow when a version tag such as `v0.1.11`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it

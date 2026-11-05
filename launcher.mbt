@@ -42,16 +42,23 @@ pub fn current_exe_path() -> String? {
 
 ///|
 /// The path of the running image, on a native Windows build.
-#cfg(target="native")
+///
+/// The Windows API is guarded at compile time, not at run time: an
+/// `extern "C"` declaration is a link-time reference, so a build for
+/// Linux or macOS cannot carry one even when the branch is never taken.
+#cfg(all(target="native", platform="windows"))
 fn native_exe_path() -> String? {
-  if host_platform() == "windows" {
-    match windows_exe_path() {
-      Some(p) => Some(p)
-      None => fallback_exe_path()
-    }
-  } else {
-    fallback_exe_path()
+  match windows_exe_path() {
+    Some(p) => Some(p)
+    None => fallback_exe_path()
   }
+}
+
+///|
+/// The path of the running image, on a native build for another platform.
+#cfg(all(target="native", not(platform="windows")))
+fn native_exe_path() -> String? {
+  fallback_exe_path()
 }
 
 ///|
@@ -92,7 +99,7 @@ fn fallback_exe_path() -> String? {
 ///
 /// `GetModuleFileNameW` returns the file the image was loaded from, which is
 /// the one thing that cannot be forged by the caller.
-#cfg(target="native")
+#cfg(all(target="native", platform="windows"))
 fn windows_exe_path() -> String? {
   // The buffer is UTF-16, as the "W" in the name of the function says.
   let size = 1024
@@ -108,7 +115,7 @@ fn windows_exe_path() -> String? {
 
 ///|
 /// `GetModuleFileNameW(HMODULE, LPWSTR, DWORD)`.
-#cfg(target="native")
+#cfg(all(target="native", platform="windows"))
 #borrow(buf)
 extern "C" fn get_module_filename(
   handle : Int64,
