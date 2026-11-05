@@ -288,14 +288,24 @@ fn lz4_compress_block(
 ///|
 /// Decompress the LZ4 block in `src[start..end)` into `out` at `out_len`.
 ///
-/// Returns the number of bytes that were written.
+/// Returns the number of bytes that were written, or `None` when the block
+/// is malformed. A block that comes from a package is not trusted: a length
+/// that runs past the input, a match that points before the output, or an
+/// output that would run past the buffer must be reported as damage rather
+/// than read or written out of bounds.
 fn lz4_decompress_block(
   src : Bytes,
   start : Int32,
   end : Int32,
   out : FixedArray[Byte],
   out_len : Int32,
-) -> Int32 {
+) -> Int32? {
+  if start < 0 || end > src.length() || start > end {
+    return None
+  }
+  if out_len < 0 || out_len > out.length() {
+    return None
+  }
   let mut ip = start
   let mut op = out_len
   while ip < end {
@@ -305,11 +315,22 @@ fn lz4_decompress_block(
     if lit_len == 15 {
       let mut more = true
       while more {
+        if ip >= end {
+          return None
+        }
         let b = src.at(ip).to_int()
         ip = ip + 1
+        // The literals have to fit in the bytes left in this block. Bounding
+        // the sum as it grows also keeps it from wrapping on a 32-bit target.
+        if lit_len > end - ip - b {
+          return None
+        }
         lit_len = lit_len + b
         more = b == 255
       }
+    }
+    if lit_len > end - ip || lit_len > out.length() - op {
+      return None
     }
     let mut i = 0
     while i < lit_len {
@@ -322,19 +343,35 @@ fn lz4_decompress_block(
       // The last sequence of a block carries literals only.
       break
     }
+    if ip + 2 > end {
+      return None
+    }
     let distance = src.at(ip).to_int() | (src.at(ip + 1).to_int() << 8)
     ip = ip + 2
+    // A match must point backwards into bytes that were already written.
+    if distance < 1 || distance > op {
+      return None
+    }
     let mut match_len = token & 15
     if match_len == 15 {
       let mut more = true
       while more {
+        if ip >= end {
+          return None
+        }
         let b = src.at(ip).to_int()
         ip = ip + 1
+        if match_len > out.length() - op - LZ4_MIN_MATCH - b {
+          return None
+        }
         match_len = match_len + b
         more = b == 255
       }
     }
     match_len = match_len + LZ4_MIN_MATCH
+    if match_len > out.length() - op {
+      return None
+    }
     // The match is copied byte by byte, because the ranges may overlap.
     let mut m = op - distance
     let mut k = 0
@@ -345,7 +382,7 @@ fn lz4_decompress_block(
       k = k + 1
     }
   }
-  op
+  Some(op)
 }
 
 // ----------------------------------------------------------- the frame format ---
@@ -417,10 +454,17 @@ pub fn lz4_compress_frame(data : Bytes) -> Bytes {
 /// `size` is the number of bytes the frame holds once it is decompressed; the
 /// frame format does not carry it, so the caller has to know it.
 pub fn lz4_decompress_frame(src : Bytes, size : Int32) -> Bytes {
-  if src.length() < 7 {
+  if size < 0 || src.length() < 7 {
     // A frame that is broken is returned as it is, so that the checksum of
     // the entry reports the damage instead of the program stopping with an
     // error.
+    return src
+  }
+  // Every byte of a frame stands for at most 255 bytes of output, so this is
+  // the most a frame of this length can produce. A manifest that claims more
+  // is not asking for a decompression, it is asking for an allocation.
+  let max_output = src.length().to_int64() * 256L + 65536L
+  if size.to_int64() > max_output {
     return src
   }
   let magic = read_le32(src, 0)
@@ -428,21 +472,30 @@ pub fn lz4_decompress_frame(src : Bytes, size : Int32) -> Bytes {
     return src
   }
   let flg = src.at(4).to_uint()
+  // Only version 01 is defined, and bit 1 is reserved and has to be zero.
+  if ((flg >> 6) & 0x3U) != 1U || (flg & 0x02U) != 0U {
+    return src
+  }
   let mut p = 6
   if (flg & 0x08U) != 0U {
     // The size of the content.
     p = p + 8
   }
-  if (flg & 0x02U) != 0U {
-    // The identifier of the dictionary.
+  if (flg & 0x01U) != 0U {
+    // The identifier of the dictionary. It is bit 0, not the reserved bit 1.
     p = p + 4
   }
   // The checksum of the header.
   p = p + 1
+  if p > src.length() {
+    return src
+  }
   let out = FixedArray::make(size, b'\x00')
   let mut written = 0
   while true {
-    if p + 4 > src.length() {
+    // Subtracting rather than adding keeps `p + n` from wrapping on a
+    // 32-bit target, where a hostile length could pass the guard otherwise.
+    if 4 > src.length() - p {
       return src
     }
     let header = read_le32(src, p)
@@ -453,10 +506,13 @@ pub fn lz4_decompress_frame(src : Bytes, size : Int32) -> Bytes {
     }
     let stored = (header & 0x80000000U) != 0U
     let len = (header & 0x7FFFFFFFU).reinterpret_as_int()
-    if p + len > src.length() {
+    if len > src.length() - p {
       return src
     }
     if stored {
+      if len > out.length() - written {
+        return src
+      }
       let mut i = 0
       while i < len {
         out[written] = src.at(p + i)
@@ -464,11 +520,17 @@ pub fn lz4_decompress_frame(src : Bytes, size : Int32) -> Bytes {
         i = i + 1
       }
     } else {
-      written = lz4_decompress_block(src, p, p + len, out, written)
+      match lz4_decompress_block(src, p, p + len, out, written) {
+        Some(n) => written = n
+        None => return src
+      }
     }
     p = p + len
     if (flg & 0x10U) != 0U {
       // The checksum of the block.
+      if 4 > src.length() - p {
+        return src
+      }
       p = p + 4
     }
   }

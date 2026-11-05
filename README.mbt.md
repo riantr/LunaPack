@@ -483,12 +483,12 @@ When the application carries an icon, the bundle gets it as well, so Explorer
 shows the application's own icon instead of the launcher's:
 
 ```
-$ lunapack --input-exe=./BRLabeler.exe --output-exe=./BRLabeler.exe --Files=./build
-  md5  cb77181515d4680a960433f65ba05bef  BRLabeler.exe
+$ lunapack --input-exe=./myapp.exe --output-exe=./myapp.exe --Files=./build
+  md5  6b1b1e1f0a2c3d4e5f60718293a4b5c6  myapp.exe
   ...
 scanned 392 files
-bundled 392 files -> ./BRLabeler.exe (icon copied)
-output md5  f5f06ca638d59a31e773c0a28358804d  BRLabeler.exe
+bundled 392 files -> ./myapp.exe (icon copied)
+output md5  0f1e2d3c4b5a69788796a5b4c3d2e1f0  myapp.exe
 ```
 
 This is a Windows feature: an icon is a Windows resource, so on Linux and macOS
@@ -582,6 +582,8 @@ The manifest records the package metadata plus one record per entry:
 - `mode` holds UNIX permission bits (`0o644` / `0o755`); they are ignored on
   Windows.
 - `main_program` names the entry that is the application executable.
+- `encryption` says how the package is sealed, and is `null` when it is not
+  sealed at all.
 
 ### The integrity of a package
 
@@ -610,6 +612,13 @@ that goes with it is not a secret, so whoever rewrites the file can compute a
 digest that matches the manifest they wrote. What the digest does catch is
 corruption, a write that was cut short and a manifest that was changed in
 place — which is what a transient fault does.
+
+Format 6 is the format that brought the integrity block, and a package that
+says it is format 6 must carry one. A damaged or deliberately broken marker is
+refused, not taken for a package of the old format: silently downgrading would
+let a one-byte change turn off the check altogether. Packages whose manifest
+says format 5 or less are the old ones; they are still read, with a warning
+that their manifest was not authenticated.
 
 For the case that nothing inside the file can settle, the host holds the
 material:
@@ -803,9 +812,20 @@ string.
 | `--output-exe` | the produced single-file bundle |
 | `--Files` | folder of files to bundle with it (repeatable) |
 
+`--input-file` is another name for `--input-exe`, and `--output-file` for
+`--output-exe`. A flag that the tool does not know is refused with a message
+that names it and the flags that it does know, so a mistyped flag never
+turns into a command that quietly does something else.
+
 The result is a **self-extracting bundle**: the LunaPack launcher with the
 archive appended, exactly the trick a WinRAR or 7-Zip self-extracting archive
 uses.
+
+The bundled program runs with the **cache directory as its working
+directory**, not the directory the bundle was started from. That is what lets a
+program find the files that were packed next to it. A relative path given on
+the command line is therefore read relative to the cache directory; pass an
+absolute path if the caller's directory is what matters.
 
 ### The subcommands
 
@@ -823,10 +843,12 @@ Flags accept both `--flag=value` and `--flag value`.
 
 `verify` checks the package itself. `verify <package> --extracted <dir>` also
 checks the files that are already in `dir` against the fingerprints of the
-package, which is what the self-extracting bundle uses its cache for:
+package, which is what the self-extracting bundle uses its cache for. The two
+checks are separate and both of them have to hold: a package that is damaged
+is not made whole by an extracted directory that is intact.
 
 ```cmd
-lunapack verify BRLabeler.exe --extracted .lunapack\60844df795cb7f31
+lunapack verify myapp.exe --extracted .lunapack\b7e21c9f4d0a8356
 ```
 
 `verify <package> --signature <file> --public-key <file>` checks the signature
@@ -834,6 +856,12 @@ that the host published next to the package, and `verify <package>
 --expected-sha256 <digest>` checks the digest the host published. Both are
 checked **before** the package is opened, so a package that does not match the
 material of the host is never unpacked at all.
+
+`unpack` accepts the same two flags and honours them: a package whose
+signature does not hold, or whose digest is not the one that was expected, is
+refused before anything is written. A flag that is accepted and then ignored
+would be worse than one that is refused, because the user would believe the
+package was checked when it was not.
 
 `sign` is the other side of that: it signs a package with the secret key of the
 host and writes the signature next to it.
@@ -856,7 +884,7 @@ On a cache that is intact:
 
 ```
 verify: OK (392 files)
-verify: OK (392 files in .lunapack/60844df795cb7f31)
+verify: OK (392 files in .lunapack/b7e21c9f4d0a8356)
 VERIFY OK
 ```
 
@@ -983,7 +1011,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **115 tests, 115 passed, 0 failed**.
+native` reports **127 tests, 127 passed, 0 failed**.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
 the install-script runner on a Windows host. Without a shell on `PATH` it
@@ -1072,9 +1100,11 @@ it no longer depends on a host with a POSIX shell to be checked.
 
 ## What this is not
 
-- `main` must return `Unit` in this MoonBit version, so the process exit code
-  is always `0`. Status is reported on stdout (`VERIFY OK` / `VERIFY FAILED` /
-  `error: ...`); scripts that need an exit code should grep for those markers.
+- The exit code of a command says whether it worked: `0` when it did, `1`
+  when it did not. The status is on stdout as well (`VERIFY OK` /
+  `VERIFY FAILED` / `error: ...`), so a script that reads the output still
+  works. A single-file bundle reports the exit code of the program it
+  carries, exactly.
 - UNIX permission bits cannot be set on Windows, so they are only applied on
   POSIX hosts.
 - The checksum is computed over the original content; `verify` therefore has
@@ -1131,7 +1161,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 75 tests
+moon test                                  # 127 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```

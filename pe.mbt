@@ -31,6 +31,24 @@ fn u32_at(data : Bytes, off : Int64) -> Int64 {
 }
 
 ///|
+/// Does `data` hold the `PE\0\0` signature at `pe_off`?
+///
+/// An MZ header alone is not a PE image. The DOS stub of a program that is
+/// not a PE file is arbitrary bytes, and reading a subsystem out of them
+/// would let a file that is not an executable decide whether the bundle
+/// opens a console window.
+fn has_pe_signature(data : Bytes, pe_off : Int64) -> Bool {
+  if pe_off + 4 > data.length().to_int64() {
+    return false
+  }
+  let i = pe_off.to_int()
+  data.at(i).to_int() == 'P'.to_int() &&
+  data.at(i + 1).to_int() == 'E'.to_int() &&
+  data.at(i + 2).to_int() == 0 &&
+  data.at(i + 3).to_int() == 0
+}
+
+///|
 /// Parse the headers of a PE image.
 pub fn parse_pe(data : Bytes) -> PeFile raise {
   if data.length() < 0x40 {
@@ -43,6 +61,9 @@ pub fn parse_pe(data : Bytes) -> PeFile raise {
   if pe_off + 24 > data.length().to_int64() {
     fail("not a PE file (bad header offset)")
   }
+  if !has_pe_signature(data, pe_off) {
+    fail("not a PE file (no PE signature)")
+  }
   let coff = pe_off + 4
   let num_sections = u16_at(data, coff + 2)
   let opt_size = u16_at(data, coff + 16).to_int64()
@@ -50,6 +71,9 @@ pub fn parse_pe(data : Bytes) -> PeFile raise {
   let magic = u16_at(data, opt).to_int64()
   // The data directory starts after the fixed part of the optional header.
   let dir_base = if magic == 0x20b { opt + 112 } else { opt + 96 }
+  if dir_base + 24 > data.length().to_int64() {
+    fail("not a PE file (truncated optional header)")
+  }
   let resource_rva = u32_at(data, dir_base + 16)
   let resource_size = u32_at(data, dir_base + 20)
   let section_table = opt + opt_size
@@ -57,6 +81,9 @@ pub fn parse_pe(data : Bytes) -> PeFile raise {
   let mut i = 0
   while i < num_sections {
     let off = section_table + (i * 40).to_int64()
+    if off + 40 > data.length().to_int64() {
+      fail("not a PE file (truncated section table)")
+    }
     sections.push(
       (
         u32_at(data, off + 12),
@@ -295,6 +322,9 @@ pub fn pe_subsystem(data : Bytes) -> Int32 {
   // subsystem sits 68 bytes into it.
   let opt = pe_off + 24
   if opt + PE_SUBSYSTEM_OFFSET + 2 > data.length().to_int64() {
+    return 0
+  }
+  if !has_pe_signature(data, pe_off) {
     return 0
   }
   u16_at(data, opt + PE_SUBSYSTEM_OFFSET)

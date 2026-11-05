@@ -276,3 +276,122 @@ async test "the program of a bundle is checked before it is started" {
   @fs.write_text(dir + "/a.txt", "tampered\n")
   assert_true(!program_matches(manifest, dir + "/a.txt"))
 }
+
+///|
+/// A flag the tool does not know is reported, not ignored.
+///
+/// A flag that is ignored is the worst kind of mistake: the command does
+/// something else than what was asked, and says nothing about it. The empty
+/// output path that `--input-file` used to leave behind is what made the
+/// mistake visible at all.
+test "a flag the tool does not know is reported" {
+  let flags = parse_flags(["--input-exe=app.exe", "--bogus", "value"], 0)
+  assert_eq(unknown_flags(flags).length(), 1)
+  assert_true(unknown_flags(flags)[0] == "bogus")
+  // A flag the tool knows is not reported.
+  let known = parse_flags(["--input-exe=app.exe", "--Files=dir"], 0)
+  assert_eq(unknown_flags(known).length(), 0)
+  // The same unknown flag twice is reported once.
+  let twice = parse_flags(["--bogus=1", "--bogus=2"], 0)
+  assert_eq(unknown_flags(twice).length(), 1)
+}
+
+///|
+/// The message that reports an unknown flag names the flag and the rest.
+test "the message of an unknown flag names the flag" {
+  let flags = parse_flags(["--nope"], 0)
+  let message = unknown_flags_message(flags)
+  assert_true(message.contains("--nope"))
+  assert_true(message.contains("--input-exe"))
+}
+
+///|
+/// Every flag the tool reads is a flag the tool knows.
+///
+/// A flag that is read but not listed would be reported as unknown, and a
+/// flag that is listed but not read would be ignored - both are mistakes.
+test "every flag the tool reads is a flag the tool knows" {
+  let known = known_flags()
+  for
+    name in [
+      "Files", "arch", "compression", "compression-method", "encryption", "encryption-method",
+      "expected-sha256", "extracted", "i", "input", "input-exe", "input-file", "launcher",
+      "name", "o", "output", "output-exe", "output-file", "passphrase", "passphrase-file",
+      "post-install", "pre-install", "public-key", "secret-key", "signature", "skip-scripts",
+      "version",
+    ] {
+    assert_true(known.contains(name))
+  }
+}
+
+///|
+/// The name of an install script is a name and not a path.
+///
+/// The command line of the Windows shell reads a forward slash as the start
+/// of a switch, so a path made of forward slashes does not run the script
+/// but complains that `.` is not a command.
+test "the name of an install script is a name" {
+  assert_eq(
+    script_file_name("windows", "pre_install"),
+    ".lunapack_pre_install.cmd",
+  )
+  assert_eq(
+    script_file_name("posix", "post_install"),
+    ".lunapack_post_install.sh",
+  )
+  assert_true(!script_file_name("windows", "pre_install").contains("/"))
+}
+
+///|
+/// Format 6 brought the integrity block. A package that says it is format 6
+/// but carries no block is not an old package: it is one whose marker was
+/// broken so the reader would skip the check. It has to be refused.
+test "a v6 package with no integrity block is refused" {
+  let message = try {
+    let m = json_to_manifest(
+      "{\"format_version\":6,\"name\":\"t\",\"version\":\"1\",\"os\":\"windows\"," +
+      "\"arch\":\"x86_64\",\"checksum_algo\":\"sha256\",\"compression\":\"none\"," +
+      "\"created_at\":\"\",\"main_program\":\"\",\"pre_install\":null," +
+      "\"post_install\":null,\"entries\":[]}",
+    )
+    let archive = Archive::{
+      base: 0L,
+      manifest: m,
+      manifest_bytes: Bytes::from_array([]),
+      manifest_offset: 0L,
+      manifest_length: 0L,
+      integrity: Legacy,
+    }
+    verify_integrity(archive, None)
+    "no error was raised"
+  } catch {
+    err => err.to_string()
+  }
+  assert_true(message.contains("integrity block"))
+}
+
+///|
+/// A package that really is of the old format is still read, with a warning.
+test "an old package with no integrity block is still read" {
+  let message = try {
+    let m = json_to_manifest(
+      "{\"format_version\":5,\"name\":\"t\",\"version\":\"1\",\"os\":\"windows\"," +
+      "\"arch\":\"x86_64\",\"checksum_algo\":\"sha256\",\"compression\":\"none\"," +
+      "\"created_at\":\"\",\"main_program\":\"\",\"pre_install\":null," +
+      "\"post_install\":null,\"entries\":[]}",
+    )
+    let archive = Archive::{
+      base: 0L,
+      manifest: m,
+      manifest_bytes: Bytes::from_array([]),
+      manifest_offset: 0L,
+      manifest_length: 0L,
+      integrity: Legacy,
+    }
+    verify_integrity(archive, None)
+    ""
+  } catch {
+    err => err.to_string()
+  }
+  assert_eq(message, "")
+}

@@ -624,6 +624,15 @@ test "the subsystem of a PE image is read" {
   assert_true(@LunaPack.pe_subsystem(Bytes::from_array(data[:])) == 2)
   // Something that is not a PE image has no subsystem.
   assert_true(@LunaPack.pe_subsystem(Bytes::from_array([b'x', b'y'])) == 0)
+  // An MZ file that is not a PE image has no subsystem either, even when
+  // the bytes where the subsystem would be happen to say "GUI". Otherwise a
+  // file that is not an executable could decide how the bundle is started.
+  let dos = FixedArray::make(0x100, b'\x00')
+  dos[0] = b'M'
+  dos[1] = b'Z'
+  dos[0x3c] = 0x80
+  dos[0x80 + 24 + 68] = 2
+  assert_true(@LunaPack.pe_subsystem(Bytes::from_array(dos[:])) == 0)
 }
 
 ///|

@@ -136,3 +136,115 @@ test "xxhash32 of the empty input" {
   let empty = Bytes::from_array([])
   assert_true(@LunaPack.xxhash32(empty, 0, 0, 0U) == 0x02CC5D05U)
 }
+
+///|
+/// A frame that claims a block longer than the frame is damage, not a crash.
+/// The length used to be added to the position, which wraps on a 32-bit
+/// target and lets the guard through; the reading then stopped the process.
+test "a frame with an absurd block length is damage" {
+  let hostile = Bytes::from_array([
+    0x04U.to_byte(),
+    0x22U.to_byte(),
+    0x4DU.to_byte(),
+    0x18U.to_byte(),
+    0x60U.to_byte(),
+    0x70U.to_byte(),
+    0xA7U.to_byte(),
+    0xFFU.to_byte(),
+    0xFFU.to_byte(),
+    0xFFU.to_byte(),
+    0x7FU.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+  ])
+  assert_true(@LunaPack.lz4_decompress_frame(hostile, 64) == hostile)
+}
+
+///|
+/// A frame with a dictionary identifier is read at the right place. The
+/// DictID flag is bit 0; bit 1 is reserved and has to stay clear.
+test "a frame with a dictionary identifier is read" {
+  let frame = Bytes::from_array([
+    0x04U.to_byte(),
+    0x22U.to_byte(),
+    0x4DU.to_byte(),
+    0x18U.to_byte(),
+    0x61U.to_byte(),
+    0x70U.to_byte(),
+    0xA7U.to_byte(),
+    0x78U.to_byte(),
+    0x56U.to_byte(),
+    0x34U.to_byte(),
+    0x12U.to_byte(),
+    0x01U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x80U.to_byte(),
+    b'A',
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+  ])
+  let back = @LunaPack.lz4_decompress_frame(frame, 1)
+  assert_true(back == Bytes::from_array([b'A']))
+}
+
+///|
+/// A frame with the reserved bit set is not a frame of this format.
+test "a frame with the reserved bit set is refused" {
+  let frame = Bytes::from_array([
+    0x04U.to_byte(),
+    0x22U.to_byte(),
+    0x4DU.to_byte(),
+    0x18U.to_byte(),
+    0x62U.to_byte(),
+    0x70U.to_byte(),
+    0xA7U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+  ])
+  assert_true(@LunaPack.lz4_decompress_frame(frame, 1) == frame)
+}
+
+///|
+/// A match that points before the beginning of the output is damage. The
+/// decoder used to read out of bounds on such a block.
+test "a block with an impossible match is damage" {
+  let frame = Bytes::from_array([
+    0x04U.to_byte(),
+    0x22U.to_byte(),
+    0x4DU.to_byte(),
+    0x18U.to_byte(),
+    0x60U.to_byte(),
+    0x70U.to_byte(),
+    0xA7U.to_byte(),
+    0x03U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x01U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+    0x00U.to_byte(),
+  ])
+  assert_true(@LunaPack.lz4_decompress_frame(frame, 64) == frame)
+}
+
+///|
+/// A manifest that asks for far more output than the frame can hold is
+/// refused before anything is allocated.
+test "an impossible output size is refused" {
+  let data = Bytes::from_array([b'a', b'b', b'c'])
+  let frame = @LunaPack.lz4_compress_frame(data)
+  assert_true(@LunaPack.lz4_decompress_frame(frame, 64 * 1024 * 1024) == frame)
+  assert_true(@LunaPack.lz4_decompress_frame(frame, -1) == frame)
+  assert_true(@LunaPack.lz4_decompress_frame(frame, 3) == data)
+}

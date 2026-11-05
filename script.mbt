@@ -42,6 +42,28 @@ pub fn script_platform_of(path : String) -> String {
 }
 
 ///|
+/// The name of the file the script of `kind` is written to.
+///
+/// The name is the same on every platform, and it is a name and not a path:
+/// the script is written into the directory the interpreter runs in.
+pub fn script_file_name(platform : String, kind : String) -> String {
+  let (_, _, ext) = shell_for(platform)
+  ".lunapack_" + kind + ext
+}
+
+///|
+/// The absolute path of `dest`.
+///
+/// The script is told where it is going to work, and a relative path says
+/// that only to the shell that happens to be in that directory. The path is
+/// asked of the file system, which knows the answer even when the directory
+/// was named relatively.
+async fn absolute_dest(dest : String) -> String {
+  let real = @fs.realpath(dest) catch { _ => return dest }
+  norm_sep(real)
+}
+
+///|
 /// Write `script` into `dest` as a runnable file for `platform`.
 async fn write_script(
   platform : String,
@@ -49,8 +71,7 @@ async fn write_script(
   script : Script,
   dest : String,
 ) -> String {
-  let (_, _, ext) = shell_for(platform)
-  let path = dest + "/.lunapack_" + kind + ext
+  let path = dest + "/" + script_file_name(platform, kind)
   @fs.write_binary(path, string_to_utf8_bytes(script.body))
   // Make the script executable on POSIX; a no-op on Windows.
   set_permissions(platform, path, 0o755)
@@ -93,8 +114,13 @@ async fn run_script(
   for a in extra {
     args.push(a)
   }
-  args.push(path)
-  @env.set_env_var("LUNAPACK_DEST", dest)
+  // The interpreter is started in `dest`, where the script was written, so
+  // the script is named by its name alone. A path would not do: the command
+  // line of `cmd` reads a forward slash as the start of a switch, so
+  // `cmd /c dir/script.cmd` does not run the script but complains that `.`
+  // is not a command.
+  args.push(script_file_name(platform, kind))
+  @env.set_env_var("LUNAPACK_DEST", absolute_dest(dest))
   @env.set_env_var("LUNAPACK_PHASE", kind)
   // `status` inherits stdout/stderr so the user sees the script output.
   let status = run_interpreter(interp, args, dest) catch {

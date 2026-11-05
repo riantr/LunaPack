@@ -28,21 +28,48 @@ pub fn is_native_target() -> Bool {
 }
 
 ///|
-/// Does the path look absolute?
-fn is_absolute(p : String) -> Bool {
-  if p.has_prefix("/") {
-    return true
-  }
-  // Windows drive letters, e.g. "C:\..." or "C:/..."
-  if p.length() >= 3 && p[1] == ':' {
-    return true
-  }
-  false
+/// Path of the running executable, when it can be determined.
+///
+/// The path of the running *image* is asked of the operating system, never
+/// taken from `argv[0]`: the first argument of a process is a string that
+/// whoever started it chose, and a program that reads its own archive from
+/// it can be made to run an archive of somebody else's. `CreateProcess`
+/// takes the command line and the application name apart, so the two can
+/// name different files.
+pub fn current_exe_path() -> String? {
+  native_exe_path()
 }
 
 ///|
-/// Path of the running executable, when it can be determined.
-pub fn current_exe_path() -> String? {
+/// The path of the running image, on a native Windows build.
+#cfg(target="native")
+fn native_exe_path() -> String? {
+  if host_platform() == "windows" {
+    match windows_exe_path() {
+      Some(p) => Some(p)
+      None => fallback_exe_path()
+    }
+  } else {
+    fallback_exe_path()
+  }
+}
+
+///|
+/// The path of the running image, on the Wasm backend.
+///
+/// There is no image to ask about: the program runs inside a host that
+/// carries the files, so the argument is all there is.
+#cfg(target="wasm")
+fn native_exe_path() -> String? {
+  fallback_exe_path()
+}
+
+///|
+/// The path of the running image, from `argv[0]`.
+///
+/// This is the last resort, and it is only safe where the program cannot be
+/// started with a name that names another file.
+fn fallback_exe_path() -> String? {
   let argv = @env.args()
   if argv.length() == 0 {
     return None
@@ -58,6 +85,48 @@ pub fn current_exe_path() -> String? {
     Some(dir) => Some(dir + "/" + p)
     None => Some(p)
   }
+}
+
+///|
+/// The path of the running image, from the Windows API.
+///
+/// `GetModuleFileNameW` returns the file the image was loaded from, which is
+/// the one thing that cannot be forged by the caller.
+#cfg(target="native")
+fn windows_exe_path() -> String? {
+  // The buffer is UTF-16, as the "W" in the name of the function says.
+  let size = 1024
+  let buf = Bytes::make(size, b'\x00')
+  // A null module handle asks for the file of the running process.
+  let n = get_module_filename(0L, buf, size)
+  if n == 0 {
+    return None
+  }
+  let path = @utf16.decode(buf[:n * 2]) catch { _ => return None }
+  Some(path)
+}
+
+///|
+/// `GetModuleFileNameW(HMODULE, LPWSTR, DWORD)`.
+#cfg(target="native")
+#borrow(buf)
+extern "C" fn get_module_filename(
+  handle : Int64,
+  buf : Bytes,
+  size : Int32,
+) -> Int32 = "GetModuleFileNameW"
+
+///|
+/// Does the path look absolute?
+fn is_absolute(p : String) -> Bool {
+  if p.has_prefix("/") {
+    return true
+  }
+  // Windows drive letters, e.g. "C:\..." or "C:/..."
+  if p.length() >= 3 && p[1] == ':' {
+    return true
+  }
+  false
 }
 
 ///|

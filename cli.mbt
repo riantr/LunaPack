@@ -122,6 +122,86 @@ fn flag_values(flags : Array[Flag], key : String) -> Array[String] {
 }
 
 ///|
+/// The flags the tool knows.
+///
+/// A flag that is not in this list is a mistake, and a mistake that is
+/// silently ignored is the worst kind: the command then does something
+/// else than what was asked, and says nothing about it. `--input-file` for
+/// instance is not `--input-exe`, and taking it for one would leave the
+/// output path empty.
+fn known_flags() -> Array[String] {
+  [
+    "Files", "arch", "compression", "compression-method", "encryption", "encryption-method",
+    "expected-sha256", "extracted", "i", "input", "input-exe", "input-file", "launcher",
+    "name", "o", "output", "output-exe", "output-file", "passphrase", "passphrase-file",
+    "post-install", "pre-install", "public-key", "secret-key", "signature", "skip-scripts",
+    "version",
+  ]
+}
+
+///|
+/// The names of the flags of `flags` that the tool does not know.
+///
+/// The names come back in the order they were given, and each of them only
+/// once.
+fn unknown_flags(flags : Array[Flag]) -> Array[String] {
+  let known = known_flags()
+  let out = []
+  for f in flags {
+    if !known.contains(f.0) && !out.contains(f.0) {
+      out.push(f.0)
+    }
+  }
+  out
+}
+
+///|
+/// The message that names the flags the tool does not know.
+///
+/// The flags the tool does know are named with their dashes, so that the
+/// list can be read and used as it is.
+fn unknown_flags_message(flags : Array[Flag]) -> String {
+  let names = []
+  for f in unknown_flags(flags) {
+    names.push("--" + f)
+  }
+  let all = []
+  for f in known_flags() {
+    all.push("--" + f)
+  }
+  if names.length() == 1 {
+    "unknown flag " + names[0] + " (the flags are: " + all.join(" ") + ")"
+  } else {
+    "unknown flags " +
+    names.join(" ") +
+    " (the flags are: " +
+    all.join(" ") +
+    ")"
+  }
+}
+
+///|
+/// Fail when a flag of `flags` is not one the tool knows.
+fn check_flags(flags : Array[Flag]) -> Unit raise {
+  if unknown_flags(flags).length() > 0 {
+    fail(unknown_flags_message(flags))
+  }
+}
+
+///|
+/// The path the output of a command goes to, or an error when it is empty.
+///
+/// An empty path is what a mistyped flag leaves behind, and a command that
+/// writes to it fails with a message about the file system instead of about
+/// the flag that was wrong.
+fn require_output(output : String, flag_name : String) -> String raise {
+  if output == "" {
+    fail("the output path is empty: " + flag_name + " must name a file")
+  }
+  output
+}
+
+///|
 /// Read the whole content of a file as UTF-8 text.
 async fn read_text_file(path : String) -> String {
   let data = @fs.read_binary(path)
@@ -221,17 +301,16 @@ async fn package_key(flags : Array[Flag], m : Manifest) -> PackageKey? {
 ///|
 /// Build the pack options shared by both front ends.
 async fn build_options(flags : Array[Flag]) -> PackOptions {
-  let empty = new_pack_options("", "", "", "", None, None, "auto")
   let pre_path = flag_value(flags, "pre-install")
   let post_path = flag_value(flags, "post-install")
   let pre = if pre_path == "" {
     None
   } else {
+    // An unreadable script is an error. Returning empty options would throw
+    // away every other flag the caller gave, and the package would be built
+    // with defaults while the command looked as though it had succeeded.
     let body = read_text_file(pre_path) catch {
-      err => {
-        println("error: cannot read --pre-install script: " + err.to_string())
-        return empty
-      }
+      err => fail("cannot read --pre-install script: " + err.to_string())
     }
     Some(new_script(script_platform_of(pre_path), body))
   }
@@ -239,10 +318,7 @@ async fn build_options(flags : Array[Flag]) -> PackOptions {
     None
   } else {
     let body = read_text_file(post_path) catch {
-      err => {
-        println("error: cannot read --post-install script: " + err.to_string())
-        return empty
-      }
+      err => fail("cannot read --post-install script: " + err.to_string())
     }
     Some(new_script(script_platform_of(post_path), body))
   }
@@ -289,6 +365,8 @@ fn usage() -> Unit {
   println("  --input-exe <path>      application executable to distribute")
   println("  --output-exe <path>     produced single-file bundle")
   println("  --Files <dir>           folder of files to bundle (repeatable)")
+  println("  --input-file <path>     another name for --input-exe")
+  println("  --output-file <path>    another name for --output-exe")
   println("  --name <name>           package name (default: input dir name)")
   println("  --version <version>     package version (default: 0.1.0)")
   println("  --os <os>               target OS tag (default: detected)")
@@ -322,43 +400,44 @@ fn usage() -> Unit {
 ///|
 /// The `moonx` style front end.
 async fn do_flags(flags : Array[Flag]) -> Unit {
-  let input_exe = flag_value(flags, "input-exe")
-  let output_exe = flag_value(flags, "output-exe")
+  let input_exe = flag_value_any(flags, ["input-exe", "input-file"])
+  let output_exe = flag_value_any(flags, ["output-exe", "output-file"])
   let file_dirs = flag_values(flags, "Files")
   if input_exe == "" && output_exe == "" && file_dirs.length() == 0 {
     usage()
     return
   }
-  let base = build_options(flags)
-  let name = if base.name == "" {
-    if input_exe == "" {
-      "app"
-    } else {
-      basename(input_exe)
-    }
-  } else {
-    base.name
-  }
-  let opts = with_defaults(
-    base,
-    name,
-    if base.version == "" {
-      "0.1.0"
-    } else {
-      base.version
-    },
-    if base.os == "" {
-      host_platform()
-    } else {
-      base.os
-    },
-    if base.arch == "" {
-      default_arch()
-    } else {
-      base.arch
-    },
-  )
   try {
+    check_flags(flags)
+    let base = build_options(flags)
+    let name = if base.name == "" {
+      if input_exe == "" {
+        "app"
+      } else {
+        basename(input_exe)
+      }
+    } else {
+      base.name
+    }
+    let opts = with_defaults(
+      base,
+      name,
+      if base.version == "" {
+        "0.1.0"
+      } else {
+        base.version
+      },
+      if base.os == "" {
+        host_platform()
+      } else {
+        base.os
+      },
+      if base.arch == "" {
+        default_arch()
+      } else {
+        base.arch
+      },
+    )
     let opts = match encryption_options(flags) {
       Some(e) => with_encryption(opts, e)
       None => opts
@@ -366,18 +445,21 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
     if input_exe == "" {
       // No executable given: write a plain archive instead.
       let first = if file_dirs.length() > 0 { file_dirs[0] } else { "." }
-      pack(first, output_exe, opts)
+      pack(first, require_output(output_exe, "--output-exe"), opts)
     } else {
       bundle(
         input_exe,
-        output_exe,
+        require_output(output_exe, "--output-exe"),
         file_dirs,
         opts,
         flag_value(flags, "launcher"),
       )
     }
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 
@@ -385,11 +467,19 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
 /// The `pack` subcommand.
 async fn do_pack(args : ArrayView[String]) -> Unit {
   let flags = parse_flags(args, 1)
+  check_flags(flags) catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+      return
+    }
+  }
   let input = flag_value_any(flags, ["input", "i"])
   let output = flag_value_any(flags, ["output", "o"])
   if input == "" || output == "" {
     println("error: pack requires -i <input_dir> and -o <output.appkg>")
     usage()
+    exit_with(1)
     return
   }
   let compression = flag_value_any(flags, ["compression-method", "compression"])
@@ -399,6 +489,7 @@ async fn do_pack(args : ArrayView[String]) -> Unit {
     compression != "lz4" &&
     compression != "auto" {
     println("error: --compression-method must be none, gzip, lz4 or auto")
+    exit_with(1)
     return
   }
   try {
@@ -432,7 +523,10 @@ async fn do_pack(args : ArrayView[String]) -> Unit {
     }
     pack(input, output, opts)
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 
@@ -443,11 +537,19 @@ async fn do_pack(args : ArrayView[String]) -> Unit {
 /// needs and a launcher that unpacks them and starts the program.
 async fn do_bundle(args : ArrayView[String]) -> Unit {
   let flags = parse_flags(args, 1)
+  check_flags(flags) catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+      return
+    }
+  }
   let input = flag_value_any(flags, ["input", "i"])
   let output = flag_value_any(flags, ["output", "o"])
   if input == "" || output == "" {
     println("error: bundle requires -i <input_exe> and -o <output_exe>")
     usage()
+    exit_with(1)
     return
   }
   try {
@@ -487,7 +589,10 @@ async fn do_bundle(args : ArrayView[String]) -> Unit {
       flag_value(flags, "launcher"),
     )
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 
@@ -495,20 +600,68 @@ async fn do_bundle(args : ArrayView[String]) -> Unit {
 /// The `unpack` subcommand.
 async fn do_unpack(args : ArrayView[String]) -> Unit {
   let flags = parse_flags(args, 1)
+  check_flags(flags) catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+      return
+    }
+  }
   let input = flag_value_any(flags, ["input", "i"])
   let output = flag_value_any(flags, ["output", "o"])
   if input == "" || output == "" {
     println("error: unpack requires -i <package> and -o <dest_dir>")
     usage()
+    exit_with(1)
     return
   }
   let skip = flag_has(flags, "skip-scripts")
   try {
+    // A signature or a digest that the host published is checked before the
+    // package is opened at all. The flags are honoured here as well as in
+    // `verify`, because a flag that is accepted and then ignored is worse
+    // than a flag that is refused: the user believes the package was
+    // checked, and it was not.
+    let signature_path = flag_value(flags, "signature")
+    let public_path = flag_value(flags, "public-key")
+    let expected = flag_value(flags, "expected-sha256")
+    if signature_path != "" {
+      let text = read_text_file(signature_path) catch {
+        err => fail("cannot read the signature file: " + err.to_string())
+      }
+      let signature = match signature_from_text(text) {
+        Some(s) => s
+        None => fail("the signature file is not one")
+      }
+      if public_path == "" {
+        fail(
+          "a signature is checked against a public key: --public-key is missing",
+        )
+      }
+      let public = load_signing_public_key(public_path)
+      if !verify_package_signature(input, signature, public) {
+        fail(
+          "the signature of the package does not hold: the package is refused",
+        )
+      }
+      println("the signature of the package holds")
+    }
+    if expected != "" {
+      if !verify_package_digest(input, expected) {
+        fail(
+          "the digest of the package is not the one that was expected: the package is refused",
+        )
+      }
+      println("the digest of the package is the one that was expected")
+    }
     let m = read_package_manifest(input)
     let key = package_key(flags, m)
     unpack(input, output, !skip, key)
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 
@@ -528,10 +681,12 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
   if args.length() < 2 {
     println("error: verify requires a package path")
     usage()
+    exit_with(1)
     return
   }
   try {
     let flags = parse_flags(args, 1)
+    check_flags(flags)
     let signature_path = flag_value(flags, "signature")
     let public_path = flag_value(flags, "public-key")
     let expected = flag_value(flags, "expected-sha256")
@@ -551,6 +706,7 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
       let public = load_signing_public_key(public_path)
       if !verify_package_signature(args[1], signature, public) {
         println("VERIFY FAILED")
+        exit_with(1)
         return
       }
       println("the signature of the package holds")
@@ -558,6 +714,7 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
     if expected != "" {
       if !verify_package_digest(args[1], expected) {
         println("VERIFY FAILED")
+        exit_with(1)
         return
       }
       println("the digest of the package is the one that was expected")
@@ -566,21 +723,25 @@ async fn do_verify(args : ArrayView[String]) -> Unit {
     let m = read_package_manifest(args[1])
     let key = package_key(flags, m)
     let ok = verify(args[1], key)
-    if extracted != "" {
-      if verify_extracted_dir(args[1], extracted) {
-        println("VERIFY OK")
-      } else {
-        println("VERIFY FAILED")
-      }
-      return
+    // The package and the extracted directory are two separate checks, and
+    // both of them have to hold: a package that is damaged is not made whole
+    // by an extracted directory that is intact.
+    let extracted_ok = if extracted == "" {
+      true
+    } else {
+      verify_extracted_dir(args[1], extracted)
     }
-    if ok {
+    if ok && extracted_ok {
       println("VERIFY OK")
     } else {
       println("VERIFY FAILED")
+      exit_with(1)
     }
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 
@@ -594,13 +755,22 @@ async fn do_sign(args : ArrayView[String]) -> Unit {
   if args.length() < 2 {
     println("error: sign requires a package path")
     usage()
+    exit_with(1)
     return
   }
   let flags = parse_flags(args, 1)
+  check_flags(flags) catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+      return
+    }
+  }
   let secret_path = flag_value(flags, "secret-key")
   if secret_path == "" {
     println("error: sign requires --secret-key <file>")
     usage()
+    exit_with(1)
     return
   }
   let output = flag_value(flags, "output")
@@ -616,7 +786,10 @@ async fn do_sign(args : ArrayView[String]) -> Unit {
       println("wrote the signature to " + output)
     }
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 
@@ -627,6 +800,13 @@ async fn do_sign(args : ArrayView[String]) -> Unit {
 /// the packages, the secret key to the machine that opens them.
 async fn do_keygen(args : ArrayView[String]) -> Unit {
   let flags = parse_flags(args, 1)
+  check_flags(flags) catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+      return
+    }
+  }
   let public_path = flag_value(flags, "public-key")
   let secret_path = flag_value(flags, "secret-key")
   if public_path == "" || secret_path == "" {
@@ -634,6 +814,7 @@ async fn do_keygen(args : ArrayView[String]) -> Unit {
       "error: keygen requires --public-key <file> and --secret-key <file>",
     )
     usage()
+    exit_with(1)
     return
   }
   try {
@@ -649,7 +830,10 @@ async fn do_keygen(args : ArrayView[String]) -> Unit {
     println("wrote the public key to " + public_path)
     println("wrote the secret key to " + secret_path)
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 
@@ -659,9 +843,12 @@ async fn do_info(args : ArrayView[String]) -> Unit {
   if args.length() < 2 {
     println("error: info requires a package path")
     usage()
+    exit_with(1)
     return
   }
   try {
+    let flags = parse_flags(args, 1)
+    check_flags(flags)
     let m = read_package_manifest(args[1])
     println("name:         " + m.name)
     println("version:      " + m.version)
@@ -714,7 +901,10 @@ async fn do_info(args : ArrayView[String]) -> Unit {
       println("ratio:        " + pct.to_string() + "%")
     }
   } catch {
-    err => println("error: " + err.to_string())
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
   }
 }
 

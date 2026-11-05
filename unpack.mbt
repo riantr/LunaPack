@@ -243,9 +243,19 @@ fn check_entry_paths(manifest : Manifest) -> Unit raise {
 ///
 /// A package that carries no block is a package of the old format. It is
 /// read, but it is said out loud that its manifest was not checked.
+///
+/// Format 6 is the one that brought the block. A package that says it is
+/// format 6 but whose block is not there is not an old package: it is a
+/// damaged one, or one whose marker was deliberately broken to make the
+/// reader skip the check. It must be refused, not downgraded.
 fn verify_integrity(archive : Archive, key : PackageKey?) -> Unit raise {
   match archive.integrity {
     Legacy => {
+      if archive.manifest.format_version >= 6 {
+        fail(
+          "the package is in format v6 but its integrity block is missing or damaged",
+        )
+      }
       if key is Some(_) {
         fail(
           "the package is in the old format and carries no authenticated manifest: it cannot be opened with a key",

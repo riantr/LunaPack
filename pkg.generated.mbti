@@ -262,6 +262,8 @@ pub async fn save_secret_key_raw(String, Bytes) -> Unit
 
 pub fn script_applies(String, String) -> Bool
 
+pub fn script_file_name(String, String) -> String
+
 pub fn script_platform_of(String) -> String
 
 pub fn seal_entry(PackageKey, Int32, String, Bytes) -> Bytes
