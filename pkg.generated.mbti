@@ -204,6 +204,8 @@ pub fn new_sealed_package(Bytes, Bytes, Bytes, Bytes) -> SealedPackage
 
 pub fn norm_sep(String) -> String
 
+pub fn not_self_extracting_message(String) -> String
+
 pub fn open_entry(PackageKey, Int32, String, Bytes) -> Bytes?
 
 pub async fn pack(String, String, PackOptions) -> Unit

@@ -654,3 +654,63 @@ async test "a folder that is not there is removed without an error" {
   // And removing it a second time is fine as well.
   @LunaPack.remove_dir(missing)
 }
+
+///|
+/// A bundle that carries no launcher looks exactly like one that does: same
+/// name, same size, a whole payload inside. The one thing that tells them
+/// apart is the warning that names the file and says what is wrong with it,
+/// so the message has to do that and not be a shrug.
+test "the two kinds of bundle are told apart" {
+  let message = @LunaPack.not_self_extracting_message("myapp.exe")
+  // It names the file that does not work.
+  assert_true(message.has_prefix("myapp.exe "))
+  // It says that the file does not start on its own.
+  assert_true(message.contains("does not start on its own"))
+  // It says why: the payload is there, the launcher is not.
+  assert_true(message.contains("carries the payload"))
+  assert_true(message.contains("no launcher"))
+}
+
+///|
+/// A bundle that is refused leaves nothing behind.
+///
+/// The archive is written before the launcher is looked at, so the cleanup
+/// has to reach it from that point on. A directory that keeps a file from a
+/// bundle that was never made is the mess the write-in-one-piece rule exists
+/// to prevent, and the file it keeps is exactly the one that looks like the
+/// bundle that the user asked for.
+async test "a refused bundle leaves nothing behind" {
+  let dir = @fs.tmpdir(prefix="lunapack_refused")
+  let exe = dir + "/myapp.exe"
+  @fs.write_binary(exe, b"\x4d\x5a\x90\x00")
+  let out = dir + "/out.exe"
+  let opts = @LunaPack.with_defaults(
+    @LunaPack.new_pack_options(
+      "demo",
+      "1.0.0",
+      "linux",
+      "x86_64",
+      None,
+      None,
+      "none",
+    ),
+    "demo",
+    "1.0.0",
+    "linux",
+    "x86_64",
+  )
+  // A launcher that does not exist is a mistake, and the mistake is caught
+  // before the target is touched.
+  let refused = try {
+    @LunaPack.bundle(exe, out, [], opts, dir + "/nothing-here")
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(refused)
+  // The target was never written, and neither the archive nor the work file
+  // was left behind.
+  assert_true(!@fs.exists(out))
+  assert_true(!@fs.exists(out + ".lunapack-archive.tmp"))
+  assert_true(!@fs.exists(out + ".lunapack-tmp"))
+}

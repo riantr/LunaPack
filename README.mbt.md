@@ -512,6 +512,15 @@ launcher of that operating system is named, and the bundle runs there.
 > LunaPack always produces a self-extracting file. A bundle produced through
 > `moonx` runs on WebAssembly and has no native binary of its own, so it needs
 > one named with `--launcher` — see above.
+>
+> Without one, `moonx` still writes a file that holds the whole payload, and
+> that file **does not start on its own**: starting it runs the bundled
+> program with none of its files unpacked next to it, which for most programs
+> means it fails at once. The two files look identical from the outside —
+> same name, same size, a whole payload inside — so the last line that the
+> command prints says which of the two was made, and it also goes to stderr.
+> A bundle that is only meant to carry a payload can be unpacked with
+> `lunapack unpack`; a bundle that is meant to be started needs the launcher.
 
 ### A single file that behaves like the program
 

@@ -185,5 +185,36 @@ Run-Mutation 'L7 separation' 'keystore.mbt' `
   '' '' `
   'the two roles of a pair are separated'
 
+# 12. The archive of a refused bundle is left behind.
+#
+# The archive is written before the launcher is looked at, so the cleanup has
+# to cover it from that point on. With the cleanup taken out, a bundle that
+# fails leaves `*.lunapack-archive.tmp` in the directory it was asked to
+# write to -- a file from a bundle that was never made.
+Run-Mutation 'L5 archive cleanup' 'pack.mbt' `
+  '  @fs.remove(tmp, allow_missing=true)
+  // The archive is written before the launcher is looked at, so the cleanup
+  // has to reach it from that point on: a launcher that turns out to be
+  // missing leaves the archive behind otherwise, and a directory that keeps
+  // a file from a bundle that was never made is exactly the mess the
+  // write-in-one-piece rule exists to prevent.
+  errdefer @fs.remove(tmp, allow_missing=true)
+  let m = write_archive(items, tmp, opts2, None)' `
+  '  @fs.remove(tmp, allow_missing=true)
+  let m = write_archive(items, tmp, opts2, None)' `
+  '' '' `
+  'a refused bundle leaves nothing behind'
+
+# 13. A bundle that cannot start on its own is not reported as one.
+#
+# The two files look the same from the outside -- same name, same size, a
+# whole payload inside -- and what tells them apart is the warning. It is the
+# last line now, so that a list of a few hundred checksums cannot hide it.
+Run-Mutation 'L4 self-extracting' 'pack.mbt' `
+  '  output + " does not start on its own: it carries the payload but no launcher"' `
+  '  output + " is fine"' `
+  '' '' `
+  'the two kinds of bundle are told apart'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

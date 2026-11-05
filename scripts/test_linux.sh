@@ -153,6 +153,16 @@ if "$BIN" bundle -i "$WORK_DIR/myapp" -o "$WORK_DIR/dist/myapp4" \
 else
   fail "a launcher that does not exist was NOT refused"
 fi
+
+# A bundle that was refused leaves nothing behind. The archive is written
+# before the launcher is looked at, so the cleanup has to reach it too: a
+# directory that keeps a file from a bundle that was never made is the mess
+# the write-in-one-piece rule exists to prevent.
+if ls "$WORK_DIR/dist/" | grep -q 'lunapack-archive\.tmp'; then
+  fail "a refused bundle left its archive behind"
+else
+  pass "a refused bundle leaves nothing behind"
+fi
 pass "bundle round-trips byte-identically"
 
 section "md5 fingerprints"
