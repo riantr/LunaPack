@@ -203,6 +203,350 @@ fn console_is_ours(ids : Array[Int32], own_pid : Int32) -> Bool {
 }
 
 ///|
+/// `GetStdHandle(DWORD)`.
+#cfg(all(target="native", platform="windows"))
+extern "C" fn get_std_handle(which : Int32) -> Int64 = "GetStdHandle"
+
+///|
+/// `WriteFile(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED)`.
+#cfg(all(target="native", platform="windows"))
+#borrow(buffer, written)
+extern "C" fn write_file(
+  handle : Int64,
+  buffer : Bytes,
+  length : Int32,
+  written : Bytes,
+  overlapped : Int64,
+) -> Int32 = "WriteFile"
+
+///|
+/// `ReadConsoleW(HANDLE, LPVOID, DWORD, LPDWORD, LPVOID)`.
+#cfg(all(target="native", platform="windows"))
+#borrow(buffer, read)
+extern "C" fn read_console_w(
+  handle : Int64,
+  buffer : Bytes,
+  length : Int32,
+  read : Bytes,
+  reserved : Int64,
+) -> Int32 = "ReadConsoleW"
+
+///|
+/// `GetConsoleMode(HANDLE, LPDWORD)`.
+#cfg(all(target="native", platform="windows"))
+#borrow(mode)
+extern "C" fn get_console_mode(handle : Int64, mode : Bytes) -> Int32 = "GetConsoleMode"
+
+///|
+/// Can a question be asked and answered here?
+///
+/// A handle that is not a console — a pipe, a file, the null device — cannot
+/// be answered, and waiting fifteen seconds for a key that cannot come is
+/// worse than not asking. `GetConsoleMode` is the one call that says whether
+/// the standard input is a console rather than something that merely looks
+/// like a character device.
+#cfg(all(target="native", platform="windows"))
+fn stdin_is_console() -> Bool {
+  let handle = get_std_handle(STD_INPUT_HANDLE)
+  if handle == 0L || handle == -1L {
+    return false
+  }
+  let mode = Bytes::make(4, b'\x00')
+  get_console_mode(handle, mode) != 0
+}
+
+///|
+/// Nothing to ask on a platform whose console belongs to the terminal.
+#cfg(not(all(target="native", platform="windows")))
+fn stdin_is_console() -> Bool {
+  false
+}
+
+///|
+/// `STD_INPUT_HANDLE`.
+#cfg(all(target="native", platform="windows"))
+const STD_INPUT_HANDLE : Int32 = -10
+
+///|
+/// `STD_OUTPUT_HANDLE`.
+#cfg(all(target="native", platform="windows"))
+const STD_OUTPUT_HANDLE : Int32 = -11
+
+///|
+/// How wide a progress line is, in characters.
+const PROGRESS_WIDTH : Int32 = 78
+
+///|
+/// How many cells of that line the bar itself takes.
+const PROGRESS_BAR_WIDTH : Int32 = 24
+
+///|
+/// How long a first start waits for an answer before it just runs the bundle.
+const CHOICE_SECONDS : Int32 = 15
+
+///|
+/// Does the console this process is attached to belong to it alone?
+#cfg(all(target="native", platform="windows"))
+fn own_console_at_start() -> Bool {
+  let slots = 16
+  let buf = Bytes::make(slots * 4, b'\x00')
+  let n = get_console_process_list(buf, slots)
+  if n <= 0 {
+    return false
+  }
+  let ids : Array[Int32] = []
+  let mut i = 0
+  while i < n && i < slots {
+    ids.push(u32_at(buf, i.to_int64() * 4L).to_int())
+    i = i + 1
+  }
+  console_is_ours(ids, get_current_process_id())
+}
+
+///|
+/// There is no console of our own on any other platform: the program was
+/// started from a terminal, and a bundle started from a desktop entry has none.
+#cfg(not(all(target="native", platform="windows")))
+fn own_console_at_start() -> Bool {
+  false
+}
+
+///|
+/// Write to the console without a newline, so that a line can be rewritten in
+/// place.
+#cfg(all(target="native", platform="windows"))
+fn console_write(text : String) -> Unit {
+  let handle = get_std_handle(STD_OUTPUT_HANDLE)
+  if handle == 0L || handle == -1L {
+    return
+  }
+  let data = string_to_utf8_bytes(text)
+  let written = Bytes::make(4, b'\x00')
+  write_file(handle, data, data.length(), written, 0L) |> ignore
+}
+
+///|
+/// The same, on a platform where the bar is never drawn: a bundle started from
+/// a terminal has no console of its own, so nothing asks for a line.
+#cfg(not(all(target="native", platform="windows")))
+fn console_write(text : String) -> Unit {
+  ignore(text)
+}
+
+///|
+/// One line from the console, or `None` when nothing arrives in `timeout_ms`.
+///
+/// A negative timeout waits for as long as it takes. The wait is on the input
+/// handle itself, which Windows signals as soon as a key is pressed: that is
+/// what lets the caller count down between two waits instead of blocking.
+#cfg(all(target="native", platform="windows"))
+fn read_console_line(timeout_ms : Int32) -> String? {
+  let handle = get_std_handle(STD_INPUT_HANDLE)
+  if handle == 0L || handle == -1L {
+    return None
+  }
+  if timeout_ms >= 0 {
+    // WAIT_OBJECT_0 is zero, and it is the only answer that means input.
+    if wait_for_single_object(handle, timeout_ms) != 0 {
+      return None
+    }
+  }
+  let buffer = Bytes::make(1024, b'\x00')
+  let read = Bytes::make(4, b'\x00')
+  if read_console_w(handle, buffer, 1024, read, 0L) == 0 {
+    return None
+  }
+  let n = u32_at(read, 0L).to_int()
+  if n <= 0 {
+    return None
+  }
+  // ReadConsoleW hands back the line endings as well.
+  let text = @utf16.decode(buffer[:n * 2]) catch { _ => return None }
+  Some(text)
+}
+
+///|
+/// Nothing to read: there is no menu on a platform whose console belongs to
+/// the terminal.
+#cfg(not(all(target="native", platform="windows")))
+fn read_console_line(timeout_ms : Int32) -> String? {
+  None
+}
+
+///|
+/// `text` without the whitespace or the line ending around it.
+fn trim_line(text : String) -> String {
+  let mut start = 0
+  let mut end = text.length()
+  while start < end {
+    let c = text[start]
+    if c == '\r' || c == '\n' || c == ' ' || c == '\t' {
+      start = start + 1
+    } else {
+      break
+    }
+  }
+  while end > start {
+    let c = text[end - 1]
+    if c == '\r' || c == '\n' || c == ' ' || c == '\t' {
+      end = end - 1
+    } else {
+      break
+    }
+  }
+  text[start:end].to_owned()
+}
+
+///|
+/// A callback that draws the bar: one line, rewritten in place.
+///
+/// `tag` says which of the two passes is running — the unpacking or the
+/// read-back that follows it — because both of them walk the same list of
+/// files, and a bar without a tag looks like it started over.
+fn progress_reporter(
+  tag : String,
+  total_files : Int32,
+) -> (Int32, Int64, Int64, String) -> Unit {
+  fn(done_files, done_bytes, total_bytes, name) {
+    console_write(
+      "\r" +
+      fit_line(
+        tag +
+        " " +
+        progress_line(
+          done_files,
+          total_files,
+          done_bytes,
+          total_bytes,
+          name,
+          PROGRESS_BAR_WIDTH,
+        ),
+        PROGRESS_WIDTH,
+      ),
+    )
+  }
+}
+
+///|
+/// Ask what a first start should do: install the payload to a folder, or
+/// unpack it next to the bundle and run it from there.
+///
+/// Returns true for "install". The default is "run", and it is taken after
+/// fifteen seconds without an answer: a bundle that nobody is watching has to
+/// start on its own.
+#cfg(all(target="native", platform="windows"))
+fn ask_install_or_run(m : Manifest) -> Bool {
+  console_write(
+    "LunaPack: " +
+    m.name +
+    " " +
+    m.version +
+    "\n" +
+    "  [1] install it to a folder\n" +
+    "  [2] run it from the folder next to this file\n",
+  )
+  let mut left = CHOICE_SECONDS
+  while left > 0 {
+    console_write("\r  your choice [1/2], 2 in " + left.to_string() + " s:    ")
+    match read_console_line(1000) {
+      Some(line) => {
+        console_write("\n")
+        return trim_line(line) == "1"
+      }
+      None => ()
+    }
+    left = left - 1
+  }
+  console_write("\r  your choice [1/2]: 2 (nobody chose)                    \n")
+  false
+}
+
+///|
+/// There is no menu on a platform whose console belongs to the terminal.
+#cfg(not(all(target="native", platform="windows")))
+fn ask_install_or_run(m : Manifest) -> Bool {
+  false
+}
+
+///|
+/// The folder an install goes to when the user just presses Enter.
+fn default_install_dir(m : Manifest) -> String {
+  match @env.get_env_var("LOCALAPPDATA") {
+    Some(base) =>
+      if base == "" {
+        "./" + m.name
+      } else {
+        base + "\\Programs\\" + m.name
+      }
+    None => "./" + m.name
+  }
+}
+
+///|
+/// Install the payload where the user says, and start it from there.
+///
+/// This is the path of `unpack` with the scripts of the package in place, so
+/// an install of a bundle is the same thing as unpacking it by hand, with a
+/// bar over the part that takes the time.
+#cfg(all(target="native", platform="windows"))
+async fn install_and_start(
+  exe : String,
+  m : Manifest,
+  key : PackageKey?,
+) -> Unit {
+  let fallback = default_install_dir(m)
+  console_write("  install to [" + fallback + "]: ")
+  let dest = match read_console_line(-1) {
+    Some(line) => {
+      let answer = trim_line(line)
+      if answer == "" {
+        fallback
+      } else {
+        answer
+      }
+    }
+    None => fallback
+  }
+  console_write("\n  unpacking " + m.entries.length().to_string() + " files\n")
+  unpack_reporting(
+    exe,
+    dest,
+    true,
+    key,
+    Some(progress_reporter("unpack", m.entries.length())),
+  )
+  console_write("\n")
+  println("LunaPack: installed " + m.name + " to " + dest)
+  let program = dest + "/" + m.main_program
+  let args = bundled_arguments()
+  let code = match start_without_console(program, args, dest) {
+    Some(code) => code
+    None =>
+      try {
+        let r = @process.run(program, args, cwd=dest)
+        r.exit_code
+      } catch {
+        err => {
+          println("LunaPack: cannot start " + program + ": " + err.to_string())
+          1
+        }
+      }
+  }
+  exit_with(code)
+}
+
+///|
+/// Nothing to install on a platform whose console belongs to the terminal.
+#cfg(not(all(target="native", platform="windows")))
+async fn install_and_start(
+  exe : String,
+  m : Manifest,
+  key : PackageKey?,
+) -> Unit {
+
+}
+
+///|
 /// Start the program of the bundle and take the console away, when the console
 /// is the one Windows made for this bundle and the program has a window.
 ///
@@ -235,19 +579,7 @@ async fn start_without_console(
   args : Array[String],
   dir : String,
 ) -> Int32? {
-  let slots = 16
-  let buf = Bytes::make(slots * 4, b'\x00')
-  let n = get_console_process_list(buf, slots)
-  if n <= 0 {
-    return None
-  }
-  let ids : Array[Int32] = []
-  let mut i = 0
-  while i < n && i < slots {
-    ids.push(u32_at(buf, i.to_int64() * 4L).to_int())
-    i = i + 1
-  }
-  if !console_is_ours(ids, get_current_process_id()) {
+  if !own_console_at_start() {
     return None
   }
   // A console program keeps its console: that window is where its output goes,
@@ -413,6 +745,23 @@ async fn writable_dir(path : String) -> Bool {
 /// file that was changed after it was unpacked is not what the package says
 /// it is, and the payload is unpacked again in that case.
 async fn cache_matches(m : Manifest, dir : String) -> Bool {
+  cache_matches_reporting(m, dir, None)
+}
+
+///|
+/// The same, telling a caller how far it has come after every file.
+///
+/// This is the pass that reads a hundred megabytes back from the disk, so it
+/// is half of what a first start spends its time on, and a bar that covered
+/// only the unpacking would stop at 50% and then sit there.
+async fn cache_matches_reporting(
+  m : Manifest,
+  dir : String,
+  report : ((Int32, Int64, Int64, String) -> Unit)?,
+) -> Bool {
+  let total_bytes = total_bytes_of(m.entries)
+  let mut done_bytes = 0L
+  let mut index = 0
   for e in m.entries {
     let path = dir + "/" + e.path
     if !@fs.exists(path) {
@@ -421,6 +770,12 @@ async fn cache_matches(m : Manifest, dir : String) -> Bool {
     let data = @fs.read_binary(path)
     if redundant_sha256(data) != e.checksum {
       return false
+    }
+    index = index + 1
+    done_bytes = done_bytes + e.size
+    match report {
+      Some(tell) => tell(index, done_bytes, total_bytes, e.path)
+      None => ()
     }
   }
   true
@@ -447,6 +802,20 @@ async fn program_matches(m : Manifest, path : String) -> Bool {
 }
 
 ///|
+/// Has this package already been unpacked next to the bundle?
+///
+/// Only the marker is looked at. The files behind it are checked when the
+/// cache is used, and checking them here as well would pay for the whole
+/// payload twice on every start.
+async fn complete_cache(exe_path : String, m : Manifest) -> Bool {
+  let dir = cache_dir(exe_path, package_tag(m))
+  if dir == "" {
+    return false
+  }
+  @fs.exists(dir + "/.lunapack-complete")
+}
+
+///|
 /// Extract the payload into the cache folder next to the executable.
 ///
 /// Returns the folder, or None when that location cannot be used.
@@ -455,6 +824,8 @@ async fn extract_to_cache(
   exe_path : String,
   m : Manifest,
   key : PackageKey?,
+  unpack_report : ((Int32, Int64, Int64, String) -> Unit)?,
+  verify_report : ((Int32, Int64, Int64, String) -> Unit)?,
 ) -> String? {
   let dir = cache_dir(exe_path, package_tag(m))
   if dir == "" {
@@ -475,11 +846,11 @@ async fn extract_to_cache(
   remove_dir(staging)
   @fs.mkdir(staging, recursive=true, allow_exist=true, permission=0o700)
   try {
-    extract_to(pkg, staging, key)
+    extract_to_reporting(pkg, staging, key, unpack_report)
     @fs.write_text(staging + "/.lunapack-complete", "ok")
     remove_dir(dir)
     @fs.rename(staging, dir, replace=true)
-    accept_cache(m, dir)
+    accept_cache_reporting(m, dir, verify_report)
   } catch {
     _ => {
       remove_dir(staging)
@@ -503,8 +874,12 @@ async fn extract_to_cache(
 /// So the payload is read back from where it landed. A folder that does not
 /// hold what the package carries is removed rather than started, and the cost
 /// of a torn folder becomes a bundle that refuses to start and says why.
-async fn accept_cache(m : Manifest, dir : String) -> String? {
-  if cache_matches(m, dir) {
+async fn accept_cache_reporting(
+  m : Manifest,
+  dir : String,
+  report : ((Int32, Int64, Int64, String) -> Unit)?,
+) -> String? {
+  if cache_matches_reporting(m, dir, report) {
     return Some(dir)
   }
   remove_dir(dir)
@@ -650,7 +1025,32 @@ pub async fn try_launch_self_extracting() -> Bool {
     eprintln("LunaPack: cannot decrypt the package")
     return false
   }
-  let dir = match extract_to_cache(exe, exe, m, key) {
+  // The arguments of the bundle belong to the bundled program.
+  let args = bundled_arguments()
+  // A bundle that was started by a double-click, with no argument of its own,
+  // and whose payload has never been unpacked, asks what to do first: install
+  // it to a folder, or unpack it next to itself and run it from there.
+  // Everything else goes straight to the program — a start from a terminal, a
+  // start with an argument, and every start after the first one.
+  let interactive = args.length() == 0 && own_console_at_start()
+  if interactive && stdin_is_console() && !complete_cache(exe, m) {
+    if ask_install_or_run(m) {
+      install_and_start(exe, m, key)
+      return true
+    }
+  }
+  let unpack_report = if interactive {
+    Some(progress_reporter("unpack", m.entries.length()))
+  } else {
+    None
+  }
+  let verify_report = if interactive {
+    Some(progress_reporter("verify", m.entries.length()))
+  } else {
+    None
+  }
+  let dir = match
+    extract_to_cache(exe, exe, m, key, unpack_report, verify_report) {
     Some(d) => d
     None => {
       // The folder next to the executable is not usable, fall back to a
@@ -659,8 +1059,8 @@ pub async fn try_launch_self_extracting() -> Bool {
       // to start from anywhere.
       let d = @fs.tmpdir(prefix="lunapack")
       eprintln("LunaPack: extracting " + m.main_program + " to " + d)
-      extract_to(exe, d, key)
-      match accept_cache(m, d) {
+      extract_to_reporting(exe, d, key, unpack_report)
+      match accept_cache_reporting(m, d, verify_report) {
         Some(d) => d
         None => {
           eprintln(
@@ -671,6 +1071,11 @@ pub async fn try_launch_self_extracting() -> Bool {
         }
       }
     }
+  }
+  // The bar is rewritten in place, and the line that follows it starts on a
+  // line of its own.
+  if interactive {
+    console_write("\n")
   }
   let program = dir + "/" + m.main_program
   // The file that is about to be started is read back from the disk and
@@ -684,8 +1089,6 @@ pub async fn try_launch_self_extracting() -> Bool {
     return true
   }
   eprintln("LunaPack: starting " + program)
-  // The arguments of the bundle belong to the bundled program.
-  let args = bundled_arguments()
   // A bundle that was started by a double-click has a console of its own, and
   // the program about to start draws its own window. That console is taken
   // away while the program runs, and the program is started by the same call,

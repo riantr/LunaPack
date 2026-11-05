@@ -84,14 +84,8 @@ Run-Mutation 'L3 cache' 'launcher.mbt' `
   '    let data = @fs.read_binary(path)
     if redundant_sha256(data) != e.checksum {
       return false
-    }
-  }
-  true
-}' `
-  '    let data = @fs.read_binary(path)
-  }
-  true
-}' `
+    }' `
+  '    let data = @fs.read_binary(path)' `
   '' '' `
   'the cache is only used again when it holds what the package carries'
 
@@ -233,7 +227,7 @@ Run-Mutation 'L4 self-extracting' 'pack.mbt' `
 # a program that started and then could not load a library the move had left
 # behind.
 Run-Mutation 'L3 cache handover' 'launcher.mbt' `
-  '  if cache_matches(m, dir) {
+  '  if cache_matches_reporting(m, dir, report) {
     return Some(dir)
   }' `
   '  if true {
@@ -259,6 +253,22 @@ Run-Mutation 'console ownership' 'launcher.mbt' `
 }' `
   '' '' `
   'the console of the terminal is not taken away'
+
+# 16. The bar says more is done than there is.
+#
+# The line counts bytes, and a count bigger than the total is what a package
+# whose last file is bigger than the sum of the manifest would produce. Without
+# the clamp the bar says 150% and reads as a defect in the unpacking.
+Run-Mutation 'progress clamp' 'progress.mbt' `
+  '  let p = done * 100L / total
+  if p > 100L {
+    return 100
+  }
+  p.to_int()' `
+  '  let p = done * 100L / total
+  p.to_int()' `
+  '' '' `
+  'the progress bar tells the truth about what is left'
 
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

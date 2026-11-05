@@ -496,8 +496,11 @@ async fn write_entries(
   dest : String,
   host : String,
   key : PackageKey?,
+  report : ((Int32, Int64, Int64, String) -> Unit)?,
 ) -> Unit {
   let mut index = 0
+  let total_bytes = total_bytes_of(archive.manifest.entries)
+  let mut done_bytes = 0L
   for e in archive.manifest.entries {
     let data = entry_payload(file, e, archive.base, index, key)
     index = index + 1
@@ -512,6 +515,11 @@ async fn write_entries(
     write_file_atomic(out_path, data, e.mode, host)
     // Read the file back and confirm that the fingerprint is unchanged.
     verify_written_file(out_path, e.md5, e.checksum)
+    done_bytes = done_bytes + e.size
+    match report {
+      Some(tell) => tell(index, done_bytes, total_bytes, e.path)
+      None => ()
+    }
   }
 }
 
@@ -552,6 +560,21 @@ async fn verify_entries(
 /// Used by the self-extracting launcher, which does not want to list every
 /// file it writes.
 pub async fn extract_to(pkg : String, dest : String, key : PackageKey?) -> Unit {
+  extract_to_reporting(pkg, dest, key, None)
+}
+
+///|
+/// The same, telling a caller how far it has come after every file.
+///
+/// The launcher draws the line, but the counting is here: touching every file
+/// once is what makes a bar of a hundred megabytes honest rather than
+/// decorative.
+async fn extract_to_reporting(
+  pkg : String,
+  dest : String,
+  key : PackageKey?,
+  report : ((Int32, Int64, Int64, String) -> Unit)?,
+) -> Unit {
   let dest = norm_sep(dest)
   @fs.mkdir(dest, recursive=true, allow_exist=true)
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
@@ -559,7 +582,7 @@ pub async fn extract_to(pkg : String, dest : String, key : PackageKey?) -> Unit 
   let archive = read_archive(file)
   verify_integrity(archive, key)
   check_entry_paths(archive.manifest)
-  write_entries(file, archive, dest, host_platform(), key)
+  write_entries(file, archive, dest, host_platform(), key, report)
 }
 
 ///|
@@ -615,6 +638,22 @@ pub async fn unpack(
   run_scripts : Bool,
   key : PackageKey?,
 ) -> Unit {
+  unpack_reporting(pkg, dest, run_scripts, key, None)
+}
+
+///|
+/// The same, telling a caller how far it has come after every file.
+///
+/// The installer of a bundle walks this path: the payload goes to the folder
+/// the user chose, the scripts of the package run around it, and the bar has
+/// numbers to show because the counting happens here.
+async fn unpack_reporting(
+  pkg : String,
+  dest : String,
+  run_scripts : Bool,
+  key : PackageKey?,
+  report : ((Int32, Int64, Int64, String) -> Unit)?,
+) -> Unit {
   let dest = norm_sep(dest)
   @fs.mkdir(dest, recursive=true, allow_exist=true)
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
@@ -652,7 +691,7 @@ pub async fn unpack(
       None => ()
     }
   }
-  write_entries(file, archive, dest, host, key)
+  write_entries(file, archive, dest, host, key, report)
   // post_install runs once every file is in place.
   if run_scripts {
     match manifest.post_install {
