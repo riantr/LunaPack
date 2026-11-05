@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.9
+moon add riantr/LunaPack@0.1.10
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.9",
+  "riantr/LunaPack@0.1.10",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.9`, `>=0.1.9`, `0.1` and `v0.1.9` are all rejected. A bare
+`latest`, `^0.1.10`, `>=0.1.10`, `0.1` and `v0.1.10` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -223,6 +223,43 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.10
+
+- **The command that was typed is the command that runs.** `--input-file` and
+  `--output-file` are names for `--input-exe` and `--output-exe` now, and a
+  flag the tool does not know is refused instead of being dropped. An empty
+  output path is refused as well. Without those three changes an unknown flag
+  could scan a whole directory and then fail with a rename to an empty file
+  name — which is exactly what a real `moonx riantr/LunaPack@latest` run
+  with the two aliases did.
+- **A failure says that it failed.** Every command that cannot do what it was
+  asked now exits with `1` instead of `0`. The `VERIFY OK` / `VERIFY FAILED` /
+  `error: ...` markers on stdout stay, so a script that reads the output keeps
+  working.
+- **A check that was asked for is a check that is made.** `verify --extracted`
+  no longer lets an intact extracted directory hide a damaged package, and
+  `unpack` honours `--signature`, `--public-key` and `--expected-sha256`
+  before it writes a single file.
+- **The launcher knows which file it is.** It locates itself with
+  `GetModuleFileNameW` instead of `argv[0]`, which a caller can forge. A bundle
+  carries its own copy of the launcher, so a bundle made before this release
+  has to be rebuilt to pick up the fix.
+- **A package cannot turn off its own integrity.** A format 6 package whose
+  integrity marker is missing or damaged is refused rather than downgraded to
+  "legacy"; real format 5 packages are still read, with a warning. A non-PE
+  file can no longer dictate the subsystem of the bundle, because the PE
+  signature and the header bounds are checked.
+- **Malformed input is damage, not a crash.** The LZ4 decoder checks its
+  bounds, caps the expansion of a hostile frame and reads the DictID flag from
+  the bit the format assigns to it. Windows install scripts get their bare
+  file name, so `cmd` does not read the path as a switch, `LUNAPACK_DEST` is
+  absolute, and an unreadable `--pre-install` script fails the command instead
+  of discarding every other option.
+
+A deep QA pass found these defects. **127 tests pass on the native backend and
+on the Wasm backend** now. The container layout does not change, so a package
+written by 0.1.9 is still read by 0.1.10, and the other way round.
 
 ### What changed in 0.1.9
 
@@ -349,9 +386,10 @@ claims one.
 
 The checks are not warning-free, and the numbers are in the open rather than in
 a footnote: `--target native` reports **2 warnings** (a deprecated call in a
-test, and the one below) and `--target wasm` reports **6** (the same two, plus
-four in the Windows-only icon helpers, which the WebAssembly backend does not
-use). No gate runs with `--deny-warn`, and none of the warnings is an error.
+test, and the one below) and `--target wasm` reports **6** (the same two,
+three in the Windows-only icon helpers, which the WebAssembly backend does not
+use, and one for the UTF-16 import that only the native launcher needs). No
+gate runs with `--deny-warn`, and none of the warnings is an error.
 
 The second warning is the price of the short coordinate, and it is worth naming
 exactly: *"Main package `riantr/LunaPack` uses blackbox-only test inputs
@@ -374,7 +412,7 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.9`
+The release is built by a GitHub workflow when a version tag such as `v0.1.10`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -815,7 +853,15 @@ string.
 `--input-file` is another name for `--input-exe`, and `--output-file` for
 `--output-exe`. A flag that the tool does not know is refused with a message
 that names it and the flags that it does know, so a mistyped flag never
-turns into a command that quietly does something else.
+turns into a command that quietly does something else. The form a Windows
+prompt tends to produce therefore works as written:
+
+```bash
+moonx riantr/LunaPack@latest \
+  --input-file="x64/Release/App.exe" \
+  --output-file="App.exe" \
+  --Files="x64/Release"
+```
 
 The result is a **self-extracting bundle**: the LunaPack launcher with the
 archive appended, exactly the trick a WinRAR or 7-Zip self-extracting archive
@@ -915,6 +961,8 @@ on every platform, Windows included, so the path is the same everywhere.
 
 | Option | Meaning |
 | --- | --- |
+| `--input-file <path>` | another name for `--input-exe` |
+| `--output-file <path>` | another name for `--output-exe` |
 | `--name <name>` | package name (default: input dir / exe name) |
 | `--version <ver>` | package version (default: `0.1.0`) |
 | `--os <os>` | target OS tag (default: detected) |
@@ -924,14 +972,14 @@ on every platform, Windows included, so the path is the same everywhere.
 | `--compression-method <m>` | `none`, `gzip`, `lz4` or `auto` (default: `auto`) |
 | `--launcher <file>` | the launcher of the single file (default: this one) |
 | `--encryption-method <m>` | `x25519` or `passphrase` (default: none) |
-| `--public-key <file>` | the public key of the recipient |
+| `--public-key <file>` | the public key of the recipient, or of the host that signed the package |
 | `--secret-key <file>` | the secret key of the recipient |
 | `--passphrase-file <file>` | the file that holds the passphrase |
 | `--passphrase <text>` | the passphrase itself (visible in the process list) |
 | `--skip-scripts` | unpack without running the install scripts |
 | `--extracted <dir>` | with `verify`: also check the files already in `<dir>` |
-| `--signature <file>` | with `verify`: the signature the host published |
-| `--expected-sha256 <hex>` | with `verify`: the digest the host published |
+| `--signature <file>` | with `verify` or `unpack`: the signature the host published |
+| `--expected-sha256 <hex>` | with `verify` or `unpack`: the digest the host published |
 | `--output <file>` | with `sign`: where the signature is written |
 
 ### A worked example
@@ -1011,7 +1059,8 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **127 tests, 127 passed, 0 failed**.
+native` reports **127 tests, 127 passed, 0 failed**, and `--target wasm`
+reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
 the install-script runner on a Windows host. Without a shell on `PATH` it
@@ -1025,9 +1074,12 @@ exist on any host, so they are the same everywhere: they check that the error
 names the interpreter, and that the temporary script file is removed again when
 the interpreter could not be started.
 
-CI is green on all three runners — Linux, macOS and Windows — because the
-Windows runner has Git for Windows, whose `sh` is on `PATH`. The gap was a
-developer machine without a POSIX shell, not the code.
+CI runs on Linux, macOS and Windows, and the Windows runner has Git for
+Windows, whose `sh` is on `PATH`, so the whole suite runs there. The macOS
+leg is optional — a run that lands while no runner of that kind is free is
+cancelled without failing the run — so a green run is not a claim that the
+macOS leg was scheduled. The gap was a developer machine without a POSIX
+shell, not the code.
 
 The end-to-end suite needs a real POSIX host, because it runs the install
 scripts and checks the permission bits, so CI runs it on the Linux runner. It
