@@ -27,6 +27,12 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # The macOS runner is the scarce one: a run that lands while none of
+    # them is free has its macOS leg cancelled, and a cancelled leg would
+    # otherwise mark the whole run as failed even though nothing is wrong
+    # with the code. The release workflow treats the same leg as optional
+    # for the same reason, and the two must agree.
+    continue-on-error: ${{ matrix.optional || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +41,7 @@ jobs:
             name: Linux
           - os: macos-15
             name: macOS
+            optional: true
           - os: windows-latest
             name: Windows
 
