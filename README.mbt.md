@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.12
+moon add riantr/LunaPack@0.1.13
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.12",
+  "riantr/LunaPack@0.1.13",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.12`, `>=0.1.12`, `0.1` and `v0.1.12` are all rejected. A bare
+`latest`, `^0.1.13`, `>=0.1.13`, `0.1` and `v0.1.13` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -223,6 +223,39 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.13
+
+- **A cache is handed out on what it holds, not on its name.** The payload is
+  unpacked into a folder of its own and moved into the place the next run
+  looks at, and the move was the one step the launcher never looked at: the
+  folder that arrived was named like a complete cache whether all of it
+  arrived or only part of it did. The reported cache held **296 of the 376
+  files** the package carries — the missing 80 were a contiguous tail — with
+  the completion marker in it, and the bundle started the application from
+  it. The application then failed to load `Microsoft.WindowsAppRuntime.dll`,
+  which was one of the files the move had left behind: a
+  `DllNotFoundException` from deep inside an application that has nothing to
+  do with unpacking. The folder is **read back after it arrives** now, and a
+  folder that does not hold what the package carries is removed rather than
+  started. The fall back to a temporary directory — used when no cache can be
+  written next to the executable — is read back in the same way; it checked
+  the main program only, so a sibling library that did not arrive was never
+  noticed, which is the same failure by another road.
+- **The module is MIT.** `LICENSE` carried the Apache-2.0 text and `moon.mod`
+  carried its identifier. Nothing in this package needs the patent grant or
+  the notice file that Apache-2.0 asks for: every primitive is written here
+  rather than taken from another project, so there is no third-party notice
+  to preserve. The license of a published version cannot be changed after the
+  fact, so it takes effect here.
+
+The honest limit of the first one is worth stating. What a unit test can prove
+is that **a folder which does not match the package is not handed out** — that
+is what the test and the mutation that takes the read-back out cover. Whether a
+given host can deliver a folder in part is not something a test reproduces: a
+rename that loses most of its contents is an operating-system event, not a code
+path. The guard is proven by taking it out; the event it guards against is
+argued from the cache that was found, not simulated.
 
 ### What changed in 0.1.12
 
@@ -455,7 +488,7 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.12`
+The release is built by a GitHub workflow when a version tag such as `v0.1.13`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -690,6 +723,7 @@ a different question.
 | HMAC-SHA512 of the manifest | in the integrity block of a sealed package | a manifest that was rewritten by whoever holds the file |
 | The cache is checked on every start | in the launcher | a payload that was changed after it was unpacked |
 | The program is checked before it runs | in the launcher | a program that was changed between the check and the start |
+| The cache is read back after it arrives | in the launcher | a payload that only part of a move delivered |
 | A damaged package is refused | everywhere | a package that was cut short being taken for something else |
 | The paths of the entries are checked | everywhere | a path that writes outside the destination |
 | The package is written in one piece | everywhere | a target that is half a package after a crash |
@@ -1111,7 +1145,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **129 tests, 129 passed, 0 failed**, and `--target wasm`
+native` reports **130 tests, 130 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1182,6 +1216,7 @@ alone, or the guard is not covered by a test at all.
 | the separation of the two roles | the two roles of a pair are separated |
 | the cleanup of the archive of a refused bundle | a refused bundle leaves nothing behind |
 | the warning that tells the two kinds of bundle apart | the two kinds of bundle are told apart |
+| the read-back of the cache after it arrives | a cache that does not hold the payload is not handed out |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -1267,7 +1302,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 129 tests
+moon test                                  # 130 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```

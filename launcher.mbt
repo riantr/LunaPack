@@ -243,7 +243,9 @@ async fn extract_to_cache(
   // The payload is unpacked into a folder of its own and only then does it
   // take the place of the cache. A cache therefore never holds a payload
   // that was only half unpacked, and a payload that was unpacked into the
-  // old cache is gone before the new one is put in its place.
+  // old cache is gone before the new one is put in its place. The folder is
+  // read back once it has arrived, because the move is the one step whose
+  // result is not known here.
   let staging = dir + ".staging"
   remove_dir(staging)
   @fs.mkdir(staging, recursive=true, allow_exist=true, permission=0o700)
@@ -252,13 +254,36 @@ async fn extract_to_cache(
     @fs.write_text(staging + "/.lunapack-complete", "ok")
     remove_dir(dir)
     @fs.rename(staging, dir, replace=true)
-    Some(dir)
+    accept_cache(m, dir)
   } catch {
     _ => {
       remove_dir(staging)
       None
     }
   }
+}
+
+///|
+/// Hand out the folder at `dir` as the cache of `m`, or take it away and say
+/// that there is nothing to hand out.
+///
+/// The step that makes a cache is a move: the payload is unpacked into a
+/// folder of its own and then takes the place of the cache. A move is not
+/// something the launcher can check by having done it, and the folder that
+/// arrives is named like a complete cache whether all of it arrived or only
+/// part of it did. What the launcher used to hand out was therefore the name,
+/// not the payload: a folder that held most of the files started a program
+/// that then failed to load a library it needs, a long way from here.
+///
+/// So the payload is read back from where it landed. A folder that does not
+/// hold what the package carries is removed rather than started, and the cost
+/// of a torn folder becomes a bundle that refuses to start and says why.
+async fn accept_cache(m : Manifest, dir : String) -> String? {
+  if cache_matches(m, dir) {
+    return Some(dir)
+  }
+  remove_dir(dir)
+  None
 }
 
 ///|
@@ -404,11 +429,22 @@ pub async fn try_launch_self_extracting() -> Bool {
     Some(d) => d
     None => {
       // The folder next to the executable is not usable, fall back to a
-      // temporary directory.
+      // temporary directory. What is unpacked there is read back in the same
+      // way, because a payload that did not arrive in full is not something
+      // to start from anywhere.
       let d = @fs.tmpdir(prefix="lunapack")
       eprintln("LunaPack: extracting " + m.main_program + " to " + d)
       extract_to(exe, d, key)
-      d
+      match accept_cache(m, d) {
+        Some(d) => d
+        None => {
+          eprintln(
+            "LunaPack: the payload does not match the package after it was unpacked: refusing to start it",
+          )
+          exit_with(1)
+          return true
+        }
+      }
     }
   }
   let program = dir + "/" + m.main_program

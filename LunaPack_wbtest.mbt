@@ -251,6 +251,35 @@ async test "the cache is only used again when it holds what the package carries"
 }
 
 ///|
+/// A folder that does not hold what the package carries is not handed out as
+/// the cache of that package.
+async test "a cache that does not hold the payload is not handed out" {
+  let src = @fs.tmpdir(prefix="lunapack_accept_src")
+  @fs.write_text(src + "/a.txt", "hello\n")
+  @fs.write_text(src + "/b.txt", "world\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let manifest = read_package_manifest(pkg)
+  let dir = @fs.tmpdir(prefix="lunapack_accept_dir")
+  extract_to(pkg, dir, None)
+  // A folder that holds what the package carries is handed out.
+  assert_true(accept_cache(manifest, dir) is Some(_))
+  // One of the files is gone from the folder, which is what a move that did
+  // not finish leaves behind.
+  @fs.remove(dir + "/b.txt", allow_missing=true)
+  assert_true(accept_cache(manifest, dir) is None)
+  // The folder is taken away rather than left for the next run to trust.
+  assert_true(!@fs.exists(dir))
+}
+
+///|
 /// The program of a bundle is not started when it was changed after it was
 /// unpacked.
 async test "the program of a bundle is checked before it is started" {

@@ -224,5 +224,23 @@ Run-Mutation 'L4 self-extracting' 'pack.mbt' `
   '' '' `
   'the two kinds of bundle are told apart'
 
+# 14. A cache is handed out on its name rather than on what it holds.
+#
+# The folder arrives by a move, and the move is the one step whose result the
+# launcher never looked at: with the read-back taken out, a folder that got
+# only part of the payload is handed out as the cache of the package and the
+# bundled program is started from it. That is what the reported crash was --
+# a program that started and then could not load a library the move had left
+# behind.
+Run-Mutation 'L3 cache handover' 'launcher.mbt' `
+  '  if cache_matches(m, dir) {
+    return Some(dir)
+  }' `
+  '  if true {
+    return Some(dir)
+  }' `
+  '' '' `
+  'a cache that does not hold the payload is not handed out'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short
