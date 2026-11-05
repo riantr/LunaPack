@@ -28,15 +28,23 @@ function Run-Mutation {
   )
   $path = Join-Path $repo $file
   $backup = [System.IO.File]::ReadAllText($path)
-  $text = $backup
+  # The anchors are written in this file with LF endings, and this file keeps
+  # CRLF on disk because `.gitattributes` says a `.ps1` does. The sources it
+  # looks into are LF. A search for one inside the other therefore never
+  # matches, and every anchor that spans more than one line looks as though it
+  # had rotted away. The comparison is done on one ending, and the sources are
+  # written back with LF, which is what they are stored as.
+  $text = $backup -replace "`r`n", "`n"
   foreach ($pair in @(@($old1, $new1), @($old2, $new2))) {
     if ($pair[0] -eq "") { continue }
-    if (-not $text.Contains($pair[0])) {
+    $old = $pair[0] -replace "`r`n", "`n"
+    $new = $pair[1] -replace "`r`n", "`n"
+    if (-not $text.Contains($old)) {
       Write-Output "$label : ANCHOR NOT FOUND in $file"
       [System.IO.File]::WriteAllText($path, $backup, $enc)
       return
     }
-    $text = $text.Replace($pair[0], $pair[1])
+    $text = $text.Replace($old, $new)
   }
   [System.IO.File]::WriteAllText($path, $text, $enc)
   $out = (moon -C $repo test --target native 2>&1) | Out-String

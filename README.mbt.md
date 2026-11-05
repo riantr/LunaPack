@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.11
+moon add riantr/LunaPack@0.1.12
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.11",
+  "riantr/LunaPack@0.1.12",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.11`, `>=0.1.11`, `0.1` and `v0.1.11` are all rejected. A bare
+`latest`, `^0.1.12`, `>=0.1.12`, `0.1` and `v0.1.12` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -223,6 +223,32 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.12
+
+- **A bundle that cannot start says so.** Through `moonx` there is no native
+  launcher, so the application itself becomes the stub: the result holds the
+  whole payload and cannot unpack itself. The warning that said so was printed
+  *before* the summary, where a list of a few hundred checksums hides it, and
+  the command still ended with `bundled N files`. It is the last line now, it
+  names the file, it says that the file carries the payload but no launcher,
+  and it goes to stderr as well as to stdout. This cost a real user an
+  afternoon: a 124 MB file that held every dependency and could not start.
+- **A bundle that is refused leaves nothing behind.** The archive is written
+  before the launcher is looked at, so a launcher that turns out to be missing
+  left `*.lunapack-archive.tmp` in the directory that was asked for the
+  bundle. The cleanup reaches the archive from the moment it is written.
+- **The mutation battery runs on a Windows checkout again.** Its anchors are
+  written with LF endings and `.gitattributes` keeps a `.ps1` on CRLF, so every
+  anchor that spanned more than one line stopped matching and reported
+  `ANCHOR NOT FOUND` — the battery quietly stopped proving anything. The
+  comparison is made on one line ending now.
+
+Failing outright when no launcher is available was the other way to go, and it
+was not taken: the `moonx` flow is documented above, and a payload-only bundle
+is a real deliverable that `unpack` reads. What was wrong was not the
+capability but the way it reported itself. A bundle that is meant to be
+*started* needs `--launcher`.
 
 ### What changed in 0.1.11
 
@@ -429,7 +455,7 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.11`
+The release is built by a GitHub workflow when a version tag such as `v0.1.12`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1085,7 +1111,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **127 tests, 127 passed, 0 failed**, and `--target wasm`
+native` reports **129 tests, 129 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1154,6 +1180,8 @@ alone, or the guard is not covered by a test at all.
 | the check of the paths | a path that walks out of the destination is refused |
 | the signing key of a pair | the signing key of a pair checks a signature made with it |
 | the separation of the two roles | the two roles of a pair are separated |
+| the cleanup of the archive of a refused bundle | a refused bundle leaves nothing behind |
+| the warning that tells the two kinds of bundle apart | the two kinds of bundle are told apart |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -1239,7 +1267,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 127 tests
+moon test                                  # 129 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```
