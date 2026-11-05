@@ -251,6 +251,25 @@ async test "the cache is only used again when it holds what the package carries"
 }
 
 ///|
+/// Only a console that Windows made for this process may be taken away.
+///
+/// A bundle keeps the console subsystem, because a program with no standard
+/// streams at all does not survive the start of the runtime. The console that
+/// comes with it is taken away before a windowed program starts — but only
+/// when it is the console of the bundle and not the terminal the bundle was
+/// started from.
+test "the console of the terminal is not taken away" {
+  // A console of its own: one process on it, and it is this one.
+  assert_true(console_is_ours([4242], 4242))
+  // A terminal: the shell is on that console as well.
+  assert_true(!console_is_ours([4242, 17], 4242))
+  // No console at all.
+  assert_true(!console_is_ours([], 4242))
+  // One process, but not this one.
+  assert_true(!console_is_ours([17], 4242))
+}
+
+///|
 /// A folder that does not hold what the package carries is not handed out as
 /// the cache of that package.
 async test "a cache that does not hold the payload is not handed out" {

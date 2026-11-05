@@ -242,5 +242,23 @@ Run-Mutation 'L3 cache handover' 'launcher.mbt' `
   '' '' `
   'a cache that does not hold the payload is not handed out'
 
+# 15. The console of the terminal is taken away with the console of the
+# bundle.
+#
+# The bundle keeps the console subsystem, so a double-click gives it a console
+# of its own; that one is taken away before a windowed program starts. The
+# console of a terminal is the window the user is typing into, and with the
+# decision taken out of the code the launcher cannot tell the two apart.
+Run-Mutation 'console ownership' 'launcher.mbt' `
+  '  if ids.length() != 1 {
+    return false
+  }
+  ids[0] == own_pid
+}' `
+  '  true
+}' `
+  '' '' `
+  'the console of the terminal is not taken away'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

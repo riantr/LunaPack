@@ -15,9 +15,9 @@ The result is a **self-extracting bundle** — the trick a WinRAR or 7-Zip
 self-extracting archive uses — with three properties the usual archiver does
 not offer: every entry carries a SHA-256 checksum and an MD5 fingerprint, the
 entries can be **encrypted** to a public key or to a passphrase, and the
-produced file **behaves like the program it carries** — its arguments, its exit
-code, its subsystem and its standard streams are the ones of the bundled
-program.
+produced file **behaves like the program it carries** — its arguments and its
+exit code are the ones of the bundled program, and a program that draws a
+window is started without a console window standing next to it.
 
 One container, two front ends: a native binary that is built for the platform
 it runs on, and a WebAssembly build that `moonx` runs from the Mooncakes
@@ -33,10 +33,10 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
   The archive is appended to the LunaPack launcher, so the produced file *is*
   the launcher — and the launcher is the program the user starts. The
   arguments of the bundle are the arguments of the bundled program, the exit
-  code is its exit code, the Windows subsystem is its subsystem (so a windowed
-  program does not flash a console window), and the standard streams are the
-  ones of the bundle. A copy of the executable would not do this; a plain
-  archiver cannot do it at all.
+  code is its exit code, and a bundle that was started by a double-click takes
+  its own console window away before a program that draws a window starts, so
+  the application is alone on the desktop. A copy of the executable would not
+  do this; a plain archiver cannot do it at all.
 
 * Every entry is checksummed, and every entry is fingerprinted
 
@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.13
+moon add riantr/LunaPack@0.1.14
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.13",
+  "riantr/LunaPack@0.1.14",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.13`, `>=0.1.13`, `0.1` and `v0.1.13` are all rejected. A bare
+`latest`, `^0.1.14`, `>=0.1.14`, `0.1` and `v0.1.14` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -223,6 +223,48 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.14
+
+- **A double-clicked bundle of an application with a window starts at all.**
+  `bundle` used to copy the subsystem of the bundled program onto the launcher,
+  so an application that draws a window produced a bundle that says "windowed".
+  A windowed program has **no standard streams at all**, and the MoonBit
+  runtime does not survive that: the process is gone before the first line of
+  `main` runs — no window, no message, and not even a cache folder. That is
+  what every double-clicked bundle of a GUI application did, and it is why the
+  same file worked from a command line (a console was there) and did nothing at
+  all from the desktop. Measured on this machine: the tool's own binary, its
+  subsystem field changed to GUI and nothing else, exits with 1 and writes
+  nothing when it is started with no standard streams; the same bytes started
+  from a console print their usage.
+- **The console the bundle is given is taken away instead.** The bundle keeps
+  the **console subsystem of the launcher**, which is what makes it start, and
+  the launcher takes away the console that comes with it. It asks
+  `GetConsoleProcessList` whether the console has only this process on it — the
+  console of a terminal has the shell on it as well, and that one is never
+  touched, because it is the window the user is typing into — and it does so
+  only for a program whose PE header says it draws a window; a console program
+  keeps the window its output goes to.
+- **The program is started before the console goes away.** `FreeConsole`
+  destroys a console that has no other process on it, and after that the
+  standard handles of the launcher lead nowhere: a spawn that hands them on
+  fails with *"the handle is invalid"*. The launcher therefore starts the
+  program with `CreateProcessW` of its own, keeps the process handle, frees the
+  console, and waits — so the exit code of the bundle is still the exit code of
+  the program, which is the contract the command line depends on.
+- **The subsystem of the launcher is no longer rewritten.** `(windowed)` no
+  longer appears in the summary of `bundle`, and a non-PE input can no longer
+  dictate anything about the bundle. `set_pe_subsystem` and `pe_subsystem_of`
+  are unchanged for library users; the launcher reads the subsystem of the
+  program it starts.
+
+Two limits are worth stating plainly. While the payload is unpacked on the
+first run — **38 s** for the 375 files and 123 MB of the application this was
+reproduced with — the console window is visible and empty, and a warm cache
+starts in **8 s**. And a failure of a double-clicked bundle is silent, because
+the console it would print to is gone by then; a message box for that case is
+not in this release.
 
 ### What changed in 0.1.13
 
@@ -324,8 +366,8 @@ patch release. `moonx riantr/LunaPack@latest` resolves to 0.1.11.
 - **A package cannot turn off its own integrity.** A format 6 package whose
   integrity marker is missing or damaged is refused rather than downgraded to
   "legacy"; real format 5 packages are still read, with a warning. A non-PE
-  file can no longer dictate the subsystem of the bundle, because the PE
-  signature and the header bounds are checked.
+  file can no longer dictate the subsystem the launcher reads, because the PE
+  signature and the header bounds are checked before the field is believed.
 - **Malformed input is damage, not a crash.** The LZ4 decoder checks its
   bounds, caps the expansion of a hostile frame and reads the DictID flag from
   the bit the format assigns to it. Windows install scripts get their bare
@@ -488,7 +530,7 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.13`
+The release is built by a GitHub workflow when a version tag such as `v0.1.14`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -588,8 +630,12 @@ around it.
 
 - The **arguments** of the bundle are the arguments of the bundled program.
 - The **exit code** of the bundle is the exit code of the bundled program.
-- The **subsystem** of the bundle is the subsystem of the bundled program, so a
-  windowed program does not flash a console window when it is started.
+- The bundle keeps the **console subsystem of the launcher**, because a program
+  with no standard streams at all does not survive the start of the runtime on
+  Windows. A bundle that was started by a double-click takes that console away
+  before it starts a program that draws a window, so a windowed program is
+  started without a console window standing next to it, and a console program
+  keeps the window its output goes to.
 - The **standard input, output and error** are the ones of the bundle, so a
   program that asks a question gets an answer.
 
@@ -1145,7 +1191,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **130 tests, 130 passed, 0 failed**, and `--target wasm`
+native` reports **131 tests, 131 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1217,6 +1263,7 @@ alone, or the guard is not covered by a test at all.
 | the cleanup of the archive of a refused bundle | a refused bundle leaves nothing behind |
 | the warning that tells the two kinds of bundle apart | the two kinds of bundle are told apart |
 | the read-back of the cache after it arrives | a cache that does not hold the payload is not handed out |
+| the ownership of the console | the console of the terminal is not taken away |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -1302,7 +1349,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 130 tests
+moon test                                  # 131 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```

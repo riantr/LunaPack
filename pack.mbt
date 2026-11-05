@@ -293,7 +293,6 @@ pub async fn bundle(
   }
   let opts2 = with_main_program(opts, main_name)
   let mut icon_copied = false
-  let mut subsystem_copied = false
   // Build the archive next to the target, then append it to the stub.
   ensure_parent_dir(output_exe)
   let tmp = output_exe + ".lunapack-archive.tmp"
@@ -359,16 +358,17 @@ pub async fn bundle(
       if copy_icon(input_exe, work) {
         icon_copied = true
       }
-      // The bundle has to carry the subsystem of the program it carries:
-      // the bundle is what Windows starts, so a windowed program that is
-      // bundled into a console bundle flashes a console window on every
-      // start.
-      let wanted = pe_subsystem_of(input_exe)
-      if wanted != 0 && set_pe_subsystem(work, wanted) {
-        subsystem_copied = wanted == PE_SUBSYSTEM_GUI
-      }
-      // The stub is hashed now, because the icon and the subsystem have
-      // changed its bytes.
+      // The subsystem of the stub is left alone, and that is deliberate. The
+      // bundle is what Windows starts, so the subsystem it carries is the
+      // subsystem the bundle has -- and a bundle that says "windowed" gets no
+      // console, which is a program with no standard streams at all. The
+      // MoonBit runtime does not survive that: the process is gone before the
+      // first line of `main` runs, with no message and no work done, which is
+      // exactly what a double-clicked bundle did. The stub keeps the console
+      // subsystem it was built with, and the launcher hides the console itself
+      // once it knows there is a windowed program to start.
+      //
+      // The stub is hashed now, because the icon has changed its bytes.
       let stub_size = @fs.file_size(work)
       digest.update(@fs.read_binary(work))
       // Finally append the archive. The stub may have grown by the icon.
@@ -396,8 +396,7 @@ pub async fn bundle(
     m.entries.length().to_string() +
     " files -> " +
     output_exe +
-    (if icon_copied { " (icon copied)" } else { "" }) +
-    (if subsystem_copied { " (windowed)" } else { "" }),
+    (if icon_copied { " (icon copied)" } else { "" }),
   )
   report_md5(output_exe, digest.finish())
   // The warning is the last thing that is printed, and it goes to stderr as

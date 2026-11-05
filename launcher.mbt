@@ -124,6 +124,231 @@ extern "C" fn get_module_filename(
 ) -> Int32 = "GetModuleFileNameW"
 
 ///|
+/// `GetCurrentProcessId()`.
+#cfg(all(target="native", platform="windows"))
+extern "C" fn get_current_process_id() -> Int32 = "GetCurrentProcessId"
+
+///|
+/// `GetConsoleProcessList(LPDWORD, DWORD)`.
+#cfg(all(target="native", platform="windows"))
+#borrow(buf)
+extern "C" fn get_console_process_list(buf : Bytes, slots : Int32) -> Int32 = "GetConsoleProcessList"
+
+///|
+/// `CreateProcessW(...)`: the command line and the working directory are
+/// UTF-16 with a terminator, and the last two buffers are written by the call.
+#cfg(all(target="native", platform="windows"))
+#borrow(command, cwd, startup, info)
+extern "C" fn create_process_w(
+  application : Int64,
+  command : Bytes,
+  process_attr : Int64,
+  thread_attr : Int64,
+  inherit_handles : Int32,
+  flags : Int32,
+  environment : Int64,
+  cwd : Bytes,
+  startup : Bytes,
+  info : Bytes,
+) -> Int32 = "CreateProcessW"
+
+///|
+/// `WaitForSingleObject(HANDLE, DWORD)`.
+#cfg(all(target="native", platform="windows"))
+extern "C" fn wait_for_single_object(
+  handle : Int64,
+  milliseconds : Int32,
+) -> Int32 = "WaitForSingleObject"
+
+///|
+/// `GetExitCodeProcess(HANDLE, LPDWORD)`.
+#cfg(all(target="native", platform="windows"))
+#borrow(code)
+extern "C" fn get_exit_code_process(handle : Int64, code : Bytes) -> Int32 = "GetExitCodeProcess"
+
+///|
+/// `CloseHandle(HANDLE)`.
+#cfg(all(target="native", platform="windows"))
+extern "C" fn close_handle(handle : Int64) -> Int32 = "CloseHandle"
+
+///|
+/// `FreeConsole()`.
+#cfg(all(target="native", platform="windows"))
+extern "C" fn free_console() -> Int32 = "FreeConsole"
+
+///|
+/// The size of `STARTUPINFOW`, which is what its `cb` field has to say.
+#cfg(all(target="native", platform="windows"))
+const STARTUPINFO_SIZE : Int32 = 104
+
+///|
+/// `INFINITE`: wait for as long as the program runs.
+#cfg(all(target="native", platform="windows"))
+const INFINITE : Int32 = -1
+
+///|
+/// Is the console this process is attached to one that Windows made for it?
+///
+/// `GetConsoleProcessList` lists every process attached to the console. A
+/// program started from a terminal shares the terminal's console with the
+/// shell, so the list holds more than one process; a program started by a
+/// double-click is given a console of its own and is alone on it. Only the
+/// second kind may be taken away — the first kind is the window the user is
+/// typing into.
+fn console_is_ours(ids : Array[Int32], own_pid : Int32) -> Bool {
+  if ids.length() != 1 {
+    return false
+  }
+  ids[0] == own_pid
+}
+
+///|
+/// Start the program of the bundle and take the console away, when the console
+/// is the one Windows made for this bundle and the program has a window.
+///
+/// Returns the exit code of the program when it was started here, and `None`
+/// when the caller should start it the ordinary way.
+///
+/// The bundle keeps the console subsystem of the launcher, and that is not a
+/// detail: a program with no standard streams at all does not survive the
+/// start of the MoonBit runtime — it is gone before the first line of `main`
+/// runs — so a bundle that says "windowed" cannot be started at all. That is
+/// what every double-clicked bundle of an application with a window did, and
+/// the leak of it was that nothing at all happened: no window, no message, no
+/// cache folder.
+///
+/// The console that comes with the console subsystem is taken away instead. It
+/// belongs to the bundle when the bundle was double-clicked, and the window
+/// would otherwise stand next to the application for as long as the application
+/// runs, because a launcher waits for the program it started.
+///
+/// The program is started before the console goes away, and with a call of its
+/// own rather than through the process API of the runtime: after `FreeConsole`
+/// the console handles this process held no longer lead anywhere, and a spawn
+/// that hands them on fails with "the handle is invalid". Nothing that has to
+/// do with strings or files happens after the console is gone — the command
+/// line and the working directory are built first, and the rest is three
+/// Windows calls.
+#cfg(all(target="native", platform="windows"))
+async fn start_without_console(
+  program : String,
+  args : Array[String],
+  dir : String,
+) -> Int32? {
+  let slots = 16
+  let buf = Bytes::make(slots * 4, b'\x00')
+  let n = get_console_process_list(buf, slots)
+  if n <= 0 {
+    return None
+  }
+  let ids : Array[Int32] = []
+  let mut i = 0
+  while i < n && i < slots {
+    ids.push(u32_at(buf, i.to_int64() * 4L).to_int())
+    i = i + 1
+  }
+  if !console_is_ours(ids, get_current_process_id()) {
+    return None
+  }
+  // A console program keeps its console: that window is where its output goes,
+  // and taking it away would make the bundle say nothing at all.
+  if pe_subsystem_of(program) != PE_SUBSYSTEM_GUI {
+    return None
+  }
+  let command = wide_terminated(quoted_command_line(program, args))
+  let cwd = wide_terminated(dir)
+  let startup = startup_info()
+  let info = Bytes::make(24, b'\x00')
+  let started = create_process_w(
+    0L, command, 0L, 0L, 0, 0, 0L, cwd, startup, info,
+  )
+  if started == 0 {
+    return None
+  }
+  free_console() |> ignore
+  let process = i64_at(info, 0)
+  let thread = i64_at(info, 8)
+  wait_for_single_object(process, INFINITE) |> ignore
+  let code = Bytes::make(4, b'\x00')
+  get_exit_code_process(process, code) |> ignore
+  close_handle(process) |> ignore
+  close_handle(thread) |> ignore
+  Some(u32_at(code, 0L).to_int())
+}
+
+///|
+/// Nothing to do: on every other platform a console belongs to the terminal the
+/// program was started from, and a bundle started from a desktop entry has none
+/// at all.
+#cfg(not(all(target="native", platform="windows")))
+async fn start_without_console(
+  program : String,
+  args : Array[String],
+  dir : String,
+) -> Int32? {
+  None
+}
+
+///|
+/// The command line of the program, with the program and every argument in
+/// quotes.
+///
+/// An argument that carries a quote of its own is not escaped here: the quotes
+/// are what keeps a path with a space in one piece, which is the case a bundle
+/// meets.
+#cfg(all(target="native", platform="windows"))
+fn quoted_command_line(program : String, args : Array[String]) -> String {
+  let mut line = "\"" + program + "\""
+  let mut i = 0
+  while i < args.length() {
+    line = line + " \"" + args[i] + "\""
+    i = i + 1
+  }
+  line
+}
+
+///|
+/// A string as UTF-16 with a terminator, which is what the `W` calls read.
+#cfg(all(target="native", platform="windows"))
+fn wide_terminated(s : String) -> Bytes {
+  let units = @utf16.encode(s)
+  let out : Array[Byte] = []
+  let mut i = 0
+  while i < units.length() {
+    out.push(units.at(i))
+    i = i + 1
+  }
+  out.push(b'\x00')
+  out.push(b'\x00')
+  Bytes::from_array(out)
+}
+
+///|
+/// A `STARTUPINFOW` with its size filled in and everything else zero.
+#cfg(all(target="native", platform="windows"))
+fn startup_info() -> Bytes {
+  let bytes = FixedArray::make(STARTUPINFO_SIZE, b'\x00')
+  bytes[0] = (STARTUPINFO_SIZE & 0xff).to_byte()
+  bytes[1] = ((STARTUPINFO_SIZE >> 8) & 0xff).to_byte()
+  bytes[2] = ((STARTUPINFO_SIZE >> 16) & 0xff).to_byte()
+  bytes[3] = ((STARTUPINFO_SIZE >> 24) & 0xff).to_byte()
+  Bytes::from_array(bytes[:])
+}
+
+///|
+/// The integer of eight bytes at `at`, little endian.
+#cfg(all(target="native", platform="windows"))
+fn i64_at(data : Bytes, at : Int32) -> Int64 {
+  let mut v = 0L
+  let mut i = 7
+  while i >= 0 {
+    v = (v << 8) | data.at(at + i).to_int().to_int64()
+    i = i - 1
+  }
+  v
+}
+
+///|
 /// Does the path look absolute?
 fn is_absolute(p : String) -> Bool {
   if p.has_prefix("/") {
@@ -461,14 +686,24 @@ pub async fn try_launch_self_extracting() -> Bool {
   eprintln("LunaPack: starting " + program)
   // The arguments of the bundle belong to the bundled program.
   let args = bundled_arguments()
-  let code = try {
-    let r = @process.run(program, args, cwd=dir)
-    r.exit_code
-  } catch {
-    err => {
-      eprintln("LunaPack: cannot start " + program + ": " + err.to_string())
-      1
-    }
+  // A bundle that was started by a double-click has a console of its own, and
+  // the program about to start draws its own window. That console is taken
+  // away while the program runs, and the program is started by the same call,
+  // so the ordinary way is only the fall back: a terminal keeps the console
+  // the user is typing into, and a console program keeps the window its output
+  // goes to.
+  let code = match start_without_console(program, args, dir) {
+    Some(code) => code
+    None =>
+      try {
+        let r = @process.run(program, args, cwd=dir)
+        r.exit_code
+      } catch {
+        err => {
+          eprintln("LunaPack: cannot start " + program + ": " + err.to_string())
+          1
+        }
+      }
   }
   // The exit code of the bundle is the exit code of the program it
   // carries, so that a script that starts the bundle sees it.
