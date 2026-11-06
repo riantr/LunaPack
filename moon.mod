@@ -3,13 +3,13 @@
 
 name = "riantr/LunaPack"
 
-version = "0.1.11"
+version = "0.1.14"
 
 readme = "README.mbt.md"
 
 repository = "https://github.com/riantr/LunaPack"
 
-license = "Apache-2.0"
+license = "MIT"
 
 keywords = [ "packaging", "distribution", "cli" ]
 

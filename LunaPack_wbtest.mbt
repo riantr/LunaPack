@@ -251,6 +251,87 @@ async test "the cache is only used again when it holds what the package carries"
 }
 
 ///|
+/// The progress bar tells the truth about what is left.
+test "the progress bar tells the truth about what is left" {
+  // Nothing done, half done, everything done.
+  assert_eq(percent_done(0L, 200L), 0)
+  assert_eq(percent_done(100L, 200L), 50)
+  assert_eq(percent_done(200L, 200L), 100)
+  // More than everything is still 100, and nothing to do is done.
+  assert_eq(percent_done(300L, 200L), 100)
+  assert_eq(percent_done(0L, 0L), 100)
+  // A bar of ten cells is ten cells, whatever it says.
+  assert_eq(progress_bar(0, 10).length(), 10)
+  assert_eq(progress_bar(100, 10).length(), 10)
+  assert_eq(progress_bar(50, 10), "#####-----")
+  // The line is what the numbers say it is.
+  assert_eq(
+    progress_line(3, 12, 3145728L, 12582912L, "a.txt", 20),
+    "[#####---------------] 25%  3/12 files  3.0/12.0 MB  a.txt",
+  )
+  // A name a console cannot show is left out rather than guessed at.
+  assert_eq(
+    progress_line(1, 1, 1L, 1L, "文件.txt", 10),
+    "[##########] 100%  1/1 files  0.0/0.0 MB",
+  )
+  assert_true(is_ascii("a.txt"))
+  assert_true(!is_ascii("文件.txt"))
+  // Every line is the same width, which is what lets it be rewritten in place.
+  assert_eq(fit_line("x", 8), "x       ")
+  assert_eq(fit_line("0123456789", 4), "0123")
+  // Nothing to count is not a bar of one file.
+  assert_eq(total_bytes_of([]), 0L)
+}
+
+///|
+/// Only a console that Windows made for this process may be taken away.
+///
+/// A bundle keeps the console subsystem, because a program with no standard
+/// streams at all does not survive the start of the runtime. The console that
+/// comes with it is taken away before a windowed program starts — but only
+/// when it is the console of the bundle and not the terminal the bundle was
+/// started from.
+test "the console of the terminal is not taken away" {
+  // A console of its own: one process on it, and it is this one.
+  assert_true(console_is_ours([4242], 4242))
+  // A terminal: the shell is on that console as well.
+  assert_true(!console_is_ours([4242, 17], 4242))
+  // No console at all.
+  assert_true(!console_is_ours([], 4242))
+  // One process, but not this one.
+  assert_true(!console_is_ours([17], 4242))
+}
+
+///|
+/// A folder that does not hold what the package carries is not handed out as
+/// the cache of that package.
+async test "a cache that does not hold the payload is not handed out" {
+  let src = @fs.tmpdir(prefix="lunapack_accept_src")
+  @fs.write_text(src + "/a.txt", "hello\n")
+  @fs.write_text(src + "/b.txt", "world\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let manifest = read_package_manifest(pkg)
+  let dir = @fs.tmpdir(prefix="lunapack_accept_dir")
+  extract_to(pkg, dir, None)
+  // A folder that holds what the package carries is handed out.
+  assert_true(accept_cache_reporting(manifest, dir, None) is Some(_))
+  // One of the files is gone from the folder, which is what a move that did
+  // not finish leaves behind.
+  @fs.remove(dir + "/b.txt", allow_missing=true)
+  assert_true(accept_cache_reporting(manifest, dir, None) is None)
+  // The folder is taken away rather than left for the next run to trust.
+  assert_true(!@fs.exists(dir))
+}
+
+///|
 /// The program of a bundle is not started when it was changed after it was
 /// unpacked.
 async test "the program of a bundle is checked before it is started" {

@@ -15,9 +15,9 @@ The result is a **self-extracting bundle** — the trick a WinRAR or 7-Zip
 self-extracting archive uses — with three properties the usual archiver does
 not offer: every entry carries a SHA-256 checksum and an MD5 fingerprint, the
 entries can be **encrypted** to a public key or to a passphrase, and the
-produced file **behaves like the program it carries** — its arguments, its exit
-code, its subsystem and its standard streams are the ones of the bundled
-program.
+produced file **behaves like the program it carries** — its arguments and its
+exit code are the ones of the bundled program, and a program that draws a
+window is started without a console window standing next to it.
 
 One container, two front ends: a native binary that is built for the platform
 it runs on, and a WebAssembly build that `moonx` runs from the Mooncakes
@@ -33,10 +33,10 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
   The archive is appended to the LunaPack launcher, so the produced file *is*
   the launcher — and the launcher is the program the user starts. The
   arguments of the bundle are the arguments of the bundled program, the exit
-  code is its exit code, the Windows subsystem is its subsystem (so a windowed
-  program does not flash a console window), and the standard streams are the
-  ones of the bundle. A copy of the executable would not do this; a plain
-  archiver cannot do it at all.
+  code is its exit code, and a bundle that was started by a double-click takes
+  its own console window away before a program that draws a window starts, so
+  the application is alone on the desktop. A copy of the executable would not
+  do this; a plain archiver cannot do it at all.
 
 * Every entry is checksummed, and every entry is fingerprinted
 
@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.11
+moon add riantr/LunaPack@0.1.14
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.11",
+  "riantr/LunaPack@0.1.14",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.11`, `>=0.1.11`, `0.1` and `v0.1.11` are all rejected. A bare
+`latest`, `^0.1.14`, `>=0.1.14`, `0.1` and `v0.1.14` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -223,6 +223,107 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.14
+
+- **A double-clicked bundle of an application with a window starts at all.**
+  `bundle` used to copy the subsystem of the bundled program onto the launcher,
+  so an application that draws a window produced a bundle that says "windowed".
+  A windowed program has **no standard streams at all**, and the MoonBit
+  runtime does not survive that: the process is gone before the first line of
+  `main` runs — no window, no message, and not even a cache folder. That is
+  what every double-clicked bundle of a GUI application did, and it is why the
+  same file worked from a command line (a console was there) and did nothing at
+  all from the desktop. Measured on this machine: the tool's own binary, its
+  subsystem field changed to GUI and nothing else, exits with 1 and writes
+  nothing when it is started with no standard streams; the same bytes started
+  from a console print their usage.
+- **The console the bundle is given is taken away instead.** The bundle keeps
+  the **console subsystem of the launcher**, which is what makes it start, and
+  the launcher takes away the console that comes with it. It asks
+  `GetConsoleProcessList` whether the console has only this process on it — the
+  console of a terminal has the shell on it as well, and that one is never
+  touched, because it is the window the user is typing into — and it does so
+  only for a program whose PE header says it draws a window; a console program
+  keeps the window its output goes to.
+- **The program is started before the console goes away.** `FreeConsole`
+  destroys a console that has no other process on it, and after that the
+  standard handles of the launcher lead nowhere: a spawn that hands them on
+  fails with *"the handle is invalid"*. The launcher therefore starts the
+  program with `CreateProcessW` of its own, keeps the process handle, frees the
+  console, and waits — so the exit code of the bundle is still the exit code of
+  the program, which is the contract the command line depends on.
+- **The subsystem of the launcher is no longer rewritten.** `(windowed)` no
+  longer appears in the summary of `bundle`, and a non-PE input can no longer
+  dictate anything about the bundle. `set_pe_subsystem` and `pe_subsystem_of`
+  are unchanged for library users; the launcher reads the subsystem of the
+  program it starts.
+
+Two limits are worth stating plainly. While the payload is unpacked on the
+first run — **38 s** for the 375 files and 123 MB of the application this was
+reproduced with — the console window is visible and empty, and a warm cache
+starts in **8 s**. And a failure of a double-clicked bundle is silent, because
+the console it would print to is gone by then; a message box for that case is
+not in this release.
+
+### What changed in 0.1.13
+
+- **A cache is handed out on what it holds, not on its name.** The payload is
+  unpacked into a folder of its own and moved into the place the next run
+  looks at, and the move was the one step the launcher never looked at: the
+  folder that arrived was named like a complete cache whether all of it
+  arrived or only part of it did. The reported cache held **296 of the 376
+  files** the package carries — the missing 80 were a contiguous tail — with
+  the completion marker in it, and the bundle started the application from
+  it. The application then failed to load `Microsoft.WindowsAppRuntime.dll`,
+  which was one of the files the move had left behind: a
+  `DllNotFoundException` from deep inside an application that has nothing to
+  do with unpacking. The folder is **read back after it arrives** now, and a
+  folder that does not hold what the package carries is removed rather than
+  started. The fall back to a temporary directory — used when no cache can be
+  written next to the executable — is read back in the same way; it checked
+  the main program only, so a sibling library that did not arrive was never
+  noticed, which is the same failure by another road.
+- **The module is MIT.** `LICENSE` carried the Apache-2.0 text and `moon.mod`
+  carried its identifier. Nothing in this package needs the patent grant or
+  the notice file that Apache-2.0 asks for: every primitive is written here
+  rather than taken from another project, so there is no third-party notice
+  to preserve. The license of a published version cannot be changed after the
+  fact, so it takes effect here.
+
+The honest limit of the first one is worth stating. What a unit test can prove
+is that **a folder which does not match the package is not handed out** — that
+is what the test and the mutation that takes the read-back out cover. Whether a
+given host can deliver a folder in part is not something a test reproduces: a
+rename that loses most of its contents is an operating-system event, not a code
+path. The guard is proven by taking it out; the event it guards against is
+argued from the cache that was found, not simulated.
+
+### What changed in 0.1.12
+
+- **A bundle that cannot start says so.** Through `moonx` there is no native
+  launcher, so the application itself becomes the stub: the result holds the
+  whole payload and cannot unpack itself. The warning that said so was printed
+  *before* the summary, where a list of a few hundred checksums hides it, and
+  the command still ended with `bundled N files`. It is the last line now, it
+  names the file, it says that the file carries the payload but no launcher,
+  and it goes to stderr as well as to stdout. This cost a real user an
+  afternoon: a 124 MB file that held every dependency and could not start.
+- **A bundle that is refused leaves nothing behind.** The archive is written
+  before the launcher is looked at, so a launcher that turns out to be missing
+  left `*.lunapack-archive.tmp` in the directory that was asked for the
+  bundle. The cleanup reaches the archive from the moment it is written.
+- **The mutation battery runs on a Windows checkout again.** Its anchors are
+  written with LF endings and `.gitattributes` keeps a `.ps1` on CRLF, so every
+  anchor that spanned more than one line stopped matching and reported
+  `ANCHOR NOT FOUND` — the battery quietly stopped proving anything. The
+  comparison is made on one line ending now.
+
+Failing outright when no launcher is available was the other way to go, and it
+was not taken: the `moonx` flow is documented above, and a payload-only bundle
+is a real deliverable that `unpack` reads. What was wrong was not the
+capability but the way it reported itself. A bundle that is meant to be
+*started* needs `--launcher`.
 
 ### What changed in 0.1.11
 
@@ -265,8 +366,8 @@ patch release. `moonx riantr/LunaPack@latest` resolves to 0.1.11.
 - **A package cannot turn off its own integrity.** A format 6 package whose
   integrity marker is missing or damaged is refused rather than downgraded to
   "legacy"; real format 5 packages are still read, with a warning. A non-PE
-  file can no longer dictate the subsystem of the bundle, because the PE
-  signature and the header bounds are checked.
+  file can no longer dictate the subsystem the launcher reads, because the PE
+  signature and the header bounds are checked before the field is believed.
 - **Malformed input is damage, not a crash.** The LZ4 decoder checks its
   bounds, caps the expansion of a hostile frame and reads the DictID flag from
   the bit the format assigns to it. Windows install scripts get their bare
@@ -429,7 +530,7 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.11`
+The release is built by a GitHub workflow when a version tag such as `v0.1.14`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -512,6 +613,15 @@ launcher of that operating system is named, and the bundle runs there.
 > LunaPack always produces a self-extracting file. A bundle produced through
 > `moonx` runs on WebAssembly and has no native binary of its own, so it needs
 > one named with `--launcher` — see above.
+>
+> Without one, `moonx` still writes a file that holds the whole payload, and
+> that file **does not start on its own**: starting it runs the bundled
+> program with none of its files unpacked next to it, which for most programs
+> means it fails at once. The two files look identical from the outside —
+> same name, same size, a whole payload inside — so the last line that the
+> command prints says which of the two was made, and it also goes to stderr.
+> A bundle that is only meant to carry a payload can be unpacked with
+> `lunapack unpack`; a bundle that is meant to be started needs the launcher.
 
 ### A single file that behaves like the program
 
@@ -520,8 +630,12 @@ around it.
 
 - The **arguments** of the bundle are the arguments of the bundled program.
 - The **exit code** of the bundle is the exit code of the bundled program.
-- The **subsystem** of the bundle is the subsystem of the bundled program, so a
-  windowed program does not flash a console window when it is started.
+- The bundle keeps the **console subsystem of the launcher**, because a program
+  with no standard streams at all does not survive the start of the runtime on
+  Windows. A bundle that was started by a double-click takes that console away
+  before it starts a program that draws a window, so a windowed program is
+  started without a console window standing next to it, and a console program
+  keeps the window its output goes to.
 - The **standard input, output and error** are the ones of the bundle, so a
   program that asks a question gets an answer.
 
@@ -655,6 +769,7 @@ a different question.
 | HMAC-SHA512 of the manifest | in the integrity block of a sealed package | a manifest that was rewritten by whoever holds the file |
 | The cache is checked on every start | in the launcher | a payload that was changed after it was unpacked |
 | The program is checked before it runs | in the launcher | a program that was changed between the check and the start |
+| The cache is read back after it arrives | in the launcher | a payload that only part of a move delivered |
 | A damaged package is refused | everywhere | a package that was cut short being taken for something else |
 | The paths of the entries are checked | everywhere | a path that writes outside the destination |
 | The package is written in one piece | everywhere | a target that is half a package after a crash |
@@ -1076,7 +1191,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **127 tests, 127 passed, 0 failed**, and `--target wasm`
+native` reports **131 tests, 131 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1145,6 +1260,10 @@ alone, or the guard is not covered by a test at all.
 | the check of the paths | a path that walks out of the destination is refused |
 | the signing key of a pair | the signing key of a pair checks a signature made with it |
 | the separation of the two roles | the two roles of a pair are separated |
+| the cleanup of the archive of a refused bundle | a refused bundle leaves nothing behind |
+| the warning that tells the two kinds of bundle apart | the two kinds of bundle are told apart |
+| the read-back of the cache after it arrives | a cache that does not hold the payload is not handed out |
+| the ownership of the console | the console of the terminal is not taken away |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -1230,7 +1349,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 127 tests
+moon test                                  # 131 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```
@@ -1342,7 +1461,7 @@ cannot be named.
 
 ## Attribution
 
-- License: Apache-2.0 (see `LICENSE`).
+- License: MIT (see `LICENSE`).
 - The mechanism of the encryption and the shape of the container follow the
   reference implementation this package follows. Every primitive it needs is
   implemented in this package, because the MoonBit toolchain ships none of

@@ -293,10 +293,16 @@ pub async fn bundle(
   }
   let opts2 = with_main_program(opts, main_name)
   let mut icon_copied = false
-  let mut subsystem_copied = false
   // Build the archive next to the target, then append it to the stub.
   ensure_parent_dir(output_exe)
   let tmp = output_exe + ".lunapack-archive.tmp"
+  @fs.remove(tmp, allow_missing=true)
+  // The archive is written before the launcher is looked at, so the cleanup
+  // has to reach it from that point on: a launcher that turns out to be
+  // missing leaves the archive behind otherwise, and a directory that keeps
+  // a file from a bundle that was never made is exactly the mess the
+  // write-in-one-piece rule exists to prevent.
+  errdefer @fs.remove(tmp, allow_missing=true)
   let m = write_archive(items, tmp, opts2, None)
   // The stub that makes the result runnable is a LunaPack executable:
   // starting it notices the appended archive, extracts the payload and
@@ -332,6 +338,10 @@ pub async fn bundle(
   // place of the target only when it is whole.
   errdefer @fs.remove(work, allow_missing=true)
   let digest = Md5::Md5()
+  // Whether the result can start on its own. A bundle that carries no
+  // launcher still holds the payload, but starting it runs the bundled
+  // program with none of its files unpacked next to it.
+  let mut self_extracting = true
   match stub {
     Some(s) => {
       // Write the launcher stub first and close it again: the icon is
@@ -348,16 +358,17 @@ pub async fn bundle(
       if copy_icon(input_exe, work) {
         icon_copied = true
       }
-      // The bundle has to carry the subsystem of the program it carries:
-      // the bundle is what Windows starts, so a windowed program that is
-      // bundled into a console bundle flashes a console window on every
-      // start.
-      let wanted = pe_subsystem_of(input_exe)
-      if wanted != 0 && set_pe_subsystem(work, wanted) {
-        subsystem_copied = wanted == PE_SUBSYSTEM_GUI
-      }
-      // The stub is hashed now, because the icon and the subsystem have
-      // changed its bytes.
+      // The subsystem of the stub is left alone, and that is deliberate. The
+      // bundle is what Windows starts, so the subsystem it carries is the
+      // subsystem the bundle has -- and a bundle that says "windowed" gets no
+      // console, which is a program with no standard streams at all. The
+      // MoonBit runtime does not survive that: the process is gone before the
+      // first line of `main` runs, with no message and no work done, which is
+      // exactly what a double-clicked bundle did. The stub keeps the console
+      // subsystem it was built with, and the launcher hides the console itself
+      // once it knows there is a windowed program to start.
+      //
+      // The stub is hashed now, because the icon has changed its bytes.
       let stub_size = @fs.file_size(work)
       digest.update(@fs.read_binary(work))
       // Finally append the archive. The stub may have grown by the icon.
@@ -370,12 +381,7 @@ pub async fn bundle(
       // application executable itself carries the archive. The result still
       // holds the payload, but it cannot extract itself, so it has to be
       // unpacked with `lunapack unpack`.
-      println(
-        "warning: no native launcher available, the bundle will not extract itself",
-      )
-      println(
-        "hint: name one with --launcher <file> to get a file that starts on its own",
-      )
+      self_extracting = false
       let out = @fs.create(work, allow_existing=true, permission=0o644)
       defer out.close()
       append_file(out, input_exe, 0, Some(digest))
@@ -390,8 +396,32 @@ pub async fn bundle(
     m.entries.length().to_string() +
     " files -> " +
     output_exe +
-    (if icon_copied { " (icon copied)" } else { "" }) +
-    (if subsystem_copied { " (windowed)" } else { "" }),
+    (if icon_copied { " (icon copied)" } else { "" }),
   )
   report_md5(output_exe, digest.finish())
+  // The warning is the last thing that is printed, and it goes to stderr as
+  // well as to stdout. A bundle that cannot start on its own looks exactly
+  // like one that can -- same name, same size, a whole payload inside -- and
+  // the one hint that told the two apart used to be printed before the
+  // summary, where a list of a few hundred checksums hides it.
+  if !self_extracting {
+    let message = not_self_extracting_message(output_exe)
+    eprintln("warning: " + message)
+    eprintln(
+      "hint: make it again with --launcher <a native lunapack executable> to get a file that starts on its own",
+    )
+    println("warning: " + message)
+  }
+}
+
+///|
+/// The message that says that a bundle cannot start on its own.
+///
+/// A bundle that carries no launcher holds the payload but nothing that
+/// unpacks it, so starting it runs the bundled program with none of its
+/// files next to it. That is not a bundle that "was made": it is a file that
+/// looks exactly like one and does not work, and the message is the whole of
+/// what tells the two apart.
+pub fn not_self_extracting_message(output : String) -> String {
+  output + " does not start on its own: it carries the payload but no launcher"
 }

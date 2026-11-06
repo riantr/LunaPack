@@ -18,19 +18,22 @@ pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; exit 1; }
 section() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 
-# A command that is expected to fail cannot be the left side of a pipeline.
-# LunaPack now exits with 1 on a failure, and `pipefail` would make the whole
-# pipeline fail even when grep found the message we are looking for. Run the
-# command on its own, keep its output, and check both the exit status and the
-# message.
-expect_failure() {
-  local marker="$1"
+# Did the command say this?
+#
+# `"$cmd" | grep -q pattern` cannot answer that for a command that is meant to
+# fail. The command exits non-zero by design, and `set -o pipefail` makes the
+# whole pipeline exit with it, so the `if` is false even when the pattern
+# matched. `grep -q` also stops reading as soon as it matches, which can kill
+# the writer with SIGPIPE and fail the pipeline for a second, unrelated reason.
+# The assertion then depends on whether `grep` read everything before the
+# command finished, which is a race: the same binary passed here and failed on
+# the runner.
+said() {
+  local pattern="$1"
   shift
-  local out="$WORK_DIR/expect_failure.txt"
-  if "$@" > "$out" 2>&1; then
-    return 1
-  fi
-  grep -qF -- "$marker" "$out"
+  local output
+  output=$("$@" 2>&1) || true
+  printf '%s\n' "$output" | grep -q "$pattern"
 }
 
 section "environment"
@@ -162,11 +165,21 @@ cmp "$WORK_DIR/launcher" "$WORK_DIR/head.bin" \
 pass "a named launcher is used"
 
 # A launcher that does not exist is refused.
-if expect_failure "error:" "$BIN" bundle -i "$WORK_DIR/myapp" \
-     -o "$WORK_DIR/dist/myapp4" --launcher "$WORK_DIR/nothing-here"; then
+if said "error:" "$BIN" bundle -i "$WORK_DIR/myapp" -o "$WORK_DIR/dist/myapp4" \
+     --launcher "$WORK_DIR/nothing-here"; then
   pass "a launcher that does not exist is refused"
 else
   fail "a launcher that does not exist was NOT refused"
+fi
+
+# A bundle that was refused leaves nothing behind. The archive is written
+# before the launcher is looked at, so the cleanup has to reach it too: a
+# directory that keeps a file from a bundle that was never made is the mess
+# the write-in-one-piece rule exists to prevent.
+if ls "$WORK_DIR/dist/" | grep -q 'lunapack-archive\.tmp'; then
+  fail "a refused bundle left its archive behind"
+else
+  pass "a refused bundle leaves nothing behind"
 fi
 pass "bundle round-trips byte-identically"
 
@@ -206,8 +219,7 @@ pass "unpack verified the fingerprints"
 
 # A file that changed on the disk is reported.
 printf 'tampered\n' > "$WORK_DIR/fp_out/hello.txt"
-if expect_failure "VERIFY FAILED" "$BIN" verify "$WORK_DIR/fp.appkg" \
-     --extracted "$WORK_DIR/fp_out"; then
+if said "VERIFY FAILED" "$BIN" verify "$WORK_DIR/fp.appkg" --extracted "$WORK_DIR/fp_out"; then
   pass "a changed file is reported"
 else
   fail "a changed file was NOT reported"
@@ -248,8 +260,8 @@ pass "the content is not readable in the package"
 
 # Another secret key does not open it.
 "$BIN" keygen --public-key "$WORK_DIR/other.pub" --secret-key "$WORK_DIR/other.key" > /dev/null
-if expect_failure "error:" "$BIN" unpack -i "$WORK_DIR/secret.appkg" \
-  -o "$WORK_DIR/secret_out2" --secret-key "$WORK_DIR/other.key"; then
+if said "error:" "$BIN" unpack -i "$WORK_DIR/secret.appkg" -o "$WORK_DIR/secret_out2" \
+  --secret-key "$WORK_DIR/other.key"; then
   pass "a wrong secret key is refused"
 else
   fail "a wrong secret key was NOT refused"
@@ -302,7 +314,7 @@ for e in m["entries"]:
         break
 open(p, "wb").write(d)
 PY
-if expect_failure "VERIFY FAILED" "$BIN" verify "$WORK_DIR/bad.appkg"; then
+if said "VERIFY FAILED" "$BIN" verify "$WORK_DIR/bad.appkg"; then
   pass "corrupted package is rejected"
 else
   fail "corrupted package was NOT rejected"
@@ -331,7 +343,7 @@ manifest[at:at + len(old)] = new
 d[base + moff: base + moff + mlen] = manifest
 open(p, "wb").write(d)
 PY
-if expect_failure "error:" "$BIN" verify "$WORK_DIR/manifest_bad.appkg"; then
+if said "error:" "$BIN" verify "$WORK_DIR/manifest_bad.appkg"; then
   pass "a manifest that was changed is refused"
 else
   fail "a manifest that was changed was NOT refused"
@@ -366,8 +378,7 @@ d[at:at + 32] = digest
 d[base + moff: base + moff + mlen] = manifest
 open(p, "wb").write(d)
 PY
-if expect_failure "error:" "$BIN" verify "$WORK_DIR/secret_bad.appkg" \
-   --secret-key "$WORK_DIR/recipient.key"; then
+if said "error:" "$BIN" verify "$WORK_DIR/secret_bad.appkg" --secret-key "$WORK_DIR/recipient.key"; then
   pass "a sealed manifest that was changed is refused"
 else
   fail "a sealed manifest that was changed was NOT refused"
@@ -376,7 +387,7 @@ fi
 # A package that was cut short is refused: it is a damaged package, not a
 # file that is not a package.
 head -c 100 "$WORK_DIR/pkg.appkg" > "$WORK_DIR/truncated.appkg"
-if expect_failure "damaged" "$BIN" verify "$WORK_DIR/truncated.appkg"; then
+if said "damaged" "$BIN" verify "$WORK_DIR/truncated.appkg"; then
   pass "a truncated package is refused as a damaged package"
 else
   fail "a truncated package was NOT refused"
@@ -417,8 +428,8 @@ pass "the signature of the host holds"
 # A package that was changed after it was signed does not match it.
 cp "$WORK_DIR/pkg.appkg" "$WORK_DIR/signed_bad.appkg"
 printf 'x' >> "$WORK_DIR/signed_bad.appkg"
-if expect_failure "VERIFY FAILED" "$BIN" verify "$WORK_DIR/signed_bad.appkg" \
-   --signature "$WORK_DIR/pkg.appkg.sig" --public-key "$WORK_DIR/host.pub"; then
+if said "VERIFY FAILED" "$BIN" verify "$WORK_DIR/signed_bad.appkg" --signature "$WORK_DIR/pkg.appkg.sig" \
+   --public-key "$WORK_DIR/host.pub"; then
   pass "a package that was changed after it was signed does not match"
 else
   fail "a changed package still matched the signature"

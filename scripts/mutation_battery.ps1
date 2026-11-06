@@ -28,15 +28,23 @@ function Run-Mutation {
   )
   $path = Join-Path $repo $file
   $backup = [System.IO.File]::ReadAllText($path)
-  $text = $backup
+  # The anchors are written in this file with LF endings, and this file keeps
+  # CRLF on disk because `.gitattributes` says a `.ps1` does. The sources it
+  # looks into are LF. A search for one inside the other therefore never
+  # matches, and every anchor that spans more than one line looks as though it
+  # had rotted away. The comparison is done on one ending, and the sources are
+  # written back with LF, which is what they are stored as.
+  $text = $backup -replace "`r`n", "`n"
   foreach ($pair in @(@($old1, $new1), @($old2, $new2))) {
     if ($pair[0] -eq "") { continue }
-    if (-not $text.Contains($pair[0])) {
+    $old = $pair[0] -replace "`r`n", "`n"
+    $new = $pair[1] -replace "`r`n", "`n"
+    if (-not $text.Contains($old)) {
       Write-Output "$label : ANCHOR NOT FOUND in $file"
       [System.IO.File]::WriteAllText($path, $backup, $enc)
       return
     }
-    $text = $text.Replace($pair[0], $pair[1])
+    $text = $text.Replace($old, $new)
   }
   [System.IO.File]::WriteAllText($path, $text, $enc)
   $out = (moon -C $repo test --target native 2>&1) | Out-String
@@ -76,14 +84,8 @@ Run-Mutation 'L3 cache' 'launcher.mbt' `
   '    let data = @fs.read_binary(path)
     if redundant_sha256(data) != e.checksum {
       return false
-    }
-  }
-  true
-}' `
-  '    let data = @fs.read_binary(path)
-  }
-  true
-}' `
+    }' `
+  '    let data = @fs.read_binary(path)' `
   '' '' `
   'the cache is only used again when it holds what the package carries'
 
@@ -184,6 +186,89 @@ Run-Mutation 'L7 separation' 'keystore.mbt' `
   '  secret' `
   '' '' `
   'the two roles of a pair are separated'
+
+# 12. The archive of a refused bundle is left behind.
+#
+# The archive is written before the launcher is looked at, so the cleanup has
+# to cover it from that point on. With the cleanup taken out, a bundle that
+# fails leaves `*.lunapack-archive.tmp` in the directory it was asked to
+# write to -- a file from a bundle that was never made.
+Run-Mutation 'L5 archive cleanup' 'pack.mbt' `
+  '  @fs.remove(tmp, allow_missing=true)
+  // The archive is written before the launcher is looked at, so the cleanup
+  // has to reach it from that point on: a launcher that turns out to be
+  // missing leaves the archive behind otherwise, and a directory that keeps
+  // a file from a bundle that was never made is exactly the mess the
+  // write-in-one-piece rule exists to prevent.
+  errdefer @fs.remove(tmp, allow_missing=true)
+  let m = write_archive(items, tmp, opts2, None)' `
+  '  @fs.remove(tmp, allow_missing=true)
+  let m = write_archive(items, tmp, opts2, None)' `
+  '' '' `
+  'a refused bundle leaves nothing behind'
+
+# 13. A bundle that cannot start on its own is not reported as one.
+#
+# The two files look the same from the outside -- same name, same size, a
+# whole payload inside -- and what tells them apart is the warning. It is the
+# last line now, so that a list of a few hundred checksums cannot hide it.
+Run-Mutation 'L4 self-extracting' 'pack.mbt' `
+  '  output + " does not start on its own: it carries the payload but no launcher"' `
+  '  output + " is fine"' `
+  '' '' `
+  'the two kinds of bundle are told apart'
+
+# 14. A cache is handed out on its name rather than on what it holds.
+#
+# The folder arrives by a move, and the move is the one step whose result the
+# launcher never looked at: with the read-back taken out, a folder that got
+# only part of the payload is handed out as the cache of the package and the
+# bundled program is started from it. That is what the reported crash was --
+# a program that started and then could not load a library the move had left
+# behind.
+Run-Mutation 'L3 cache handover' 'launcher.mbt' `
+  '  if cache_matches_reporting(m, dir, report) {
+    return Some(dir)
+  }' `
+  '  if true {
+    return Some(dir)
+  }' `
+  '' '' `
+  'a cache that does not hold the payload is not handed out'
+
+# 15. The console of the terminal is taken away with the console of the
+# bundle.
+#
+# The bundle keeps the console subsystem, so a double-click gives it a console
+# of its own; that one is taken away before a windowed program starts. The
+# console of a terminal is the window the user is typing into, and with the
+# decision taken out of the code the launcher cannot tell the two apart.
+Run-Mutation 'console ownership' 'launcher.mbt' `
+  '  if ids.length() != 1 {
+    return false
+  }
+  ids[0] == own_pid
+}' `
+  '  true
+}' `
+  '' '' `
+  'the console of the terminal is not taken away'
+
+# 16. The bar says more is done than there is.
+#
+# The line counts bytes, and a count bigger than the total is what a package
+# whose last file is bigger than the sum of the manifest would produce. Without
+# the clamp the bar says 150% and reads as a defect in the unpacking.
+Run-Mutation 'progress clamp' 'progress.mbt' `
+  '  let p = done * 100L / total
+  if p > 100L {
+    return 100
+  }
+  p.to_int()' `
+  '  let p = done * 100L / total
+  p.to_int()' `
+  '' '' `
+  'the progress bar tells the truth about what is left'
 
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short
