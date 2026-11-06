@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.14
+moon add riantr/LunaPack@0.1.15
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.14",
+  "riantr/LunaPack@0.1.15",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.14`, `>=0.1.14`, `0.1` and `v0.1.14` are all rejected. A bare
+`latest`, `^0.1.15`, `>=0.1.15`, `0.1` and `v0.1.15` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -223,6 +223,69 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.15
+
+- **A first start asks what it should do.** A bundle that is double-clicked,
+  carries no argument of its own, and has never unpacked its payload prints
+  three lines before it does anything:
+
+  ```
+  LunaPack: <name> <version>
+    [1] install it to a folder
+    [2] run it from the folder next to this file
+    your choice [1/2], 2 in 15 s:
+  ```
+
+  Fifteen seconds without an answer take `2`, and the line then says so —
+  `your choice [1/2]: 2 (nobody chose)` — rather than leaving the wait
+  unexplained. A bundle that nobody is watching still starts on its own.
+- **`1` is the `unpack` path and not a second implementation of it.** It asks
+  for a folder, offering `%LOCALAPPDATA%\Programs\<name>` when Enter is
+  pressed, and then runs the code `unpack` runs — **the pre and post scripts
+  of the package included** — and starts the program from that folder with the
+  folder as its working directory. What a bundle installs is therefore what
+  `lunapack unpack` produces, and the two cannot drift apart.
+- **The menu is only for a person.** It needs all four of: no argument, a
+  console the bundle created for itself, **stdin that is a real console**
+  (asked of `GetConsoleMode`), and a payload that is not already cached in
+  full. A script, a pipe, a start from a terminal and every start after the
+  first one go straight to the program, so nothing waits fifteen seconds for
+  an answer that cannot come.
+- **The unpacking shows a bar.** The line is rewritten in place: a bar of 24
+  cells, the percentage, the files done out of the total, the megabytes done
+  out of the total, and the name of the entry being written. The whole line,
+  its `unpack`/`verify` label included, is `78` characters — cut or padded to
+  exactly that, so the tail of the line before it cannot be left on the
+  screen. On the path that unpacks next to the bundle there are **two** bars,
+  `unpack` and then `verify`, because the payload is read back after it
+  arrives; the install path shows the first one.
+- **The bar cannot claim more than the whole.** A count of bytes larger than
+  the total the manifest gives is clamped at `100%`, so a package whose last
+  entry is bigger than the sum of the manifest reads as finished rather than
+  as a defect in the unpacking. The mutation that removes the clamp turns the
+  test of the bar red.
+- **A name the console cannot show is left out.** The entries of a package are
+  whatever the packer put in it, so the name at the end of the line is printed
+  only when it is plain ASCII; guessing at a code page would turn the bar into
+  noise.
+- **The bar is written to the console handle, not through a buffer.** The
+  launcher calls `WriteFile` on the standard output handle it got from
+  `GetStdHandle`, which is what lets it write while a package is being
+  unpacked and after a console was handed on. Nothing of this is visible to
+  the interface of the package: `progress.mbt` is private, `extract_to`,
+  `unpack` and `cache_matches` keep the signatures they had, and a bar is an
+  optional argument the launcher passes.
+
+Three limits are worth stating plainly. The install path shows the bar of the
+unpacking only: the digest re-read that `unpack` does at the end is silent, so
+the last seconds of an install look idle. A first start **from a terminal**
+shows no bar either, because that console is the terminal's and the line would
+be mixed into the output of the program the bundle is about to start; the bar
+belongs to the console the bundle made for itself. And on a platform whose
+console belongs to the terminal there is no menu at all —
+`ask_install_or_run` answers `2` there, because "install to a folder" is what
+`unpack` already does and there is no console to ask on.
 
 ### What changed in 0.1.14
 
@@ -530,7 +593,7 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.14`
+The release is built by a GitHub workflow when a version tag such as `v0.1.15`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1191,7 +1254,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **131 tests, 131 passed, 0 failed**, and `--target wasm`
+native` reports **132 tests, 132 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1264,6 +1327,7 @@ alone, or the guard is not covered by a test at all.
 | the warning that tells the two kinds of bundle apart | the two kinds of bundle are told apart |
 | the read-back of the cache after it arrives | a cache that does not hold the payload is not handed out |
 | the ownership of the console | the console of the terminal is not taken away |
+| the clamp of the bar | the progress bar tells the truth about what is left |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -1277,8 +1341,9 @@ what an attacker who holds the file can do — and the MAC still catches it,
 because the MAC is keyed with the key of the package and the key is not in
 the package.
 
-The last two guards of the table are there because of a defect that the Linux
-end-to-end suite found in 0.1.8 and that the unit tests had not: `keygen`
+The guards `the signing key of a pair` and `the separation of the two roles`
+are there because of a defect the Linux end-to-end suite found in 0.1.8 and
+the unit tests had not: `keygen`
 wrote the **encryption** public key, and the signature was checked against it,
 so a signature made with the secret key of the pair never held. The public key
 file holds both public keys now, and the chain that the command line walks —
@@ -1349,7 +1414,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 131 tests
+moon test                                  # 132 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```
