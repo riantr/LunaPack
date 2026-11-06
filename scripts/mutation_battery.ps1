@@ -289,5 +289,31 @@ Run-Mutation 'console answer' 'launcher.mbt' `
   '' '' `
   'only a key press answers a question'
 
+# 18. The folder flag is read under one spelling only.
+#
+# `--files` and `--Files` are one flag. A collector that reads only the
+# capitalised spelling accepts the lowercase one as a known flag and then
+# quietly bundles nothing from it -- the command succeeds and the payload is
+# missing the folders the caller asked for.
+Run-Mutation 'folder flag spelling' 'cli.mbt' `
+  '    if f.0 == "Files" || f.0 == "files" {' `
+  '    if f.0 == "Files" {' `
+  '' '' `
+  'the folder flag is read under both spellings'
+
+# 19. A flag the tool reads is not a flag the tool knows.
+#
+# `build_options` reads `--os` and the README documents it, but the name was
+# missing from the list of known flags for as long as the list has existed, so
+# every command line that named it was refused as unknown and a package for
+# another platform could not be made at all. The test that lists the flags the
+# tool reads is what catches it -- and only if that list is complete, which is
+# why the flag is written down in two places on purpose.
+Run-Mutation 'platform flag' 'cli.mbt' `
+  '    "launcher", "name", "o", "os", "output", "output-exe", "output-file", "passphrase",' `
+  '    "launcher", "name", "o", "output", "output-exe", "output-file", "passphrase",' `
+  '' '' `
+  'the platform flag is a flag the tool knows'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

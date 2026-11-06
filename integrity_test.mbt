@@ -342,7 +342,13 @@ async test "a package that was changed after it was signed does not match" {
   let public = @LunaPack.public_key_pair(secret).signing
   let signature = @LunaPack.sign_package(pkg, secret)
   let data = @fs.read_binary(pkg)
-  @fs.write_binary(pkg, with_byte(data, 30, b'Z'))
+  // The byte is turned into a different one, not into a fixed one. Byte 30 is
+  // inside the random salt of the manifest block, so writing 'Z' there changes
+  // nothing one time in 256 -- and the package then still carries the
+  // signature it was given, which made this test fail about once in 256 runs
+  // for a reason that had nothing to do with signatures.
+  let changed = if data[30] == b'Z' { b'Y' } else { b'Z' }
+  @fs.write_binary(pkg, with_byte(data, 30, changed))
   assert_true(!@LunaPack.verify_package_signature(pkg, signature, public))
 }
 
