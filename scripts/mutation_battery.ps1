@@ -270,5 +270,24 @@ Run-Mutation 'progress clamp' 'progress.mbt' `
   '' '' `
   'the progress bar tells the truth about what is left'
 
+# 17. Anything the console reports is taken for an answer.
+#
+# This is the defect 0.1.15 shipped. A console signals its input handle for a
+# window that gained focus, for a window that was resized and for the mouse as
+# well, and the wait in read_console_line is a wait on that handle. With the
+# question "is this actually a key press" answered by "yes", the launcher goes
+# on to ReadConsoleW, which in the line-input mode of a console waits for a
+# whole line -- for ever, when nobody is typing. The countdown then never
+# counts a second and a double-clicked bundle never starts on its own.
+Run-Mutation 'console answer' 'launcher.mbt' `
+  '    if kind == KEY_EVENT_TYPE && down && ch != 0 {
+      return true
+    }' `
+  '    if true {
+      return true
+    }' `
+  '' '' `
+  'only a key press answers a question'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short
