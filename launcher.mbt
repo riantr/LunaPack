@@ -238,6 +238,70 @@ extern "C" fn read_console_w(
 extern "C" fn get_console_mode(handle : Int64, mode : Bytes) -> Int32 = "GetConsoleMode"
 
 ///|
+/// `PeekConsoleInputW(HANDLE, PINPUT_RECORD, DWORD, LPDWORD)`.
+#cfg(all(target="native", platform="windows"))
+#borrow(buffer, read)
+extern "C" fn peek_console_input_w(
+  handle : Int64,
+  buffer : Bytes,
+  length : Int32,
+  read : Bytes,
+) -> Int32 = "PeekConsoleInputW"
+
+///|
+/// `ReadConsoleInputW(HANDLE, PINPUT_RECORD, DWORD, LPDWORD)`.
+#cfg(all(target="native", platform="windows"))
+#borrow(buffer, read)
+extern "C" fn read_console_input_w(
+  handle : Int64,
+  buffer : Bytes,
+  length : Int32,
+  read : Bytes,
+) -> Int32 = "ReadConsoleInputW"
+
+///|
+/// The size of one `INPUT_RECORD` of Windows.
+///
+/// The structure is a `WORD` of event type followed by a union whose largest
+/// member — `KEY_EVENT_RECORD` — is 16 bytes, so one record is 20 bytes: the
+/// type, two bytes of padding, the four-byte `bKeyDown`, the repeat count, the
+/// virtual key and scan codes, the character, and the state of the control
+/// keys.
+const INPUT_RECORD_SIZE : Int32 = 20
+
+///|
+/// `KEY_EVENT`: the record is about the keyboard rather than the mouse, a
+/// window resize or a change of focus.
+const KEY_EVENT_TYPE : Int32 = 1
+
+///|
+/// Does this buffer of `INPUT_RECORD`s hold a key press that answers a
+/// question?
+///
+/// A console reports far more than keys: a window that gains focus, a window
+/// that is resized, the mouse. Every one of those signals the handle the same
+/// way a key does, so "there is something to read" is not "somebody typed".
+/// Only a key that went down and carries a character counts — an arrow key is
+/// a key press with no character, and it answers nothing.
+fn has_key_press(records : Bytes, count : Int32) -> Bool {
+  let mut i = 0
+  while i < count {
+    let base = (i * INPUT_RECORD_SIZE).to_int64()
+    if base + INPUT_RECORD_SIZE.to_int64() > records.length().to_int64() {
+      return false
+    }
+    let kind = u16_at(records, base)
+    let down = u32_at(records, base + 4L) != 0L
+    let ch = u16_at(records, base + 14L)
+    if kind == KEY_EVENT_TYPE && down && ch != 0 {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
 /// Can a question be asked and answered here?
 ///
 /// A handle that is not a console — a pipe, a file, the null device — cannot
@@ -334,11 +398,43 @@ fn console_write(text : String) -> Unit {
 }
 
 ///|
+/// Is there a key press waiting on this console that a question could take?
+///
+/// The wait in `read_console_line` is only about the handle being signaled,
+/// and a console signals it for anything at all. What is on the buffer is
+/// therefore looked at before anything is read, and the records that are not
+/// keys are taken off it: leaving them there would signal every wait that
+/// follows, and the countdown would never count a second.
+#cfg(all(target="native", platform="windows"))
+fn console_take_key_press(handle : Int64) -> Bool {
+  let slots = 16
+  let records = Bytes::make(slots * INPUT_RECORD_SIZE, b'\x00')
+  let count = Bytes::make(4, b'\x00')
+  if peek_console_input_w(handle, records, slots, count) == 0 {
+    return false
+  }
+  let n = u32_at(count, 0L).to_int()
+  if n <= 0 {
+    return false
+  }
+  if has_key_press(records, n) {
+    return true
+  }
+  let taken = Bytes::make(4, b'\x00')
+  read_console_input_w(handle, records, n, taken) |> ignore
+  false
+}
+
+///|
 /// One line from the console, or `None` when nothing arrives in `timeout_ms`.
 ///
 /// A negative timeout waits for as long as it takes. The wait is on the input
 /// handle itself, which Windows signals as soon as a key is pressed: that is
 /// what lets the caller count down between two waits instead of blocking.
+/// Being signaled is not the same as a key, though, so what the wait came back
+/// for is looked at before anything is read: `ReadConsoleW` waits for a whole
+/// line in the line-input mode of a console, and for a line nobody is typing
+/// that wait never ends.
 #cfg(all(target="native", platform="windows"))
 fn read_console_line(timeout_ms : Int32) -> String? {
   let handle = get_std_handle(STD_INPUT_HANDLE)
@@ -346,8 +442,14 @@ fn read_console_line(timeout_ms : Int32) -> String? {
     return None
   }
   if timeout_ms >= 0 {
-    // WAIT_OBJECT_0 is zero, and it is the only answer that means input.
+    // WAIT_OBJECT_0 is zero, and it is the only answer that means "something
+    // happened". Whether that something can be answered is the next question:
+    // a console signals this handle for a window that gained focus, for a
+    // window that was resized and for the mouse as well.
     if wait_for_single_object(handle, timeout_ms) != 0 {
+      return None
+    }
+    if !console_take_key_press(handle) {
       return None
     }
   }

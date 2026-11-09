@@ -10,10 +10,10 @@
 //        --Files=[Pack-Folder]
 //
 //    `--input-exe` is the application executable to distribute, `--Files` is a
-//    folder of extra files to bundle with it (repeatable), and `--output-exe`
-//    is the produced single file. The result is the input executable with a
-//    LunaPack archive appended, so it stays runnable while carrying the
-//    bundled files.
+//    folder of extra files to bundle with it (repeatable, and `--files` is the
+//    same flag), and `--output-exe` is the produced single file. The result is
+//    the input executable with a LunaPack archive appended, so it stays
+//    runnable while carrying the bundled files.
 //
 // 2. Subcommands, which expose the full feature set:
 //
@@ -122,6 +122,23 @@ fn flag_values(flags : Array[Flag], key : String) -> Array[String] {
 }
 
 ///|
+/// Every folder of `--Files`, in the order the folders were given.
+///
+/// `--Files` and `--files` are one flag with two spellings, and the walk is
+/// one pass over the arguments rather than two lists joined together: that is
+/// what keeps the order of a command line that mixes the two, and the order is
+/// the one thing a caller can see here.
+fn file_dirs_of(flags : Array[Flag]) -> Array[String] {
+  let out = []
+  for f in flags {
+    if f.0 == "Files" || f.0 == "files" {
+      out.push(f.1)
+    }
+  }
+  out
+}
+
+///|
 /// The flags the tool knows.
 ///
 /// A flag that is not in this list is a mistake, and a mistake that is
@@ -129,13 +146,18 @@ fn flag_values(flags : Array[Flag], key : String) -> Array[String] {
 /// else than what was asked, and says nothing about it. `--input-file` for
 /// instance is not `--input-exe`, and taking it for one would leave the
 /// output path empty.
+///
+/// The one flag with two spellings is `--Files`: it is written with a capital
+/// letter in this documentation and in every example, and a command line that
+/// reaches for `--files` means the same thing. Both are listed here, so
+/// neither is a mistake, and `file_dirs_of` reads the two as one flag.
 fn known_flags() -> Array[String] {
   [
     "Files", "arch", "compression", "compression-method", "encryption", "encryption-method",
-    "expected-sha256", "extracted", "i", "input", "input-exe", "input-file", "launcher",
-    "name", "o", "output", "output-exe", "output-file", "passphrase", "passphrase-file",
-    "post-install", "pre-install", "public-key", "secret-key", "signature", "skip-scripts",
-    "version",
+    "expected-sha256", "extracted", "files", "i", "input", "input-exe", "input-file",
+    "launcher", "name", "o", "os", "output", "output-exe", "output-file", "passphrase",
+    "passphrase-file", "post-install", "pre-install", "public-key", "secret-key",
+    "signature", "skip-scripts", "version",
   ]
 }
 
@@ -364,7 +386,9 @@ fn usage() -> Unit {
   println("options:")
   println("  --input-exe <path>      application executable to distribute")
   println("  --output-exe <path>     produced single-file bundle")
-  println("  --Files <dir>           folder of files to bundle (repeatable)")
+  println(
+    "  --Files <dir>           folder of files to bundle (repeatable; --files too)",
+  )
   println("  --input-file <path>     another name for --input-exe")
   println("  --output-file <path>    another name for --output-exe")
   println("  --name <name>           package name (default: input dir name)")
@@ -402,7 +426,7 @@ fn usage() -> Unit {
 async fn do_flags(flags : Array[Flag]) -> Unit {
   let input_exe = flag_value_any(flags, ["input-exe", "input-file"])
   let output_exe = flag_value_any(flags, ["output-exe", "output-file"])
-  let file_dirs = flag_values(flags, "Files")
+  let file_dirs = file_dirs_of(flags)
   if input_exe == "" && output_exe == "" && file_dirs.length() == 0 {
     usage()
     return
@@ -584,7 +608,7 @@ async fn do_bundle(args : ArrayView[String]) -> Unit {
     bundle(
       input,
       output,
-      flag_values(flags, "Files"),
+      file_dirs_of(flags),
       opts,
       flag_value(flags, "launcher"),
     )

@@ -270,5 +270,50 @@ Run-Mutation 'progress clamp' 'progress.mbt' `
   '' '' `
   'the progress bar tells the truth about what is left'
 
+# 17. Anything the console reports is taken for an answer.
+#
+# This is the defect 0.1.15 shipped. A console signals its input handle for a
+# window that gained focus, for a window that was resized and for the mouse as
+# well, and the wait in read_console_line is a wait on that handle. With the
+# question "is this actually a key press" answered by "yes", the launcher goes
+# on to ReadConsoleW, which in the line-input mode of a console waits for a
+# whole line -- for ever, when nobody is typing. The countdown then never
+# counts a second and a double-clicked bundle never starts on its own.
+Run-Mutation 'console answer' 'launcher.mbt' `
+  '    if kind == KEY_EVENT_TYPE && down && ch != 0 {
+      return true
+    }' `
+  '    if true {
+      return true
+    }' `
+  '' '' `
+  'only a key press answers a question'
+
+# 18. The folder flag is read under one spelling only.
+#
+# `--files` and `--Files` are one flag. A collector that reads only the
+# capitalised spelling accepts the lowercase one as a known flag and then
+# quietly bundles nothing from it -- the command succeeds and the payload is
+# missing the folders the caller asked for.
+Run-Mutation 'folder flag spelling' 'cli.mbt' `
+  '    if f.0 == "Files" || f.0 == "files" {' `
+  '    if f.0 == "Files" {' `
+  '' '' `
+  'the folder flag is read under both spellings'
+
+# 19. A flag the tool reads is not a flag the tool knows.
+#
+# `build_options` reads `--os` and the README documents it, but the name was
+# missing from the list of known flags for as long as the list has existed, so
+# every command line that named it was refused as unknown and a package for
+# another platform could not be made at all. The test that lists the flags the
+# tool reads is what catches it -- and only if that list is complete, which is
+# why the flag is written down in two places on purpose.
+Run-Mutation 'platform flag' 'cli.mbt' `
+  '    "launcher", "name", "o", "os", "output", "output-exe", "output-file", "passphrase",' `
+  '    "launcher", "name", "o", "output", "output-exe", "output-file", "passphrase",' `
+  '' '' `
+  'the platform flag is a flag the tool knows'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

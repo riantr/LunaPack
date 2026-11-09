@@ -284,6 +284,47 @@ test "the progress bar tells the truth about what is left" {
 }
 
 ///|
+/// Only a key press answers a question; anything else on the console is noise.
+///
+/// A console signals its input handle for a window that gained focus, for a
+/// window that was resized and for the mouse, and it reports the key that was
+/// let go just as it reports the one that was pressed. Treating any of those
+/// as an answer is what makes the launcher read for a line that nobody is
+/// typing, and the countdown never moves.
+test "only a key press answers a question" {
+  let s = INPUT_RECORD_SIZE
+  let raw = FixedArray::make(s * 4, b'\x00')
+  // 0: a focus change — not a key event at all.
+  raw[0] = b'\x10'
+  // 1: a key event that reports the key going up, with a character on it.
+  raw[s] = b'\x01'
+  raw[s + 14] = b'\x32'
+  // 2: a key that went down but carries no character, such as an arrow key.
+  raw[s * 2] = b'\x01'
+  raw[s * 2 + 4] = b'\x01'
+  // 3: the "2" pressed.
+  raw[s * 3] = b'\x01'
+  raw[s * 3 + 4] = b'\x01'
+  raw[s * 3 + 14] = b'\x32'
+  let records = Bytes::from_array(raw[:])
+  // Nothing on the buffer is not an answer either.
+  assert_true(!has_key_press(records, 0))
+  // Each of the four conditions has to hold for the answer to be a key.
+  assert_true(!has_key_press(records, 1))
+  assert_true(!has_key_press(records, 2))
+  assert_true(!has_key_press(records, 3))
+  assert_true(has_key_press(records, 4))
+  // A count that claims more records than the buffer holds is not read past
+  // the end of it: the one record here is a focus change, so the walk runs
+  // out of buffer before it runs out of records, and the answer is "no".
+  let one = FixedArray::make(s, b'\x00')
+  one[0] = b'\x10'
+  let short = Bytes::from_array(one[:])
+  assert_true(!has_key_press(short, 1))
+  assert_true(!has_key_press(short, 2))
+}
+
+///|
 /// Only a console that Windows made for this process may be taken away.
 ///
 /// A bundle keeps the console subsystem, because a program with no standard
@@ -378,6 +419,35 @@ test "a flag the tool does not know is reported" {
 }
 
 ///|
+/// The folder flag is read under both of its spellings, in the order given.
+///
+/// `--Files` is how the flag is written in the documentation and in every
+/// example, and a command line that says `--files` means the same folders.
+/// Refusing it over the height of one letter is pedantry rather than care: the
+/// two spellings are one flag, and neither is reported as unknown. The order
+/// is checked because the two can be mixed in one command line, and collecting
+/// them into two lists that are then joined would lose it.
+test "the folder flag is read under both spellings" {
+  let flags = parse_flags(["--files=a", "--Files=b", "--files=c"], 0)
+  assert_eq(unknown_flags(flags).length(), 0)
+  let dirs = file_dirs_of(flags)
+  assert_eq(dirs.length(), 3)
+  assert_true(dirs[0] == "a")
+  assert_true(dirs[1] == "b")
+  assert_true(dirs[2] == "c")
+  // The space-separated form of both spellings works as well.
+  let spaced = parse_flags(["--files", "x", "--Files", "y"], 0)
+  let sdirs = file_dirs_of(spaced)
+  assert_eq(sdirs.length(), 2)
+  assert_true(sdirs[0] == "x")
+  assert_true(sdirs[1] == "y")
+  // A flag that only looks like it is still a mistake, and is not a folder.
+  let other = parse_flags(["--file=z"], 0)
+  assert_eq(unknown_flags(other).length(), 1)
+  assert_eq(file_dirs_of(other).length(), 0)
+}
+
+///|
 /// The message that reports an unknown flag names the flag and the rest.
 test "the message of an unknown flag names the flag" {
   let flags = parse_flags(["--nope"], 0)
@@ -396,13 +466,30 @@ test "every flag the tool reads is a flag the tool knows" {
   for
     name in [
       "Files", "arch", "compression", "compression-method", "encryption", "encryption-method",
-      "expected-sha256", "extracted", "i", "input", "input-exe", "input-file", "launcher",
-      "name", "o", "output", "output-exe", "output-file", "passphrase", "passphrase-file",
-      "post-install", "pre-install", "public-key", "secret-key", "signature", "skip-scripts",
-      "version",
+      "expected-sha256", "extracted", "files", "i", "input", "input-exe", "input-file",
+      "launcher", "name", "o", "os", "output", "output-exe", "output-file", "passphrase",
+      "passphrase-file", "post-install", "pre-install", "public-key", "secret-key",
+      "signature", "skip-scripts", "version",
     ] {
     assert_true(known.contains(name))
   }
+}
+
+///|
+/// The platform flag is a flag the tool knows.
+///
+/// `build_options` read `--os` and the README documented it, but the name was
+/// missing from the list of known flags, so every command line that named it
+/// was refused with `unknown flag --os` and a package for another platform
+/// could not be made at all. A flag that is read and not listed is refused; a
+/// flag that is listed and not read is ignored; both are mistakes, and this is
+/// the one that survived because the list in the test above was written by
+/// hand.
+test "the platform flag is a flag the tool knows" {
+  let flags = parse_flags(["--os=linux", "--arch=x86_64"], 0)
+  assert_eq(unknown_flags(flags).length(), 0)
+  assert_true(flag_value(flags, "os") == "linux")
+  assert_true(flag_value(flags, "arch") == "x86_64")
 }
 
 ///|
