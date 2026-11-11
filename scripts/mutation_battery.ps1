@@ -310,8 +310,8 @@ Run-Mutation 'folder flag spelling' 'cli.mbt' `
 # tool reads is what catches it -- and only if that list is complete, which is
 # why the flag is written down in two places on purpose.
 Run-Mutation 'platform flag' 'cli.mbt' `
-  '    "launcher", "name", "o", "os", "output", "output-exe", "output-file", "passphrase",' `
-  '    "launcher", "name", "o", "output", "output-exe", "output-file", "passphrase",' `
+  '    "input-exe", "input-file", "launcher", "name", "o", "os", "output", "output-exe",' `
+  '    "input-exe", "input-file", "launcher", "name", "o", "output", "output-exe",' `
   '' '' `
   'the platform flag is a flag the tool knows'
 

@@ -539,6 +539,62 @@ test "a v6 package with no integrity block is refused" {
 }
 
 ///|
+/// The directory of a path is what is in front of the last separator.
+///
+/// The statement that returns it is a slice of the path, and an analyzer
+/// that does not model a slice calls that line unreachable. This test is what
+/// says otherwise: it runs the line, on the two shapes that reach it.
+test "the directory of a path is in front of the last separator" {
+  assert_eq(dirname("/a/b/c.txt"), "/a/b")
+  assert_eq(dirname("/a"), "/")
+  assert_eq(dirname("c.txt"), "")
+}
+
+///|
+/// A passphrase that is read from a file has no line ending in it.
+///
+/// The line that trims the ending is a slice of the text, and the same
+/// analyzer calls it unreachable. Reading a passphrase from a file is what
+/// runs it.
+async test "a passphrase that is read from a file has no line ending" {
+  let dir = @fs.tmpdir(prefix="lunapack_passphrase")
+  let path = dir + "/pass.txt"
+  @fs.write_text(path, "a secret\n")
+  let flags = parse_flags(["--passphrase-file=" + path], 0)
+  assert_eq(read_passphrase(flags), "a secret")
+}
+
+///|
+/// The signing key is the one the public key file holds.
+///
+/// The line that takes the key out of its line is a slice, and the same
+/// analyzer calls it unreachable. A key file is what runs it.
+test "the signing key is the one the public key file holds" {
+  let signing = Bytes::make(4, b'\x01')
+  let encryption = Bytes::make(4, b'\x02')
+  let text = PUBLIC_KEY_HEADER +
+    "\n" +
+    PUBLIC_KEY_ENCRYPTION +
+    " " +
+    bytes_to_hex(encryption) +
+    "\n" +
+    PUBLIC_KEY_SIGNING +
+    " " +
+    bytes_to_hex(signing) +
+    "\n"
+  let found = public_key_of(string_to_utf8_bytes(text), PUBLIC_KEY_SIGNING)
+  assert_true(found is Some(_))
+  match found {
+    Some(key) => assert_true(key == signing)
+    None => assert_true(false)
+  }
+  // A key of another algorithm is not handed out under this one.
+  assert_true(
+    public_key_of(string_to_utf8_bytes(text), PUBLIC_KEY_ENCRYPTION) is Some(_),
+  )
+}
+
+///|
 /// A package that really is of the old format is still read, with a warning.
 test "an old package with no integrity block is still read" {
   let message = try {

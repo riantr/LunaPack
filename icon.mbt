@@ -79,7 +79,7 @@ pub async fn copy_icon(source_exe : String, target_exe : String) -> Bool {
 ///
 /// The icon is a Windows resource, so this is a no-op elsewhere.
 #cfg(not(platform="windows"))
-pub async fn copy_icon(source_exe : String, target_exe : String) -> Bool {
+pub async fn copy_icon(_source_exe : String, _target_exe : String) -> Bool {
   false
 }
 

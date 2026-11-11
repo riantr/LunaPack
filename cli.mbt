@@ -116,18 +116,6 @@ fn flag_value_any(flags : Array[Flag], keys : Array[String]) -> String {
 }
 
 ///|
-/// Every value of `key`, in order.
-fn flag_values(flags : Array[Flag], key : String) -> Array[String] {
-  let out = []
-  for f in flags {
-    if f.0 == key {
-      out.push(f.1)
-    }
-  }
-  out
-}
-
-///|
 /// Every folder of `--Files`, in the order the folders were given.
 ///
 /// `--Files` and `--files` are one flag with two spellings, and the walk is

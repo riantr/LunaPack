@@ -471,7 +471,7 @@ fn read_console_line(timeout_ms : Int32) -> String? {
 /// Nothing to read: there is no menu on a platform whose console belongs to
 /// the terminal.
 #cfg(not(all(target="native", platform="windows")))
-fn read_console_line(timeout_ms : Int32) -> String? {
+fn read_console_line(_timeout_ms : Int32) -> String? {
   None
 }
 
@@ -566,7 +566,7 @@ fn ask_install_or_run(m : Manifest) -> Bool {
 ///|
 /// There is no menu on a platform whose console belongs to the terminal.
 #cfg(not(all(target="native", platform="windows")))
-fn ask_install_or_run(m : Manifest) -> Bool {
+fn ask_install_or_run(_m : Manifest) -> Bool {
   false
 }
 
@@ -641,9 +641,9 @@ async fn install_and_start(
 /// Nothing to install on a platform whose console belongs to the terminal.
 #cfg(not(all(target="native", platform="windows")))
 async fn install_and_start(
-  exe : String,
-  m : Manifest,
-  key : PackageKey?,
+  _exe : String,
+  _m : Manifest,
+  _key : PackageKey?,
 ) -> Unit {
 
 }
@@ -716,9 +716,9 @@ async fn start_without_console(
 /// at all.
 #cfg(not(all(target="native", platform="windows")))
 async fn start_without_console(
-  program : String,
-  args : Array[String],
-  dir : String,
+  _program : String,
+  _args : Array[String],
+  _dir : String,
 ) -> Int32? {
   None
 }

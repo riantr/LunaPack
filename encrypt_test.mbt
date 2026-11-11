@@ -244,7 +244,7 @@ async test "the key files survive the round trip" {
   )
   // Another passphrase does not open it.
   let wrong = @LunaPack.load_secret_key(protected_path, "another passphrase") catch {
-    _ => Bytes::default()
+    _ => Default::default()
   }
   assert_true(wrong != secret)
 }

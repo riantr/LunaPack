@@ -51,3 +51,37 @@ You can browse and install extra skills here:
   scientific computations), prefer assertion tests. You can use
   `moon coverage analyze > uncovered.log` to see which parts of your code are
   not covered by tests.
+
+## Reading the static analyzers
+
+Two published analyzers are run over this repository, and both are worth
+running:
+
+```sh
+moonx riantr/moonbit_static_analysis@latest      # actionable findings
+moonx riantr/LunaFlow@latest analyze --dir .     # CFG, taint, slices
+```
+
+Neither is the last word: **`moon check` is the referee.** It is the only
+thing here that says whether code is reachable and whether a value is used.
+A finding the compiler does not confirm is a false positive of the analyzer,
+not a defect of the code, and the code is not to be bent to satisfy it.
+
+- **Dead code at a string slice.** `LunaFlow` reports every statement that
+  returns a slice (`text[0:end]`, `p[:i]`, `p[i+1:]`, `body[0:w]`) as
+  unreachable. The slice is not modelled, the statement is shredded into
+  pieces, and the pieces inherit the deadness of the `return`. There are five
+  such sites — cli.mbt, keystore.mbt, platform.mbt twice and progress.mbt —
+  and every one of them is now run by a test: the directory of a path, the
+  passphrase of a file, the signing key of a key file, the name of a file and
+  the truncated line of the bar. The compiler reports no unreachable code
+  anywhere.
+- **Taint sinks with an index that is in bounds.** `LunaFlow` reports an
+  index derived from untrusted input as a sink (`args[i]`, `text[i * 2]`,
+  `p[i]`, `text[i]`). The tool says itself that the observed index was inside
+  the array. The bounds are provable from the loop condition.
+- **A parameter of a `#cfg` stub.** `moonbit_static_analysis` reports a
+  parameter of a stub that does nothing as unused. Mark it with a leading
+  underscore (`_timeout_ms`): that is the convention the compiler
+  understands, it silences the analyzer without changing the interface, and
+  it says "deliberately unused" where a `let _ =` would only hide it.
