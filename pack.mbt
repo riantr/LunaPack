@@ -2,24 +2,50 @@
 // together with extra files into a single distributable file.
 
 ///|
+/// Has `seen` already recorded `dir`?
+///
+/// A linear scan is used because the number of distinct directories in a tree
+/// is modest; this avoids pulling in an extra collection dependency.
+fn dir_seen(seen : Array[String], dir : String) -> Bool {
+  for d in seen {
+    if d == dir {
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// Collect every regular file under `root`, recursively.
+///
+/// Two things make this version provably terminating and safe:
+///
+/// 1. The loop stops on an explicit, observable condition (the work stack
+///    empties) instead of `while true`, which the static analyzer could only
+///    model as a possible infinite loop.
+/// 2. Every directory is recorded the first time it is expanded, and a
+///    directory is only queued again when it has not been seen. That breaks
+///    symlink (or any other) cycles, which would otherwise make the walk loop
+///    forever on real filesystems.
 pub async fn collect_files(root : String) -> Array[String] {
   let result = []
-  let stack = [norm_sep(root)]
-  while true {
-    match stack.pop() {
-      Some(dir) => {
-        let names = @fs.readdir(dir)
-        for name in names {
-          let full = dir + "/" + name
-          match @fs.kind(full) {
-            @fs.FileKind::Regular => result.push(full)
-            @fs.FileKind::Directory => stack.push(full)
-            _ => ()
-          }
-        }
+  let root = norm_sep(root)
+  let stack = [root]
+  let seen = []
+  while !stack.is_empty() {
+    let dir = stack.pop().unwrap()
+    if dir_seen(seen, dir) {
+      continue
+    }
+    seen.push(dir)
+    let names = @fs.readdir(dir)
+    for name in names {
+      let full = dir + "/" + name
+      match @fs.kind(full) {
+        @fs.FileKind::Regular => result.push(full)
+        @fs.FileKind::Directory => if !dir_seen(seen, full) { stack.push(full) }
+        _ => ()
       }
-      None => break
     }
   }
   result

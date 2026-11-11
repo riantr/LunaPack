@@ -80,6 +80,13 @@ fn sha512_compress(
   block : Array[Byte],
   off : Int32,
 ) -> Unit {
+  // `block` is always a 128-byte SHA-512 message block: every caller feeds it
+  // in 128-byte aligned chunks, so `off + 127` is always a valid index. Guard
+  // it explicitly so a contract violation can never become an out-of-bounds
+  // read.
+  if block.length() < off + 128 {
+    return
+  }
   let k = sha512_k()
   // The message schedule: sixteen words from the block, then sixty-four more.
   let w : Array[UInt64] = Array(capacity=80)

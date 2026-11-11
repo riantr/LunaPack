@@ -87,6 +87,9 @@ pub fn hex_to_bytes(text : String) -> Bytes? {
   }
   let out = FixedArray::make(n / 2, b'\x00')
   let mut i = 0
+  // `i` runs up to `n / 2 - 1`, so `i * 2 + 1` is at most `n - 1`: both
+  // `text[i * 2]` and `text[i * 2 + 1]` are provably within the string. (The
+  // `n % 2 != 0` early return above guarantees `n` is even.)
   while i < n / 2 {
     let hi = hex_value(text[i * 2].to_int())
     let lo = hex_value(text[i * 2 + 1].to_int())

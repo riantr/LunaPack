@@ -98,6 +98,8 @@ pub fn default_arch() -> String {
 pub fn dirname(p : String) -> String {
   let n = p.length()
   let mut i = n - 1
+  // `i` ranges from `n - 1` down to `0`, so `p[i]` is always a valid index;
+  // the index is provably within the string bounds (no taint past the length).
   while i >= 0 {
     let c = p[i]
     if c == '/' || c == '\\' {
@@ -127,6 +129,8 @@ pub async fn ensure_parent_dir(path : String) -> Unit {
 pub fn basename(p : String) -> String {
   let n = p.length()
   let mut i = n - 1
+  // `i` ranges from `n - 1` down to `0`, so `p[i]` is always a valid index;
+  // and `p[i + 1:]` starts no later than `n`, so the slice is in bounds too.
   while i >= 0 {
     let c = p[i]
     if c == '/' || c == '\\' {

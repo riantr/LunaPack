@@ -45,6 +45,8 @@ fn parse_flags(args : ArrayView[String], start : Int32) -> Array[Flag] {
   let out = []
   let mut i = start
   while i < args.length() {
+    // `i` only advances while `i < args.length()`, so `args[i]` is always a
+    // valid index; the index is provably within the array bounds.
     let a = args[i]
     if a.has_prefix("-") && a.length() > 1 {
       // Skip the leading dashes.

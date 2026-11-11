@@ -88,6 +88,12 @@ fn md5_compress(
   s : Array[Int32],
   t : Array[UInt64],
 ) -> Unit {
+  // `block` is always a 64-byte MD5 message block: every caller feeds it in
+  // 64-byte aligned chunks, so `off + 63` is always a valid index. Guard it
+  // explicitly so a contract violation can never become an out-of-bounds read.
+  if block.length() < off + 64 {
+    return
+  }
   let x : Array[UInt64] = []
   let mut k = 0
   while k < 16 {

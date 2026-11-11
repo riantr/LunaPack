@@ -229,6 +229,7 @@ fn absolute_url(base : String, loc : String) -> String raise {
 fn decimal(text : String) -> Int64 {
   let mut n = 0L
   for i = 0; i < text.length(); i = i + 1 {
+    // `i` is bounded by `text.length()`, so `text[i]` is always a valid index.
     let c = text[i].to_int() - 48
     if c < 0 || c > 9 {
       return n
