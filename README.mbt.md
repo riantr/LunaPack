@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.18
+moon add riantr/LunaPack@0.1.19
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.18",
+  "riantr/LunaPack@0.1.19",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.18`, `>=0.1.18`, `0.1` and `v0.1.18` are all rejected. A bare
+`latest`, `^0.1.19`, `>=0.1.19`, `0.1` and `v0.1.19` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -231,6 +231,29 @@ used to return a `&ProcessOutput` trait object and now returns a
 enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
+
+### What changed in 0.1.19
+
+- **LunaFlow-driven hardening.** The `collect_files` traversal in `pack.mbt`
+  used `while true` and was flagged by the static analyzer as a possible
+  infinite loop. More importantly, on a real filesystem a symlink cycle would
+  actually loop forever. The loop now terminates on an explicit stack-empty
+  check and remembers visited directories, so every directory is expanded at
+  most once — termination is provable and symlink cycles are broken.
+
+- **Crypto bounds guards.** `md5_compress` and `sha512_compress` now check the
+  block length up front (`off + 64` / `off + 128`); a contract violation can
+  no longer become an out-of-bounds read. The callers still always pass
+  block-aligned offsets.
+
+- **Documented analyzer false positives.** The TAINT-INDEX entries on
+  `dirname`/`basename` (`platform.mbt`), `hex_to_bytes` (`hex.mbt`),
+  `parse_flags` (`cli.mbt`) and `decimal` (`studio.mbt`) were reviewed: each
+  index is bounded by an explicit length guard, so they are not real bugs.
+  Comments now say so.
+
+- **Tests and checks.** `moon check --target native` is clean and the full
+  suite (150 tests) passes.
 
 ### What changed in 0.1.18
 
@@ -767,7 +790,7 @@ on first use, so a user who only wants the command line never pays for the
 download. Assets for other platforms are named
 `lunapack-studio-<os>-<arch>.zip` and are added as those builds exist.
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.18`
+The release is built by a GitHub workflow when a version tag such as `v0.1.19`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
