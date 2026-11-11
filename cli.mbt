@@ -22,6 +22,10 @@
 //      lunapack verify <package>
 //      lunapack info   <package>
 //
+// 3. `--GUI`, which opens LunaPack Studio with the same flags already filled
+//    in. Studio is part of this release, not a separate package; it is
+//    downloaded on first use when it is not installed beside the CLI.
+//
 // Flags accept both `--flag=value` and `--flag value`.
 //
 // NOTE: in this MoonBit version `main` must return `Unit`, so process exit
@@ -153,11 +157,11 @@ fn file_dirs_of(flags : Array[Flag]) -> Array[String] {
 /// neither is a mistake, and `file_dirs_of` reads the two as one flag.
 fn known_flags() -> Array[String] {
   [
-    "Files", "arch", "compression", "compression-method", "encryption", "encryption-method",
-    "expected-sha256", "extracted", "files", "i", "input", "input-exe", "input-file",
-    "launcher", "name", "o", "os", "output", "output-exe", "output-file", "passphrase",
-    "passphrase-file", "post-install", "pre-install", "public-key", "secret-key",
-    "signature", "skip-scripts", "version",
+    "Files", "GUI", "arch", "cli", "compression", "compression-method", "encryption",
+    "encryption-method", "gui", "expected-sha256", "extracted", "files", "i", "input",
+    "input-exe", "input-file", "launcher", "name", "o", "os", "output", "output-exe",
+    "output-file", "passphrase", "passphrase-file", "post-install", "pre-install",
+    "public-key", "secret-key", "signature", "skip-scripts", "version",
   ]
 }
 
@@ -382,6 +386,17 @@ fn usage() -> Unit {
   println("  lunapack sign   <package> --secret-key <file> [--output <file>]")
   println("  lunapack info   <package>")
   println("  lunapack keygen --public-key <file> --secret-key <file>")
+  println(
+    "  lunapack --GUI [--input-file <exe>] [--output-file <exe>] [--Files <dir>]...",
+  )
+  println("")
+  println("graphical front end:")
+  println(
+    "  --GUI                   open LunaPack Studio with the flags above filled in",
+  )
+  println(
+    "                          (downloaded from this release on first use)",
+  )
   println("")
   println("options:")
   println("  --input-exe <path>      application executable to distribute")
@@ -952,6 +967,12 @@ async fn main {
   let argv = @env.args()[1:]
   if argv.length() == 0 {
     usage()
+    return
+  }
+  // `--GUI` is a front end of its own: the flags that follow belong to the
+  // window, not to a pack operation here.
+  if wants_gui(argv) {
+    launch_studio(argv)
     return
   }
   let first = argv[0]

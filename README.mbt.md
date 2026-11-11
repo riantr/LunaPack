@@ -157,7 +157,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.17
+moon add riantr/LunaPack@0.1.18
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -165,7 +165,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.17",
+  "riantr/LunaPack@0.1.18",
 }
 ```
 
@@ -185,7 +185,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.17`, `>=0.1.17`, `0.1` and `v0.1.17` are all rejected. A bare
+`latest`, `^0.1.18`, `>=0.1.18`, `0.1` and `v0.1.18` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -223,6 +223,65 @@ serves the **current** release, so the runner's version moves with it. That is
 the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
+
+### What changed in 0.1.18
+
+- **LunaPack and LunaPack Studio are one product.** There is one version, one
+  tag and one GitHub release. Studio is an optional asset of that release, not
+  a second package on Mooncakes and not a separately numbered program. The
+  `0.1.18` in `moon.mod`, in `CLI_VERSION` and in the Studio window are the
+  same number; a whitebox test reads `moon.mod` and refuses to let them drift.
+
+- **`--GUI` opens the graphical front end.** `lunapack --GUI` finds a Studio
+  build next to the CLI (or in the versioned cache), downloads
+  `lunapack-studio-<os>-<arch>.zip` from this version's release when it is
+  missing, and shows a live progress bar while it streams the archive. The
+  download is extracted in pure MoonBit - no `unzip`, `tar` or PowerShell is
+  needed - and entry names are checked so a crafted archive cannot write
+  outside the install directory. `HTTPS_PROXY` / `NO_PROXY` are honoured, and
+  loopback mirrors always bypass the proxy.
+
+  ```bash
+  lunapack --GUI
+  lunapack --GUI --input-file=./myapp.exe --output-file=./myapp-bundle.exe \
+           --Files=./assets --Files=./docs --compression-method=lz4
+  ```
+
+  The flags are **forwarded, not acted on**: the window opens with those
+  fields already filled in. `--cli=<path>` is added automatically so the
+  window drives the very LunaPack that started it, even when Studio was
+  downloaded into a cache folder far from the checkout. Override the location
+  with `LUNAPACK_STUDIO`, the cache with `LUNAPACK_STUDIO_HOME`, or the source
+  with `LUNAPACK_STUDIO_URL` (useful for a mirror or an air-gapped install).
+
+- **The flag documentation now matches the parser.** The no-subcommand
+  (`moonx riantr/LunaPack@latest ...`) front end reads `--input-exe` /
+  `--input-file` and `--output-exe` / `--output-file`. The `bundle`
+  **subcommand** reads `-i` / `--input` and `-o` / `--output`. The long
+  `-exe` / `-file` spellings pass the unknown-flag check but are ignored by
+  `bundle`, which then reports *"bundle requires -i <input_exe> and -o
+  <output_exe>"*. This was found by driving a real `bundle` with those flags;
+  the examples below now say which form each flag belongs to.
+
+- **Startup arguments are part of the contract.** Studio parses every alias in
+  both `--flag value` and `--flag=value` form, including repeatable `--Files`,
+  and folds them into its form. Empty forwarded fields keep the defaults; an
+  explicit `--cli` is never overwritten by auto-discovery.
+
+- **Two defects found by running the real 188 MB asset.** Windows packers
+  write `\` as the separator inside a zip; taken verbatim those names became
+  mixed-separator paths and `@fs.mkdir` reported *"The system cannot find the
+  path specified"*. Entry names are normalised to `/` before any path is
+  built, and a trailing separator no longer turns a directory entry into a
+  file. Separately, a window that inherits the CLI's stdout keeps a pipe open
+  forever, so `lunapack --GUI | ...` never saw EOF; Studio's output now goes
+  to `studio.log` beside the installed window, with inherited streams as a
+  fallback. A real 246-file / 419 MB extraction now completes.
+
+- The suite grew from 135 to **150 tests** on both the native and the Wasm
+  backend. The new cases cover GUI-flag detection, argument forwarding,
+  download URL construction, proxy bypass, redirect resolution, Windows zip
+  separators, zip-slip rejection and the version/asset-name drift detector.
 
 ### What changed in 0.1.17
 
@@ -685,7 +744,18 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-The release is built by a GitHub workflow when a version tag such as `v0.1.17`
+| `lunapack-studio-windows-x86_64.zip` | **LunaPack Studio**, the graphical front end of this same release |
+
+LunaPack and LunaPack Studio are **not two packages**. Studio has no version
+of its own and is not published to Mooncakes: it is an optional asset attached
+to the same release as the CLI, and the CLI knows which asset to ask for
+because both carry the version in `moon.mod`. `lunapack --GUI` downloads it
+on first use, so a user who only wants the command line never pays for the
+188 MB window and a user who wants the window never has to find a second
+download. Assets for other platforms are named
+`lunapack-studio-<os>-<arch>.zip` and are added as those builds exist.
+
+The release is built by a GitHub workflow when a version tag such as `v0.1.18`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1160,6 +1230,48 @@ program find the files that were packed next to it. A relative path given on
 the command line is therefore read relative to the cache directory; pass an
 absolute path if the caller's directory is what matters.
 
+### The graphical front end (`--GUI`)
+
+```bash
+lunapack --GUI
+lunapack --GUI --input-file=./myapp.exe --output-file=./myapp-bundle.exe \
+         --Files=./assets --compression-method=lz4 --name=demo --version=1.0.0
+```
+
+`--GUI` is a front end of its own, not a flag on a subcommand. It opens
+**LunaPack Studio** with the flags above already filled in, so the window is a
+review-and-press-Process step rather than a form to start from scratch. The
+switch may appear anywhere on the command line. Everything the user typed is
+forwarded unchanged, plus `--cli=<this executable>` so the window drives the
+same LunaPack.
+
+Studio is looked for in this order:
+
+| Where | Controlled by |
+| --- | --- |
+| an explicit executable or directory | `LUNAPACK_STUDIO` |
+| beside this CLI, or in a sibling `LunaPackGUI/dist/` checkout | - |
+| `%LOCALAPPDATA%/LunaPack/Studio/<version>/` (or `$XDG_CACHE_HOME`, `$HOME/.cache`) | `LUNAPACK_STUDIO_HOME` |
+
+If none exists, the CLI downloads `lunapack-studio-<os>-<arch>.zip` from
+`https://github.com/riantr/LunaPack/releases/download/v<version>/`, prints a
+progress bar on stdout while it streams, extracts it into the versioned cache
+and starts it. The cache is versioned so a newer CLI never silently opens an
+older window. A mirror or an offline install can set `LUNAPACK_STUDIO_URL` to
+any URL (or a `file` served over loopback in a test); a bad archive is refused
+with a message naming the reason.
+
+`HTTPS_PROXY`, `HTTP_PROXY` and their lowercase forms are honoured through a
+CONNECT tunnel. `NO_PROXY` (including its `*` wildcard) and all loopback hosts
+are always contacted directly, so a local mirror is not sent out through a
+corporate proxy. The window's own output is written to `studio.log` beside the
+installed Studio rather than inheriting the CLI's stdout, which keeps
+`lunapack --GUI | ...` from hanging while the window is open.
+
+The Wasm / `moonx` build cannot open a window. On that target `--GUI` prints
+the asset URL it would have downloaded and exits with an error instead of
+pretending to succeed.
+
 ### The subcommands
 
 ```bash
@@ -1173,6 +1285,15 @@ lunapack keygen --public-key <file> --secret-key <file>
 ```
 
 Flags accept both `--flag=value` and `--flag value`.
+
+> **Which flag names does `bundle` actually read?** Only `-i` / `--input` and
+> `-o` / `--output`. The `--input-exe`, `--input-file`, `--output-exe` and
+> `--output-file` spellings belong to the **no-subcommand** front end used by
+> `moonx riantr/LunaPack@latest ...` (and to `--GUI`, which forwards them to
+> the window). They are in the known-flag list so they are not reported as
+> typos, but `do_bundle` does not consume them: passing them to `bundle`
+> produces *"bundle requires -i <input_exe> and -o <output_exe>"*. The
+> examples in this file use the form that matches the command they show.
 
 `verify` checks the package itself. `verify <package> --extracted <dir>` also
 checks the files that are already in `dir` against the fingerprints of the
@@ -1248,8 +1369,10 @@ on every platform, Windows included, so the path is the same everywhere.
 
 | Option | Meaning |
 | --- | --- |
-| `--input-file <path>` | another name for `--input-exe` |
-| `--output-file <path>` | another name for `--output-exe` |
+| `--input-file <path>` | another name for `--input-exe` in the no-subcommand / `--GUI` form only |
+| `--output-file <path>` | another name for `--output-exe` in the no-subcommand / `--GUI` form only |
+| `--input <path>` / `-i` | the input of the `bundle`, `pack` and `unpack` subcommands |
+| `--output <path>` / `-o` | the output of those subcommands |
 | `--name <name>` | package name (default: input dir / exe name) |
 | `--version <ver>` | package version (default: `0.1.0`) |
 | `--os <os>` | target OS tag (default: detected) |
@@ -1346,7 +1469,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **135 tests, 135 passed, 0 failed**, and `--target wasm`
+native` reports **150 tests, 150 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1498,6 +1621,13 @@ lunapack bundle -i ./build/myapp -o ./dist/myapp --Files ./build
 ./dist/myapp --version
 ```
 
+Or review the same job in a window. Studio is part of this release and is
+downloaded on first use:
+
+```sh
+lunapack --GUI --input-file=./build/myapp --output-file=./dist/myapp --Files=./build
+```
+
 Or produce a plain archive and take it apart again:
 
 ```sh
@@ -1509,7 +1639,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 135 tests
+moon test                                  # 150 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```

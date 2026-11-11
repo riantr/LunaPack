@@ -8,6 +8,8 @@ import {
   "moonbitlang/core/async/fs",
   "moonbitlang/core/async/shell",
   "moonbitlang/core/async/process",
+  "moonbitlang/core/async/http",
+  "moonbitlang/core/async/stdio",
   "moonbitlang/core/compress/gzip",
   "moonbitlang/core/compress/flate",
 }
@@ -22,6 +24,8 @@ options(
     "moonbitlang/core/async/fs",
     "moonbitlang/core/async/shell",
     "moonbitlang/core/async/process",
+    "moonbitlang/core/async/http",
+    "moonbitlang/core/async/stdio",
     "moonbitlang/core/compress/gzip",
     "moonbitlang/core/compress/flate",
   ],

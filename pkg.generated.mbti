@@ -4,6 +4,8 @@ package "riantr/LunaPack"
 // Values
 pub const CHECKSUM_ALGO : String = "sha256"
 
+pub const CLI_VERSION : String = "0.1.18"
+
 pub const FORMAT_VERSION : Int32 = 6
 
 pub const GZIP_LEVEL : Int32 = 1
@@ -122,6 +124,8 @@ pub fn extract_icon(PeFile) -> (Int64, Bytes, Array[(Int64, Bytes)])? raise
 
 pub async fn extract_to(String, String, PackageKey?) -> Unit
 
+pub async fn extract_zip(Bytes, String) -> Unit
+
 pub async fn file_md5_hex(String) -> String
 
 pub fn find_resource(PeFile, Int64, Int64, Int64) -> (Int64, Int64)? raise
@@ -154,6 +158,8 @@ pub fn is_integrity_block(Bytes) -> Bool
 
 pub fn is_integrity_block_encrypted(Bytes) -> Bool
 
+pub fn is_loopback_url(String) -> Bool
+
 pub fn is_native_target() -> Bool
 
 pub async fn is_protected_key_file(String) -> Bool
@@ -161,6 +167,8 @@ pub async fn is_protected_key_file(String) -> Bool
 pub fn iso8601_utc(UInt64) -> String
 
 pub fn json_to_manifest(String) -> Manifest raise
+
+pub async fn launch_studio(ArrayView[String]) -> Unit
 
 pub fn le8_to_i64(Bytes, Int32) -> Int64
 
@@ -203,6 +211,8 @@ pub fn new_script(String, String) -> Script
 pub fn new_sealed_package(Bytes, Bytes, Bytes, Bytes) -> SealedPackage
 
 pub fn norm_sep(String) -> String
+
+pub fn normalized_zip_name(String) -> String
 
 pub fn not_self_extracting_message(String) -> String
 
@@ -296,6 +306,12 @@ pub fn signature_to_text(PackageSignature) -> String
 
 pub fn string_to_utf8_bytes(String) -> Bytes
 
+pub fn studio_asset_name() -> String
+
+pub fn studio_dir() -> String
+
+pub fn studio_release_url() -> String
+
 pub fn text_lines(String) -> Array[String]
 
 pub fn truncate_bytes(Bytes, Int32) -> Bytes
@@ -313,6 +329,8 @@ pub async fn verify_extracted_dir(String, String) -> Bool
 pub async fn verify_package_digest(String, String) -> Bool
 
 pub async fn verify_package_signature(String, PackageSignature, Bytes) -> Bool
+
+pub fn wants_gui(ArrayView[String]) -> Bool
 
 pub fn with_defaults(PackOptions, String, String, String, String) -> PackOptions
 
@@ -468,6 +486,8 @@ pub struct Sha512 {
 pub fn Sha512::Sha512() -> Self
 pub fn Sha512::finish(Self) -> Bytes
 pub fn Sha512::update(Self, Bytes) -> Unit
+
+type ZipEntry
 
 // Type aliases
 

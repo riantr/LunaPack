@@ -8,6 +8,13 @@ name: Release
 #
 # The same tag is also published to the Mooncakes registry so that
 # `moonx riantr/LunaPack@latest` resolves.
+#
+# LunaPack Studio is part of this one release, not a separate package. Its
+# zip is built with proton_cli in the sibling Studio workspace and attached
+# alongside these binaries with:
+#   gh release upload "$TAG" lunapack-studio-<os>-<arch>.zip --clobber
+# `lunapack --GUI` downloads that asset by name from this very release, so
+# the asset name must stay in step with studio_asset_name() in studio.mbt.
 
 on:
   push:
@@ -354,6 +361,13 @@ jobs:
               NOTES="$NOTES"$'\n\n'"The binary $name is not part of this release: the runner that builds it was not available when the tag was pushed."
             fi
           done
+          # Studio is built outside CI (proton_cli + CEF is a Windows desktop
+          # toolchain). A release without its asset still works on the command
+          # line, but `lunapack --GUI` has nothing to download, so the notes
+          # say so instead of leaving a silent 404.
+          if ! ls artifacts/lunapack-studio-*.zip >/dev/null 2>&1; then
+            NOTES="$NOTES"$'\n\n'"LunaPack Studio is not attached to this release yet. Build it with proton_cli package --release in the Studio workspace and upload lunapack-studio-<os>-<arch>.zip here; lunapack --GUI downloads that asset by name."
+          fi
           # A tag that already carries a release is reused, so re-running the
           # workflow replaces the assets instead of failing.
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -374,3 +388,12 @@ jobs:
         run: |
           gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets \
             --jq '{tag: .tagName, name: .name, draft: .isDraft, prerelease: .isPrerelease, assets: [.assets[] | .name]}'
+          # A missing Studio asset is a warning, not a failed release: the CLI
+          # binaries above are complete and the asset can be attached later.
+          STUDIO=$(gh release view "$TAG" --json assets \
+            --jq '[.assets[].name | select(startswith("lunapack-studio-"))] | length')
+          if [ "$STUDIO" = "0" ]; then
+            echo "::warning::no lunapack-studio-*.zip asset; --GUI cannot auto-download until it is uploaded"
+          else
+            echo "Studio assets attached: $STUDIO"
+          fi
