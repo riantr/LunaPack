@@ -224,6 +224,14 @@ the toolchain this release was **verified** against, not a tested **minimum**:
 no older toolchain has been exercised here, and quoting a lower bound nobody
 ran would be a claim, not a fact.
 
+That moving target is not theoretical. `moonbitlang/core/async/process`
+changed its output API between those two generations: `redirect_to_file()`
+used to return a `&ProcessOutput` trait object and now returns a
+`SharedProcessOutput`, while `spawn_orphan()` now expects a `ProcessOutput`
+enum variant instead. The first 0.1.18 tag failed on every runner for exactly
+this reason. The Studio launcher was rewritten to use only the arguments the
+two signatures share, so the published source compiles on either toolchain.
+
 ### What changed in 0.1.18
 
 - **LunaPack and LunaPack Studio are one product.** There is one version, one
@@ -273,10 +281,14 @@ ran would be a claim, not a fact.
   mixed-separator paths and `@fs.mkdir` reported *"The system cannot find the
   path specified"*. Entry names are normalised to `/` before any path is
   built, and a trailing separator no longer turns a directory entry into a
-  file. Separately, a window that inherits the CLI's stdout keeps a pipe open
-  forever, so `lunapack --GUI | ...` never saw EOF; Studio's output now goes
-  to `studio.log` beside the installed window, with inherited streams as a
-  fallback. A real 246-file / 419 MB extraction now completes.
+  file. A real 246-file / 419 MB extraction now completes. The other defect
+  was a window that inherits the CLI's stdout and keeps a pipe open, so
+  `lunapack --GUI | ...` never saw EOF. Redirecting the child's streams into
+  `studio.log` fixed it on the development toolchain, but the `@process`
+  output API then changed shape (see above) and no `stdout=`/`stderr=`
+  argument can be written that compiles on every toolchain. Since this module
+  ships as source, portability wins: the streams are inherited and a piped
+  invocation reaches EOF when the window is closed.
 
 - The suite grew from 135 to **150 tests** on both the native and the Wasm
   backend. The new cases cover GUI-flag detection, argument forwarding,
@@ -1264,9 +1276,10 @@ with a message naming the reason.
 `HTTPS_PROXY`, `HTTP_PROXY` and their lowercase forms are honoured through a
 CONNECT tunnel. `NO_PROXY` (including its `*` wildcard) and all loopback hosts
 are always contacted directly, so a local mirror is not sent out through a
-corporate proxy. The window's own output is written to `studio.log` beside the
-installed Studio rather than inheriting the CLI's stdout, which keeps
-`lunapack --GUI | ...` from hanging while the window is open.
+corporate proxy. The window inherits the CLI's stdout and stderr: the
+`@process` APIs that would redirect them are not stable across toolchains,
+and a GUI window writes nothing to the console in normal use. A piped
+`lunapack --GUI | ...` therefore reaches EOF when the window is closed.
 
 The Wasm / `moonx` build cannot open a window. On that target `--GUI` prints
 the asset URL it would have downloaded and exits with an error instead of

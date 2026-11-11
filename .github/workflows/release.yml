@@ -294,12 +294,14 @@ jobs:
             echo "::warning::no registry token, skipping"
             exit 0
           fi
-          # The registry refuses a version that already exists, which happens
-          # when the workflow is re-run for a tag that was published before.
-          # That is not a failure of the release: the GitHub Release is still
-          # updated with the freshly built binaries.
+          # A re-run for a tag that was published before makes the registry
+          # refuse the duplicate version. That is not a failure of the
+          # release: the GitHub Release is still updated with the freshly
+          # built binaries. `moon publish` also type-checks the project first,
+          # so other failures (a broken build, an expired token, no network)
+          # land here too - keep the wording honest about all of them.
           moon publish || {
-            echo "::warning::the version is already published, continuing"
+            echo "::warning::moon publish failed (the version may already exist); continuing so the GitHub Release is still updated"
           }
 
   # ---------------------------------------------------------------------------

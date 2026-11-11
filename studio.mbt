@@ -466,35 +466,23 @@ async fn install_studio(url : String) -> String {
 }
 
 ///|
-/// Start the window without holding the caller's stdout open. A GUI process
-/// that inherits a pipe keeps the writer alive, so `lunapack --GUI | ...`
-/// would never see EOF even after the CLI has exited. Studio's own output goes
-/// to a log beside the installed window; if that file cannot be created, the
-/// streams are inherited as a fallback rather than failing to launch.
+/// Start the window.
+///
+/// The child's stdout/stderr are deliberately left inherited. Redirecting
+/// them into a log would keep `lunapack --GUI | ...` from blocking on a pipe,
+/// but the `@process` output API is not stable across MoonBit toolchains:
+/// older ones expose `redirect_to_file() -> &ProcessOutput` (a trait object),
+/// while newer ones return `SharedProcessOutput` and expect a `ProcessOutput`
+/// enum variant in `spawn_orphan`. LunaPack is published as source and is
+/// built with whatever toolchain the user has, so no `stdout=`/`stderr=`
+/// argument can be written that compiles on every generation. Portability
+/// wins here: Studio is a windowed application and writes nothing to the
+/// console in normal use. When stdout is a pipe, the window holds it until
+/// it is closed.
 async fn spawn_studio(exe : String, args : Array[String]) -> Unit {
-  let log = studio_dir() + "/studio.log"
-  let redirected = try {
-    let out = @process.redirect_to_file(log, append=true)
-    let err = @process.redirect_to_file(log, append=true)
-    ignore(
-      @process.spawn_orphan(
-        exe,
-        args,
-        cwd=dirname(exe),
-        no_console_window=true,
-        stdout=out,
-        stderr=err,
-      ),
-    )
-    true
-  } catch {
-    _ => false
-  }
-  if !redirected {
-    ignore(
-      @process.spawn_orphan(exe, args, cwd=dirname(exe), no_console_window=true),
-    )
-  }
+  ignore(
+    @process.spawn_orphan(exe, args, cwd=dirname(exe), no_console_window=true),
+  )
 }
 
 ///|
