@@ -244,10 +244,89 @@ async test "the cache is only used again when it holds what the package carries"
   let manifest = read_package_manifest(pkg)
   let dir = @fs.tmpdir(prefix="lunapack_cache_dir")
   extract_to(pkg, dir, None)
-  assert_true(cache_matches(manifest, dir))
+  assert_true(cache_matches_reporting(manifest, dir, None))
   // The file in the cache is changed after it was unpacked.
   @fs.write_text(dir + "/a.txt", "tampered\n")
-  assert_true(!cache_matches(manifest, dir))
+  assert_true(!cache_matches_reporting(manifest, dir, None))
+}
+
+///|
+/// The files of a cache that is used again are checked one by one, and the
+/// caller is told.
+///
+/// The check of a cache that is used again reads the whole payload back from
+/// the disk, and that is half of what a warm start spends its time on. A
+/// start that says nothing while it does so looks like a start that hangs.
+async test "the files of a cache that is used again are counted one by one" {
+  let src = @fs.tmpdir(prefix="lunapack_warm_src")
+  @fs.write_text(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let manifest = read_package_manifest(pkg)
+  // The bundle is in a folder of its own, so the cache is the one next to it.
+  let home = @fs.tmpdir(prefix="lunapack_warm_home")
+  let exe = home + "/demo.exe"
+  // The first start unpacks the payload and leaves the cache behind.
+  assert_true(extract_to_cache(pkg, exe, manifest, None, None, None) is Some(_))
+  // The second start finds that cache, and the check of it is reported.
+  let told : Array[Int32] = []
+  let tell = fn(
+    _index : Int32,
+    _done : Int64,
+    _total : Int64,
+    _path : String,
+  ) -> Unit {
+    told.push(1)
+  }
+  assert_true(
+    extract_to_cache(pkg, exe, manifest, None, None, Some(tell)) is Some(_),
+  )
+  assert_eq(told.length(), manifest.entries.length())
+}
+
+///|
+/// The cache of a bundle that cannot be written next to it is found again on
+/// the next start.
+///
+/// The folder next to the executable is the best place for the payload, but
+/// there are places where it cannot be written to. The payload goes to the
+/// cache of the user then, and that folder has to be the same on every start:
+/// a folder of its own on every start is a payload that is unpacked again on
+/// every start, and the unpacking is the whole cost of a start.
+async test "the cache of a bundle that cannot be written next to it is found again" {
+  let src = @fs.tmpdir(prefix="lunapack_fallback_src")
+  @fs.write_text(src + "/a.txt", "hello\n")
+  let pkg = src + "/demo.appkg"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  pack(src, pkg, opts)
+  let manifest = read_package_manifest(pkg)
+  // The folder of the bundle cannot be a folder: a file is in the way of it.
+  let blocked = src + "/blocked"
+  @fs.write_text(blocked, "a file where a folder should be\n")
+  let exe = blocked + "/demo.exe"
+  // The cache of the user is named by the environment.
+  let home = norm_sep(@fs.tmpdir(prefix="lunapack_fallback_home"))
+  @env.set_env_var("LUNAPACK_CACHE_HOME", home)
+  let first = cache_dir(exe, package_tag(manifest))
+  let second = cache_dir(exe, package_tag(manifest))
+  @env.set_env_var("LUNAPACK_CACHE_HOME", "")
+  // The same folder on both starts, and it is the one that was named.
+  assert_eq(first, second)
+  assert_true(first.length() > home.length())
+  assert_eq(first[0:home.length()], home)
 }
 
 ///|

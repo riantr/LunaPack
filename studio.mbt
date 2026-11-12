@@ -128,14 +128,6 @@ pub fn studio_release_url() -> String {
 }
 
 ///|
-fn env_or(name : String) -> String {
-  match @env.get_env_var(name) {
-    Some(v) => v
-    None => ""
-  }
-}
-
-///|
 /// Where a downloaded Studio lives. The directory is versioned, so a newer
 /// CLI does not silently start an older window.
 pub fn studio_dir() -> String {

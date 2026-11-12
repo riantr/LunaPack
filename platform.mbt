@@ -62,6 +62,19 @@ pub fn norm_sep(p : String) -> String {
 }
 
 ///|
+/// The value of an environment variable, or "" when it is not set.
+///
+/// The folder a thing belongs to is often named by the environment, and the
+/// name of the variable is different on every platform; this is the one place
+/// that reads them.
+fn env_or(name : String) -> String {
+  match @env.get_env_var(name) {
+    Some(v) => v
+    None => ""
+  }
+}
+
+///|
 /// Map a machine-specific architecture name onto a portable one.
 fn normalize_arch(raw : String) -> String {
   if raw == "AMD64" || raw == "amd64" || raw == "x86_64" || raw == "x64" {

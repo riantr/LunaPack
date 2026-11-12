@@ -864,6 +864,20 @@ LunaPack: starting D:/apps/.lunapack/9c445884d23653fb/myapp.exe
 The payload is cached in `.lunapack/<hash>/` next to the executable, so the
 second start is immediate. Delete that folder to force a fresh extraction.
 
+When that folder cannot be written to — a read-only medium, a folder the user
+may not touch — the payload goes to the cache of the user instead:
+`%LOCALAPPDATA%/LunaPack/cache/<hash>/` on Windows, `$XDG_CACHE_HOME/lunapack/`
+or `$HOME/.cache/lunapack/` elsewhere. `LUNAPACK_CACHE_HOME` names that place
+itself and takes precedence over all of them. That folder is the same on every
+start, so the payload is unpacked once there too; the temporary folder of the
+system is only used when none of them can be written to.
+
+The first start unpacks the payload and then reads it back, and both passes
+draw a bar (`unpack`, then `verify`) when the bundle has a console of its own.
+A start that finds the cache still reads the whole payload back — that is what
+proves the cache still holds what the package carries — and it draws the
+`verify` bar while it does so.
+
 Because the launcher does the extraction, the application finds its own
 dependencies (`.dll`, `.json`, assets) exactly like it would in its build
 folder — a plain copy of the executable would not run at all.
@@ -1524,7 +1538,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **153 tests, 153 passed, 0 failed**, and `--target wasm`
+native` reports **158 tests, 158 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1601,6 +1615,8 @@ alone, or the guard is not covered by a test at all.
 | the answer of the console | only a key press answers a question |
 | the second spelling of the folder flag | the folder flag is read under both spellings |
 | the platform flag | the platform flag is a flag the tool knows |
+| the report of the check of a cache that is used again | the files of a cache that is used again are counted one by one |
+| the folder of the cache of a bundle that cannot be written next to it | the cache of a bundle that cannot be written next to it is found again |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -1652,7 +1668,12 @@ it no longer depends on a host with a POSIX shell to be checked.
   payload inside the application executable — such a bundle holds the data but
   does not extract itself.
 - The extraction cache lives next to the bundle (`.lunapack/<hash>/`). When
-  that folder cannot be written, a temporary directory is used instead.
+  that folder cannot be written, the cache of the user is used instead
+  (`%LOCALAPPDATA%/LunaPack/cache/<hash>/`, or `$XDG_CACHE_HOME`, `$HOME/.cache`,
+  or `LUNAPACK_CACHE_HOME`). That place is the same on every start, so the
+  payload is unpacked once there as well; only when none of them can be written
+  to does the temporary folder of the system take the payload, and that folder
+  is then used for that one start only.
 - Copying the icon is Windows only, because an icon is a Windows resource.
 - Bundling writes the archive to a temporary file next to the output, so there
   must be enough free disk space for it.
@@ -1694,7 +1715,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 153 tests
+moon test                                  # 158 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```

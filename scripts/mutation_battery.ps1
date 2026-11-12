@@ -315,5 +315,31 @@ Run-Mutation 'platform flag' 'cli.mbt' `
   '' '' `
   'the platform flag is a flag the tool knows'
 
+# 20. The check of a cache that is used again is not reported.
+#
+# The cache of a bundle is checked against the package on every start, and
+# that check reads the whole payload back from the disk: it is half of what a
+# warm start spends its time on. With the reporter taken out of it, a warm
+# start draws nothing while it reads a hundred megabytes back, and a start
+# that says nothing looks like a start that hangs.
+Run-Mutation 'warm check report' 'launcher.mbt' `
+  '  if path_exists(marker) && cache_matches_reporting(m, dir, verify_report) {' `
+  '  if path_exists(marker) && cache_matches_reporting(m, dir, None) {' `
+  '' '' `
+  'the files of a cache that is used again are counted one by one'
+
+# 21. The cache of a bundle is a folder of its own on every start.
+#
+# The folder next to the executable cannot always be written to, and the
+# payload goes to the cache of the user then. That folder has to be the same
+# on every start: `@fs.tmpdir` makes a folder of its own on every call and
+# never uses one twice, so a payload kept there is unpacked again on the next
+# start, and the unpacking is the whole cost of a start.
+Run-Mutation 'stable fallback cache' 'launcher.mbt' `
+  '  fallback_cache_dir(tag)' `
+  '  @fs.tmpdir(prefix="lunapack-" + tag)' `
+  '' '' `
+  'the cache of a bundle that cannot be written next to it is found again'
+
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

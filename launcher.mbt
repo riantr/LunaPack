@@ -814,19 +814,92 @@ pub fn package_tag_of(text : String) -> String {
 /// The folder next to the executable is the best place for it: the payload
 /// stays with the file it belongs to. When that folder cannot be written
 /// to - a read-only medium, a folder the user may not touch - the payload
-/// goes to the temporary folder of the system instead, under a name that
-/// depends on the package, so that it is found again on the next start.
+/// goes to the cache of the user instead, under a name that depends on the
+/// package, so that it is found again on the next start.
 async fn cache_dir(exe_path : String, tag : String) -> String {
   let dir = dirname(exe_path)
   if dir != "" {
     let near = dir + "/.lunapack/" + tag
-    if @fs.exists(near) || writable_dir(near) {
+    if path_exists(near) || writable_dir(near) {
       return near
     }
   }
-  // The temporary folder of the system, under a name of its own, so that
-  // the payload is only unpacked once.
-  @fs.tmpdir(prefix="lunapack-" + tag)
+  fallback_cache_dir(tag)
+}
+
+///|
+/// The folder a payload is cached in when the folder next to the executable
+/// cannot be used.
+///
+/// The folder is the same on every start, and the name of the package is part
+/// of it, so that the payload is unpacked once and found again on the next
+/// start.
+///
+/// `@fs.tmpdir` is not used for this. It makes a folder of its own on every
+/// call and never uses one twice, so a payload kept there is unpacked again
+/// on the next start: a whole extraction, forty seconds, every single time.
+async fn fallback_cache_dir(tag : String) -> String {
+  for root in fallback_cache_roots() {
+    let candidate = root + "/" + tag
+    if path_exists(candidate) || writable_dir(candidate) {
+      return candidate
+    }
+  }
+  ""
+}
+
+///|
+/// The folders a payload may be cached in, most specific first.
+///
+/// These are the places the user keeps what belongs to them: the folder the
+/// environment names, the cache of the user on this platform, and the
+/// temporary folder of the system. The first one that can be created is the
+/// one that is used, so that a cache which cannot be written to falls through
+/// to the next one rather than failing the start.
+fn fallback_cache_roots() -> Array[String] {
+  let out : Array[String] = []
+  let named = env_or("LUNAPACK_CACHE_HOME")
+  if named != "" {
+    out.push(norm_sep(named) + "/lunapack")
+  }
+  let appdata = env_or("LOCALAPPDATA")
+  if appdata != "" {
+    out.push(norm_sep(appdata) + "/LunaPack/cache")
+  }
+  let xdg = env_or("XDG_CACHE_HOME")
+  if xdg != "" {
+    out.push(norm_sep(xdg) + "/lunapack")
+  }
+  let user = env_or("HOME")
+  if user != "" {
+    out.push(norm_sep(user) + "/.cache/lunapack")
+  }
+  let tmpdir = env_or("TMPDIR")
+  if tmpdir != "" {
+    out.push(norm_sep(tmpdir) + "/lunapack")
+  }
+  let temp = env_or("TEMP")
+  if temp != "" {
+    out.push(norm_sep(temp) + "/lunapack")
+  }
+  if out.length() == 0 {
+    out.push(".lunapack/cache")
+  }
+  out
+}
+
+///|
+/// Is there something at `path`?
+///
+/// A path that cannot even be looked at - a file in the way of it, a folder
+/// that may not be read - is answered with "no". The question is asked about
+/// the place a payload may be put, and a place that cannot be looked at is
+/// not a place a payload can be put in. Asking it must not be the end of a
+/// start: the launcher has a second place to try.
+async fn path_exists(path : String) -> Bool {
+  @fs.exists(path) catch {
+    _ => false
+  }
 }
 
 ///|
@@ -846,16 +919,11 @@ async fn writable_dir(path : String) -> Bool {
 /// The cache is used again only when it is the cache of this package: a
 /// file that was changed after it was unpacked is not what the package says
 /// it is, and the payload is unpacked again in that case.
-async fn cache_matches(m : Manifest, dir : String) -> Bool {
-  cache_matches_reporting(m, dir, None)
-}
-
-///|
-/// The same, telling a caller how far it has come after every file.
 ///
-/// This is the pass that reads a hundred megabytes back from the disk, so it
-/// is half of what a first start spends its time on, and a bar that covered
-/// only the unpacking would stop at 50% and then sit there.
+/// The caller is told how far it has come after every file, when it wants to
+/// be told. This is the pass that reads a hundred megabytes back from the
+/// disk, so it is half of what a first start spends its time on, and a bar
+/// that covered only the unpacking would stop at 50% and then sit there.
 async fn cache_matches_reporting(
   m : Manifest,
   dir : String,
@@ -866,7 +934,7 @@ async fn cache_matches_reporting(
   let mut index = 0
   for e in m.entries {
     let path = dir + "/" + e.path
-    if !@fs.exists(path) {
+    if !path_exists(path) {
       return false
     }
     let data = @fs.read_binary(path)
@@ -894,7 +962,7 @@ async fn program_matches(m : Manifest, path : String) -> Bool {
     if e.path != m.main_program {
       continue
     }
-    if !@fs.exists(path) {
+    if !path_exists(path) {
       return false
     }
     let data = @fs.read_binary(path)
@@ -914,7 +982,7 @@ async fn complete_cache(exe_path : String, m : Manifest) -> Bool {
   if dir == "" {
     return false
   }
-  @fs.exists(dir + "/.lunapack-complete")
+  path_exists(dir + "/.lunapack-complete")
 }
 
 ///|
@@ -934,7 +1002,7 @@ async fn extract_to_cache(
     return None
   }
   let marker = dir + "/.lunapack-complete"
-  if @fs.exists(marker) && cache_matches(m, dir) {
+  if path_exists(marker) && cache_matches_reporting(m, dir, verify_report) {
     // The cache holds the files the package carries, so it is used again.
     return Some(dir)
   }
@@ -997,7 +1065,7 @@ async fn accept_cache_reporting(
 /// fails when there is none. So the folder is looked at before it is
 /// removed.
 pub async fn remove_dir(path : String) -> Unit {
-  if !@fs.exists(path) {
+  if !path_exists(path) {
     return
   }
   @fs.rmdir(path, recursive=true, allow_missing=true) catch {
@@ -1155,11 +1223,23 @@ pub async fn try_launch_self_extracting() -> Bool {
     extract_to_cache(exe, exe, m, key, unpack_report, verify_report) {
     Some(d) => d
     None => {
-      // The folder next to the executable is not usable, fall back to a
-      // temporary directory. What is unpacked there is read back in the same
-      // way, because a payload that did not arrive in full is not something
-      // to start from anywhere.
-      let d = @fs.tmpdir(prefix="lunapack")
+      // The cache could not be used, so the payload is unpacked into the
+      // cache of the user instead - the same folder the cache itself would
+      // have used, so that the next start finds it there. What is unpacked
+      // there is read back in the same way, because a payload that did not
+      // arrive in full is not something to start from anywhere.
+      let d = match fallback_cache_dir(package_tag(m)) {
+        "" =>
+          // Nothing on the disk can be written to. The temporary folder of
+          // the system is the last place there is.
+          @fs.tmpdir(prefix="lunapack")
+        p => {
+          // What is in there is what a failed attempt left behind, and it is
+          // emptied, so that what is unpacked here is the whole payload.
+          remove_dir(p)
+          p
+        }
+      }
       eprintln("LunaPack: extracting " + m.main_program + " to " + d)
       extract_to_reporting(exe, d, key, unpack_report)
       match accept_cache_reporting(m, d, verify_report) {
