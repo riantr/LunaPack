@@ -232,6 +232,46 @@ enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
 
+### What changed in 0.1.21
+
+- **A warm start shows a bar.** A bundle that is started a second time does
+  not unpack the payload again: it reads the payload back and compares it with
+  the package, which is what proves the cache still holds what it belongs to.
+  That read-back now tells the caller how far it has come, so a bundle that
+  owns a console draws a `verify` bar while it reads the payload back. Before
+  this, a warm start drew nothing at all while it read a hundred megabytes
+  from the disk, and a start that says nothing looks like a start that hangs.
+
+  Measured on a bundle of 151 files (150 MB) that owns a console: the start
+  after the first drew 151 `verify` frames where it had drawn none.
+
+- **The payload of a bundle that cannot be unpacked next to it is cached
+  anyway.** The folder next to the executable cannot always be written to, and
+  the payload used to go to a folder made by `@fs.tmpdir` — which makes a
+  folder of its own on every call and never uses one twice. The cache was
+  therefore never reused: every start unpacked the whole payload again, into a
+  folder that was thrown away at the end of it. The payload goes to the cache
+  of the user instead — `%LOCALAPPDATA%/LunaPack/cache/<hash>/` on Windows,
+  `$XDG_CACHE_HOME/lunapack/` or `$HOME/.cache/lunapack/` elsewhere, and
+  `LUNAPACK_CACHE_HOME` names the place itself — which is the same on every
+  start. The temporary folder of the system is only used when none of them
+  can be written to, and then for that one start only.
+
+  Measured on the same bundle, with the folder next to it made unusable: the
+  start after the first went from 16.4 s to 4.1 s, and it stopped leaving a
+  copy of the payload behind in the temporary folder.
+
+- **A path that cannot be looked at is answered with "no".** `@fs.exists`
+  raises when the path cannot be looked at — a file in the way of a folder is
+  such a path — and the launcher asked it about the places it was about to
+  write to. The answer ended the start. The launcher now goes on to the next
+  place instead.
+
+- **The generated interface of the package is up to date.** The 0.1.20
+  release shipped the three functions of the launcher auto-download without
+  regenerating `pkg.generated.mbti`, so the committed interface still said
+  0.1.19. The file is now what `moon info` produces.
+
 ### What changed in 0.1.20
 
 - **`--launcher` auto-download.** A self-extracting bundle is a native LunaPack
