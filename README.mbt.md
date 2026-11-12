@@ -166,7 +166,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.19
+moon add riantr/LunaPack@0.1.23
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -174,7 +174,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.19",
+  "riantr/LunaPack@0.1.23",
 }
 ```
 
@@ -194,7 +194,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.19`, `>=0.1.19`, `0.1` and `v0.1.19` are all rejected. A bare
+`latest`, `^0.1.23`, `>=0.1.23`, `0.1` and `v0.1.23` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -225,7 +225,7 @@ to be resolved when it is fetched.
 
 ### What the release was checked on
 
-`moon 0.1.20261102` — the toolchain every number in this file was measured on.
+`moon 0.1.20261104` — the toolchain every number in this file was measured on.
 
 The workflow installs the toolchain from the official install script, which
 serves the **current** release, so the runner's version moves with it. That is
@@ -240,6 +240,44 @@ used to return a `&ProcessOutput` trait object and now returns a
 enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
+
+### What changed in 0.1.23
+
+- **The libraries of the program are found and carried.** A Windows program is
+  not one file: it is the executable and the libraries it loads, and a bundle
+  that carried only the executable started and then stopped with
+  `STATUS_DLL_NOT_FOUND` (`0xC0000135`). The names of those libraries are
+  written in the **import table** of the executable, and LunaPack reads that
+  table now — and the delay-load directory with it, and the tables of the
+  libraries in turn. The libraries that sit next to the program are carried
+  next to it in the bundle, which is where the program looks for them.
+
+  A bundle is therefore made with the program and the output path alone:
+
+  ```bash
+  lunapack --input-exe=./build/myapp.exe --output-exe=./dist/myapp.exe
+  ```
+
+  The libraries of the system and the *API sets* (`api-ms-win-…`, whose files
+  do not exist at all) are left out, and so is every library that is not next
+  to the program: it is either part of the system or one the program finds
+  somewhere else, and neither is something a bundle can carry. The list of
+  what was found is printed, so that a bundle whose size nobody can explain
+  does not happen, and `--no-auto-deps` says that only the files named with
+  `--Files` are carried.
+
+  What is **not** found, because nothing in the binary says it: a library the
+  program opens with `LoadLibrary` when it runs, and every data file it reads.
+  Those are still named with `--Files`.
+
+  The section "The dependencies of the program" has the whole of it.
+
+- **The suite grew from 158 to 179 tests**, and the battery of mutations grew
+  from 21 to 33: every guard of the new discovery was taken out of the code
+  once, and the test that covers it went red. The table under "Every guard was
+  taken out once" lists them.
+
+- Nothing else changed: the tool behaves exactly as it behaved in 0.1.22.
 
 ### What changed in 0.1.22
 
@@ -874,7 +912,7 @@ on first use, so a user who only wants the command line never pays for the
 download. Assets for other platforms are named
 `lunapack-studio-<os>-<arch>.zip` and are added as those builds exist.
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.19`
+The release is built by a GitHub workflow when a version tag such as `v0.1.23`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1042,10 +1080,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.22 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.23 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.22 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.23 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1063,7 +1101,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.22 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.23 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
@@ -1705,7 +1743,7 @@ is the end-to-end suite on top of it.
 | `moon info` + `git diff --exit-code -- '*.mbti'` | that the published interface is not stale |
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
-Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
+Measured on this machine (Windows, `moon 0.1.20261104`): `moon test --target
 native` reports **179 tests, 179 passed, 0 failed**, and `--target wasm`
 reports the same.
 

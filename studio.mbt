@@ -13,7 +13,7 @@
 ///|
 /// The version of this CLI. `studio_wbtest.mbt` reads moon.mod and refuses to
 /// let the two drift apart, because the download URL is built from this.
-pub const CLI_VERSION : String = "0.1.22"
+pub const CLI_VERSION : String = "0.1.23"
 
 ///|
 fn is_gui_flag(a : String) -> Bool {
