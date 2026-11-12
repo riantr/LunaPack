@@ -4,7 +4,7 @@ package "riantr/LunaPack"
 // Values
 pub const CHECKSUM_ALGO : String = "sha256"
 
-pub const CLI_VERSION : String = "0.1.19"
+pub const CLI_VERSION : String = "0.1.20"
 
 pub const FORMAT_VERSION : Int32 = 6
 
@@ -169,6 +169,12 @@ pub fn iso8601_utc(UInt64) -> String
 pub fn json_to_manifest(String) -> Manifest raise
 
 pub async fn launch_studio(ArrayView[String]) -> Unit
+
+pub fn launcher_asset_name() -> String
+
+pub fn launcher_dir() -> String
+
+pub fn launcher_release_url() -> String
 
 pub fn le8_to_i64(Bytes, Int32) -> Int64
 
