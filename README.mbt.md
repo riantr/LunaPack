@@ -232,6 +232,25 @@ enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
 
+### What changed in 0.1.20
+
+- **`--launcher` auto-download.** A self-extracting bundle is a native LunaPack
+  executable with the archive appended. When LunaPack runs as Wasm (for example
+  under `moonx`) it has no native executable of its own to use as the bundle
+  stub, so `bundle` could only produce a non-self-extracting file. `--launcher`
+  with no file now downloads the native launcher for the current system from
+  this release (`lunapack-<os>-<arch>[.exe]`) and shows a progress bar plus a
+  `正在下载 launcher` status line while it works. An explicit path still works
+  as before; `LUNAPACK_LAUNCHER_URL` overrides the source for mirrors or
+  air-gapped installs, and the download is cached per version.
+
+- **`--studio` alias.** `LunaPack --studio` (and `--Studio`, `--studio=true`,
+  `--Studio=true`) now launch LunaPack Studio, mirroring the existing `--GUI`
+  / `--gui` spelling variants.
+
+- **Executable bit on POSIX.** The produced self-extracting bundle is now made
+  executable on Linux/macOS so it can run on its own.
+
 ### What changed in 0.1.19
 
 - **LunaFlow-driven hardening.** The `collect_files` traversal in `pack.mbt`
