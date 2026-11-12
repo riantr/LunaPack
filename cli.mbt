@@ -404,7 +404,10 @@ fn usage() -> Unit {
   println("  --post-install <file>   script executed after extraction")
   println("  --compression-method <m> none | gzip | lz4 | auto (default: auto)")
   println(
-    "  --launcher <file>       launcher for the single file (default: this one)",
+    "  --launcher [file]       native launcher for the single file (default: this one)",
+  )
+  println(
+    "                          give no file to download the launcher for this system automatically",
   )
   println("")
   println("verification:")
@@ -481,7 +484,7 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
         require_output(output_exe, "--output-exe"),
         file_dirs,
         opts,
-        flag_value(flags, "launcher"),
+        resolve_launcher(flags),
       )
     }
   } catch {
@@ -610,13 +613,7 @@ async fn do_bundle(args : ArrayView[String]) -> Unit {
       Some(e) => with_encryption(opts, e)
       None => opts
     }
-    bundle(
-      input,
-      output,
-      file_dirs_of(flags),
-      opts,
-      flag_value(flags, "launcher"),
-    )
+    bundle(input, output, file_dirs_of(flags), opts, resolve_launcher(flags))
   } catch {
     err => {
       println("error: " + err.to_string())

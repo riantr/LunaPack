@@ -619,3 +619,67 @@ test "an old package with no integrity block is still read" {
   }
   assert_eq(message, "")
 }
+
+///|
+/// The launcher asset name matches the running system.
+///
+/// The release ships one build per platform, so the name has to resolve to one
+/// of them: `lunapack-<os>-<arch>` with a `.exe` suffix on Windows. A name
+/// that guessed an unshipped architecture would only 404.
+test "the launcher asset name matches the running system" {
+  let name = launcher_asset_name()
+  assert_true(name.has_prefix("lunapack-"))
+  // The host platform is part of the name, so a download lands on the build
+  // that runs here.
+  assert_true(name.contains(host_platform()))
+  // Windows ships the executable with its extension; the others do not.
+  if host_platform() == "windows" {
+    assert_true(name.has_suffix(".exe"))
+  } else {
+    assert_true(!name.has_suffix(".exe"))
+  }
+  // macOS ships aarch64, the rest ship x86_64.
+  if host_platform() == "macos" {
+    assert_true(name.has_suffix("-aarch64"))
+  } else {
+    assert_true(
+      name.has_suffix(
+        "-x86_64" + (if host_platform() == "windows" { ".exe" } else { "" }),
+      ),
+    )
+  }
+}
+
+///|
+/// The `--launcher` value that asks for a download is recognised.
+///
+/// A bare `--launcher` parses to "true"; `auto`, `download`, `yes` and `1`
+/// are accepted as well, while a path or an empty value is not.
+test "the launcher auto markers are recognised" {
+  assert_true(is_launcher_auto("true"))
+  assert_true(is_launcher_auto("auto"))
+  assert_true(is_launcher_auto("download"))
+  assert_true(is_launcher_auto("yes"))
+  assert_true(is_launcher_auto("1"))
+  // A path and an empty value are not auto markers.
+  assert_true(!is_launcher_auto(""))
+  assert_true(!is_launcher_auto("/usr/bin/lunapack"))
+  assert_true(!is_launcher_auto("lunapack-linux-x86_64"))
+  assert_true(!is_launcher_auto("this"))
+}
+
+///|
+/// `resolve_launcher` keeps an explicit launcher and the default.
+///
+/// An empty value keeps the running-program default, and a path is returned
+/// unchanged: the existence check belongs to `bundle`. The auto markers are
+/// the only ones that trigger a download, so the no-network cases here do not
+/// touch the network.
+async test "resolve_launcher keeps the default and an explicit file" {
+  // No `--launcher` at all: the default (empty) is returned.
+  let none = resolve_launcher(parse_flags(["--input-exe=app.exe"], 0))
+  assert_eq(none, "")
+  // An explicit file path is passed through untouched.
+  let path = resolve_launcher(parse_flags(["--launcher=/tmp/lp"], 0))
+  assert_eq(path, "/tmp/lp")
+}

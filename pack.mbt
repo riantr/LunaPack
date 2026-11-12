@@ -417,6 +417,16 @@ pub async fn bundle(
   }
   @fs.remove(tmp)
   @fs.rename(work, output_exe, replace=true)
+  // A self-extracting bundle is meant to start on its own, so it has to carry
+  // the execute bit where that matters. The file is created without it, and a
+  // bundle that cannot be started looks exactly like one that can - same name,
+  // same size, a whole payload inside - so the one thing that told them apart
+  // was quietly missing. This is best-effort and a no-op on Windows.
+  if self_extracting {
+    set_permissions(opts.os, output_exe, 0o755) catch {
+      _ => ()
+    }
+  }
   println(
     "bundled " +
     m.entries.length().to_string() +
