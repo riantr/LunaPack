@@ -232,6 +232,22 @@ enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
 
+### What changed in 0.1.22
+
+- **The README says how to bundle from another module.** The tool was always
+  meant to be run by a build, and `moonx riantr/LunaPack@0.1.22 ...` runs it
+  on a machine that has no MoonBit toolchain. What was missing was the recipe
+  that wires it into the build of another module: MoonBit has no hook that
+  runs on an `import` — a dependency is not allowed to run commands in the
+  build of whoever depends on it, and that is on purpose — but it has a `rule`
+  in `moon.mod` and a `dev_build` in `moon.pkg`, and a rule can run `moonx`.
+  The section "Bundling from another module" has the configuration and the two
+  things that have to be kept in mind: a `dev_build` runs *before* the build,
+  so the rule has to build the application first, and the version of LunaPack
+  has to be named, or every build can pick a different packer.
+
+- Nothing else changed: the tool behaves exactly as it behaved in 0.1.21.
+
 ### What changed in 0.1.21
 
 - **A warm start shows a bar.** A bundle that is started a second time does
@@ -955,6 +971,55 @@ launcher of that operating system is named, and the bundle runs there.
 > command prints says which of the two was made, and it also goes to stderr.
 > A bundle that is only meant to carry a payload can be unpacked with
 > `lunapack unpack`; a bundle that is meant to be started needs the launcher.
+
+### Bundling from another module
+
+The tool is meant to be run by a build, not by a person. The shortest way to
+run it is `moonx`, which fetches the published module and runs its WebAssembly
+build — a machine with no MoonBit toolchain can still pack:
+
+```bash
+# The package of the application, as one file. This is the artifact to publish.
+moonx riantr/LunaPack@0.1.22 pack -i ./app -o app.appkg
+
+# The self-extracting single file.
+moonx riantr/LunaPack@0.1.22 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+```
+
+`--launcher` with no file downloads the native launcher of the current system
+and appends it, and that is what makes the result start on its own: the
+WebAssembly build has no native stub of its own to append.
+
+MoonBit has no hook that runs on an `import`, so a dependency cannot pack
+anything for the module that depends on it. That is deliberate — the
+pre-build steps of a package *"are not triggered for security reasons"* when
+the package is used as a dependency, so dependencies never run commands in the
+build of whoever depends on them. What MoonBit does have is a `rule` in
+`moon.mod` and a `dev_build` in `moon.pkg`, and a rule can run `moonx`:
+
+```
+# moon.mod
+rule(
+  name: "lunapack",
+  command: "moonx riantr/LunaPack@0.1.22 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+)
+
+# moon.pkg
+dev_build(rule: "lunapack", input: "build/app.exe", output: "dist/app.exe")
+```
+
+`$input` and `$output` are the two paths of the `dev_build` entry, and the
+command runs with the module root as its working directory, so the paths in it
+are relative to that root.
+
+Two things have to be kept in mind. The first is that a `dev_build` is a
+**pre-build** step: it runs before `moon check`, `moon build` and `moon test`,
+so the executable it is handed does not exist yet — a rule that only packs
+what is already there packs nothing, and the rule has to build the
+application first. The second is that a rule has to name the version of
+LunaPack it uses: `@latest` refreshes the registry index on every build, and a
+build that can pick a different version of its own packer is not a build that
+can be reproduced.
 
 ### A single file that behaves like the program
 
