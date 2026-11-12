@@ -16,6 +16,15 @@ $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $env:PATH = "D:\Program Files\Git\bin;" + $env:PATH
 $enc = New-Object System.Text.UTF8Encoding($false)
 
+# A run can be narrowed to some of the mutations, which is what one does when
+# a single guard has to be looked at again:
+#   $env:LUNAPACK_MUTATIONS = 'api set rule,known dll rule'
+$script:only = if ($env:LUNAPACK_MUTATIONS) {
+  $env:LUNAPACK_MUTATIONS.Split(',') | ForEach-Object { $_.Trim() }
+} else {
+  @()
+}
+
 function Run-Mutation {
   param(
     [string]$label,
@@ -26,6 +35,9 @@ function Run-Mutation {
     [string]$new2,
     [string]$expect
   )
+  if ($script:only.Count -gt 0 -and -not ($script:only -contains $label)) {
+    return
+  }
   $path = Join-Path $repo $file
   $backup = [System.IO.File]::ReadAllText($path)
   # The anchors are written in this file with LF endings, and this file keeps
@@ -310,8 +322,8 @@ Run-Mutation 'folder flag spelling' 'cli.mbt' `
 # tool reads is what catches it -- and only if that list is complete, which is
 # why the flag is written down in two places on purpose.
 Run-Mutation 'platform flag' 'cli.mbt' `
-  '    "input-exe", "input-file", "launcher", "name", "o", "os", "output", "output-exe",' `
-  '    "input-exe", "input-file", "launcher", "name", "o", "output", "output-exe",' `
+  '    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "os", "output",' `
+  '    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "output",' `
   '' '' `
   'the platform flag is a flag the tool knows'
 
@@ -340,6 +352,172 @@ Run-Mutation 'stable fallback cache' 'launcher.mbt' `
   '  @fs.tmpdir(prefix="lunapack-" + tag)' `
   '' '' `
   'the cache of a bundle that cannot be written next to it is found again'
+
+# 22. The import table of the program is not read.
+#
+# A Windows program is not one file: it is the executable and the libraries it
+# loads. The names of those libraries are written in the import table of the
+# executable, and a bundle that does not read that table carries the program
+# alone. The bundle then starts and stops with STATUS_DLL_NOT_FOUND.
+Run-Mutation 'import table' 'pe.mbt' `
+  '  let (rva, _size) = data_dir(data, 1)' `
+  '  let (rva, _size) = data_dir(data, 2)' `
+  '' '' `
+  'the import table of a PE image names the libraries it imports'
+
+# 23. The libraries that are loaded later are not read.
+#
+# A program that loads a library when it needs it writes the name into the
+# delay-load directory and not into the import directory, and such a program
+# cannot start without that library either.
+Run-Mutation 'delay load table' 'pe.mbt' `
+  '  let (rva, _size) = data_dir(data, 13)' `
+  '  let (rva, _size) = data_dir(data, 12)' `
+  '' '' `
+  'the libraries that are loaded later are named as well'
+
+# 24. The name of an API set is taken for a library of the program.
+#
+# An API set is a virtual library: there is no such file on the disk, and the
+# system resolves the name when the program starts. A bundle that carries one
+# carries nothing.
+Run-Mutation 'api set rule' 'deps.mbt' `
+  '      if is_api_set_dll(name) {
+        continue
+      }' `
+  '      if false {
+        continue
+      }' `
+  '' '' `
+  'a library of the system next to the program is left out'
+
+# 25. The name of a library of the system is taken for a library of the
+# program.
+#
+# The system loads these from its own copy, whatever the program carries next
+# to itself, so the file next to the program is never the one that is used.
+Run-Mutation 'known dll rule' 'deps.mbt' `
+  '      if is_known_dll(name) {
+        continue
+      }' `
+  '      if false {
+        continue
+      }' `
+  '' '' `
+  'a library of the system next to the program is left out'
+
+# 26. A library that is not next to the program is carried as well.
+#
+# A library that is not next to the program is either part of the system or
+# one the program finds somewhere else, and neither is something a bundle can
+# carry: the bundle has no way of putting it where the program looks for it.
+Run-Mutation 'libraries beside the program' 'deps.mbt' `
+  '      match find_in(files, name) {' `
+  '      match Some(name) {' `
+  '' '' `
+  'a library that is not next to the program is not carried'
+
+# 27. The libraries of a library are not looked for.
+#
+# A library needs libraries of its own, and they sit next to it. A bundle
+# that carries the program and the library it names, but not the library that
+# the library names, fails on the second one.
+Run-Mutation 'transitive libraries' 'deps.mbt' `
+  '          out.push(path)
+          // A library needs libraries of its own, and they are looked for in
+          // the same folder: that is where Windows looks for them too.
+          queue.push(path)' `
+  '          out.push(path)' `
+  '' '' `
+  'the libraries of a library are found as well'
+
+# 28. A file is not found when the case of the letters is different.
+#
+# The name in an import table is spelled the way the library was built, and
+# the file on the disk may be spelled differently: Windows does not care
+# about the case.
+Run-Mutation 'name case' 'deps.mbt' `
+  '  for f in files {
+    if same_name(f, name) {
+      return Some(f)
+    }
+  }
+  None' `
+  '  None' `
+  '' '' `
+  'a library is found whatever the case of the file is'
+
+# 29. The libraries the program needs are not carried in the bundle.
+#
+# The bundle is built from the program, the folders the caller named and the
+# libraries the program needs. A bundle that leaves the libraries out starts
+# and stops with STATUS_DLL_NOT_FOUND.
+Run-Mutation 'libraries in the bundle' 'pack.mbt' `
+  '  for f in extra_files {
+    let name = basename(f)
+    if item_path_taken(items, name) {
+      continue
+    }
+    items.push((f, name))
+  }' `
+  '  for f in extra_files {
+    let name = basename(f)
+    if item_path_taken(items, name) {
+      continue
+    }
+  }' `
+  '' '' `
+  'the libraries next to the program are carried in the bundle'
+
+# 30. The libraries are not carried next to the program.
+#
+# The program looks for its libraries next to itself, so a library that is
+# carried somewhere else in the bundle is a library the program does not find.
+Run-Mutation 'libraries beside the program in the bundle' 'pack.mbt' `
+  '    items.push((f, name))' `
+  '    items.push((f, "libs/" + name))' `
+  '' '' `
+  'the libraries next to the program are carried in the bundle'
+
+# 31. The flag that says "do not add the libraries" is ignored.
+#
+# The flag is the way out for a program whose libraries are not the ones the
+# bundle should carry, and a bundle that ignores it carries files the caller
+# did not ask for.
+Run-Mutation 'no auto deps flag' 'cli.mbt' `
+  '  if flag_has(flags, "no-auto-deps") {
+    return []
+  }' `
+  '  if false {
+    return []
+  }' `
+  '' '' `
+  'the flag --no-auto-deps leaves the libraries out'
+
+# 32. The flag is not a flag the tool knows.
+#
+# A flag that is not known is refused, and a flag that is refused is a command
+# that cannot be run at all.
+Run-Mutation 'no auto deps known' 'cli.mbt' `
+  '    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "os", "output",' `
+  '    "input-exe", "input-file", "launcher", "name", "o", "os", "output",' `
+  '' '' `
+  'the flag --no-auto-deps is a flag the tool knows'
+
+# 33. A library that the caller named is carried twice.
+#
+# The file the caller named comes first, and it is the one that is kept: two
+# entries with the same name in the archive fight over the same file when the
+# bundle is unpacked.
+Run-Mutation 'no duplicate library' 'pack.mbt' `
+  '    if item_path_taken(items, name) {
+      continue
+    }' `
+  '    if false {
+      continue
+    }' `
+  '' '' `
+  'a library that the caller named is not carried twice'
 
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

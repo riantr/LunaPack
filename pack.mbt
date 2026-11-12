@@ -16,6 +16,21 @@ fn dir_seen(seen : Array[String], dir : String) -> Bool {
 }
 
 ///|
+/// Is the path `path` already in the archive?
+///
+/// Every item is a pair of (source file path, path inside the archive), and
+/// two items with the same path inside the archive would fight over the same
+/// name when the bundle is unpacked.
+fn item_path_taken(items : Array[(String, String)], path : String) -> Bool {
+  for it in items {
+    if it.1 == path {
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// Collect every regular file under `root`, recursively.
 ///
 /// Two things make this version provably terminating and safe:
@@ -299,6 +314,29 @@ pub async fn bundle(
   opts : PackOptions,
   launcher : String,
 ) -> Unit {
+  bundle_with_files(input_exe, output_exe, file_dirs, [], opts, launcher)
+}
+
+///|
+/// Bundle `input_exe` together with the contents of every directory in
+/// `file_dirs` and the files in `extra_files` into the single file
+/// `output_exe`.
+///
+/// The files in `extra_files` land at the root of the archive, next to the
+/// main program. That is where the libraries of a Windows program have to
+/// be: the program looks for them next to itself, and the bundle unpacks
+/// itself into one folder.
+///
+/// A file that is already in the archive is not put in twice: the file the
+/// caller named comes first, and it is the one that is kept.
+pub async fn bundle_with_files(
+  input_exe : String,
+  output_exe : String,
+  file_dirs : Array[String],
+  extra_files : Array[String],
+  opts : PackOptions,
+  launcher : String,
+) -> Unit {
   let exe_real = norm_sep(@fs.realpath(input_exe))
   let items = []
   let main_name = basename(input_exe)
@@ -316,6 +354,15 @@ pub async fn bundle(
       let rel = relpath(base, f)
       items.push((f, if prefix == "" { rel } else { prefix + "/" + rel }))
     }
+  }
+  // The libraries the program needs go next to the program itself, because
+  // that is where the program looks for them.
+  for f in extra_files {
+    let name = basename(f)
+    if item_path_taken(items, name) {
+      continue
+    }
+    items.push((f, name))
   }
   let opts2 = with_main_program(opts, main_name)
   let mut icon_copied = false

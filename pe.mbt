@@ -337,6 +337,144 @@ pub async fn pe_subsystem_of(path : String) -> Int32 {
   pe_subsystem(data)
 }
 
+// ---------------------------------------------------------------- imports ---
+
+///|
+/// The offset of the data directory in the optional header of a PE image.
+///
+/// The directory is a list of (RVA, size) pairs, one per kind of table the
+/// image carries: the exports, the imports, the resources, the delay-loaded
+/// imports and so on. Where it starts depends on the kind of image, so it
+/// is worked out from the magic number of the optional header.
+fn data_dir_base(data : Bytes) -> Int64 {
+  if data.length() < 0x40 {
+    return 0
+  }
+  let pe_off = u32_at(data, 0x3c)
+  // The optional header starts 24 bytes after the PE signature.
+  let opt = pe_off + 24
+  if opt + 96 > data.length().to_int64() {
+    return 0
+  }
+  let magic = u16_at(data, opt).to_int64()
+  if magic == 0x20b {
+    opt + 112
+  } else {
+    opt + 96
+  }
+}
+
+///|
+/// How many entries the data directory of a PE image has.
+fn data_dir_count(data : Bytes) -> Int32 {
+  let base = data_dir_base(data)
+  if base < 4 {
+    return 0
+  }
+  u32_at(data, base - 4).to_int()
+}
+
+///|
+/// The RVA and the size of the data directory entry at `index`.
+///
+/// The entry is (0, 0) when the image does not carry that kind of table.
+fn data_dir(data : Bytes, index : Int32) -> (Int64, Int64) {
+  if index >= data_dir_count(data) {
+    return (0, 0)
+  }
+  let base = data_dir_base(data)
+  let off = base + (index * 8).to_int64()
+  if off + 8 > data.length().to_int64() {
+    return (0, 0)
+  }
+  (u32_at(data, off), u32_at(data, off + 4))
+}
+
+///|
+/// The name that starts at `off` and ends at the byte that closes it.
+fn cstr_at(pe : PeFile, off : Int64) -> String {
+  let limit = pe.data.length().to_int64()
+  let mut end = off
+  while end < limit && pe.data.at(end.to_int()) != 0 {
+    end = end + 1
+  }
+  utf8_bytes_to_string(read_at(pe, off, end - off))
+}
+
+///|
+/// The name of the library that the import descriptor at `name_rva` names,
+/// or None when the image does not carry that name.
+fn import_name_at(pe : PeFile, name_rva : Int64) -> String? {
+  let off = rva_to_offset(pe, name_rva) catch { _ => return None }
+  Some(cstr_at(pe, off))
+}
+
+///|
+/// The names of the DLLs that a PE image imports.
+///
+/// The import directory is a list of descriptors, one per library, and every
+/// descriptor names the library it is about. The list ends with a descriptor
+/// that is all zeroes, and an image that imports nothing has no directory at
+/// all.
+///
+/// A file that is not a PE image imports nothing, and so does a file whose
+/// import directory does not make sense: the names that cannot be read are
+/// left out rather than guessed at.
+pub fn pe_import_dlls(data : Bytes) -> Array[String] {
+  let pe = parse_pe(data) catch { _ => return [] }
+  let (rva, _size) = data_dir(data, 1)
+  if rva == 0 {
+    return []
+  }
+  let mut off = rva_to_offset(pe, rva) catch { _ => return [] }
+  let limit = data.length().to_int64()
+  let out = []
+  while off + 20 <= limit {
+    // The name of the library is the fourth field of the descriptor.
+    let name_rva = u32_at(data, off + 12)
+    if name_rva == 0 {
+      break
+    }
+    match import_name_at(pe, name_rva) {
+      Some(n) => out.push(n)
+      None => break
+    }
+    off = off + 20
+  }
+  out
+}
+
+///|
+/// The names of the DLLs that a PE image loads with delay loading.
+///
+/// A program that loads a library later, when it needs it, writes the name
+/// into the delay-load directory instead of the import directory. Such a
+/// program cannot start without the library either, so its names are read as
+/// well.
+pub fn pe_delay_import_dlls(data : Bytes) -> Array[String] {
+  let pe = parse_pe(data) catch { _ => return [] }
+  let (rva, _size) = data_dir(data, 13)
+  if rva == 0 {
+    return []
+  }
+  let mut off = rva_to_offset(pe, rva) catch { _ => return [] }
+  let limit = data.length().to_int64()
+  let out = []
+  while off + 32 <= limit {
+    // The name of the library is the second field of the descriptor.
+    let name_rva = u32_at(data, off + 4)
+    if name_rva == 0 {
+      break
+    }
+    match import_name_at(pe, name_rva) {
+      Some(n) => out.push(n)
+      None => break
+    }
+    off = off + 32
+  }
+  out
+}
+
 ///|
 /// Set the subsystem of the PE image at `path`.
 ///

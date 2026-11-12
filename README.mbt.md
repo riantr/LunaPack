@@ -38,6 +38,15 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
   the application is alone on the desktop. A copy of the executable would not
   do this; a plain archiver cannot do it at all.
 
+* The libraries of the program are found and carried
+
+  A Windows program is the executable **and** the libraries it loads, and the
+  names of those libraries are written in the import table of the executable.
+  LunaPack reads that table — and the tables of the libraries in it — and
+  carries the libraries that sit next to the program, so a bundle of a program
+  with its DLLs needs nothing but the program and the output path. See
+  [The dependencies of the program](#the-dependencies-of-the-program).
+
 * Every entry is checksummed, and every entry is fingerprinted
 
   The SHA-256 checksum of an entry is computed over the **original** content,
@@ -938,6 +947,59 @@ Because the launcher does the extraction, the application finds its own
 dependencies (`.dll`, `.json`, assets) exactly like it would in its build
 folder — a plain copy of the executable would not run at all.
 
+### The dependencies of the program
+
+A Windows program is not one file: it is the executable and the libraries it
+loads. A bundle that carries only the executable starts and then stops with
+`STATUS_DLL_NOT_FOUND` (`0xC0000135`), and the list of what is missing is
+written in the **import table** of the executable.
+
+LunaPack reads that table, and the tables of the libraries in it, and carries
+the libraries that sit next to the program:
+
+```bash
+# Only the program and the output: the libraries next to the program are
+# found and carried as well.
+lunapack --input-exe=./build/myapp.exe --output-exe=./dist/myapp.exe
+```
+
+The libraries that are carried land at the root of the archive, next to the
+program, which is where the program looks for them. The list is printed, so
+that a bundle whose size nobody can explain does not happen:
+
+```
+discovered 2 dependencies next to the program:
+  mylib.dll
+  otherlib.dll
+```
+
+What is carried:
+
+* the libraries the program imports, and the libraries those libraries import;
+* only the ones that are **next to the program**: a library that is not there
+  is either part of the system or one the program finds somewhere else, and
+  neither is something a bundle can carry;
+* not the libraries of the system: the system loads those from its own copy
+  whatever the program carries next to itself;
+* not the *API sets* (`api-ms-win-…`), whose names the system resolves and
+  whose files do not exist at all.
+
+`--no-auto-deps` turns the whole thing off, and then only the files named
+with `--Files` are carried.
+
+What is **not** found, because nothing in the binary says it:
+
+* a library the program opens with `LoadLibrary` when it runs;
+* every data file it reads — a configuration, a model, an image.
+
+Those are still named with `--Files`, as they always were. What the discovery
+saves is the list of DLLs, because that is the part of the dependencies that
+is written down in the binary, and the part that is forgotten most often.
+
+> The import table is a **Windows** thing. A program for Linux names its
+> libraries in the dynamic section of an ELF image and a program for macOS in
+> the load commands of a Mach-O image, and neither is read yet.
+
 ### The launcher
 
 The launcher is the program that unpacks the payload and starts the program it
@@ -1555,6 +1617,7 @@ on every platform, Windows included, so the path is the same everywhere.
 | `--post-install <file>` | script executed *after* extraction |
 | `--compression-method <m>` | `none`, `gzip`, `lz4` or `auto` (default: `auto`) |
 | `--launcher <file>` | the launcher of the single file (default: this one) |
+| `--no-auto-deps` | do not carry the libraries the program needs next to it |
 | `--encryption-method <m>` | `x25519` or `passphrase` (default: none) |
 | `--public-key <file>` | the public key of the recipient, or of the host that signed the package |
 | `--secret-key <file>` | the secret key of the recipient |
@@ -1643,7 +1706,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261102`): `moon test --target
-native` reports **158 tests, 158 passed, 0 failed**, and `--target wasm`
+native` reports **179 tests, 179 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -1722,6 +1785,18 @@ alone, or the guard is not covered by a test at all.
 | the platform flag | the platform flag is a flag the tool knows |
 | the report of the check of a cache that is used again | the files of a cache that is used again are counted one by one |
 | the folder of the cache of a bundle that cannot be written next to it | the cache of a bundle that cannot be written next to it is found again |
+| the import table of the program | the import table of a PE image names the libraries it imports |
+| the delay-load directory of the program | the libraries that are loaded later are named as well |
+| the rule of the API sets | the name of an API set is not a library of the program |
+| the rule of the libraries of the system | the name of a library of the system is not a library of the program |
+| the rule "only the libraries next to the program" | a library that is not next to the program is not carried |
+| the libraries of a library | the libraries of a library are found as well |
+| the case of the name of a file | a library is found whatever the case of the file is |
+| the libraries in the bundle | the libraries next to the program are carried in the bundle |
+| the place of the libraries in the bundle | the libraries next to the program are carried in the bundle |
+| the flag `--no-auto-deps` | the flag --no-auto-deps leaves the libraries out |
+| the flag `--no-auto-deps` among the known flags | the flag --no-auto-deps is a flag the tool knows |
+| the rule "a file is carried once" | a library that the caller named is not carried twice |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -1820,7 +1895,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 158 tests
+moon test                                  # 179 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```

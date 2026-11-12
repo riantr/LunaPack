@@ -80,6 +80,8 @@ pub fn basename(String) -> String
 
 pub async fn bundle(String, String, Array[String], PackOptions, String) -> Unit
 
+pub async fn bundle_with_files(String, String, Array[String], Array[String], PackOptions, String) -> Unit
+
 pub fn bytes_concat(Bytes, Bytes) -> Bytes
 
 pub fn bytes_to_hex(Bytes) -> String
@@ -105,6 +107,8 @@ pub fn default_arch() -> String
 pub fn derive_package_key(Bytes, Bytes) -> PackageKey
 
 pub fn dirname(String) -> String
+
+pub async fn discover_dependencies(String) -> Array[String]
 
 pub fn ed25519_public_key(Bytes) -> Bytes raise
 
@@ -154,9 +158,13 @@ pub fn integrity_block_encrypted(PackageKey, Int64, Int64, Bytes) -> Bytes raise
 
 pub fn is_all_zero(Bytes) -> Bool
 
+pub fn is_api_set_dll(String) -> Bool
+
 pub fn is_integrity_block(Bytes) -> Bool
 
 pub fn is_integrity_block_encrypted(Bytes) -> Bool
+
+pub fn is_known_dll(String) -> Bool
 
 pub fn is_loopback_url(String) -> Bool
 
@@ -237,6 +245,10 @@ pub fn parse_pe(Bytes) -> PeFile raise
 pub fn passphrase_secret(String, Bytes, Int32) -> Bytes
 
 pub fn pbkdf2_sha512(Bytes, Bytes, Int32, Int32) -> Bytes
+
+pub fn pe_delay_import_dlls(Bytes) -> Array[String]
+
+pub fn pe_import_dlls(Bytes) -> Array[String]
 
 pub fn pe_subsystem(Bytes) -> Int32
 

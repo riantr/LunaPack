@@ -149,9 +149,9 @@ fn known_flags() -> Array[String] {
   [
     "Files", "GUI", "arch", "cli", "compression", "compression-method", "encryption",
     "encryption-method", "gui", "expected-sha256", "extracted", "files", "i", "input",
-    "input-exe", "input-file", "launcher", "name", "o", "os", "output", "output-exe",
-    "output-file", "passphrase", "passphrase-file", "post-install", "pre-install",
-    "public-key", "secret-key", "signature", "skip-scripts", "version",
+    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "os", "output",
+    "output-exe", "output-file", "passphrase", "passphrase-file", "post-install",
+    "pre-install", "public-key", "secret-key", "signature", "skip-scripts", "version",
   ]
 }
 
@@ -394,6 +394,9 @@ fn usage() -> Unit {
   println(
     "  --Files <dir>           folder of files to bundle (repeatable; --files too)",
   )
+  println(
+    "  --no-auto-deps          do not add the libraries the program needs next to it",
+  )
   println("  --input-file <path>     another name for --input-exe")
   println("  --output-file <path>    another name for --output-exe")
   println("  --name <name>           package name (default: input dir name)")
@@ -426,6 +429,59 @@ fn usage() -> Unit {
   println("  --passphrase-file <file> file that holds the passphrase")
   println(
     "  --passphrase <text>      the passphrase (visible in the process list)",
+  )
+}
+
+///|
+/// The libraries next to the program that it needs, unless the caller said
+/// not to.
+///
+/// The list is printed, because a bundle that quietly carries a file nobody
+/// asked for is a bundle whose size nobody can explain.
+async fn auto_dependency_files(
+  exe : String,
+  flags : Array[Flag],
+) -> Array[String] {
+  if flag_has(flags, "no-auto-deps") {
+    return []
+  }
+  let found = discover_dependencies(exe)
+  if found.length() == 0 {
+    return []
+  }
+  println(
+    "discovered " +
+    found.length().to_string() +
+    " dependencies next to the program:",
+  )
+  for f in found {
+    println("  " + basename(f))
+  }
+  found
+}
+
+///|
+/// Bundle the program at `input_exe` into the file at `output_exe`.
+///
+/// The files the caller named are carried, and so are the libraries the
+/// program needs from the folder it sits in: a bundle that carries only the
+/// program starts and then stops with STATUS_DLL_NOT_FOUND. The flag
+/// `--no-auto-deps` says that only the named files are carried.
+async fn bundle_program(
+  input_exe : String,
+  output_exe : String,
+  file_dirs : Array[String],
+  flags : Array[Flag],
+  opts : PackOptions,
+) -> Unit {
+  let extra = auto_dependency_files(input_exe, flags)
+  bundle_with_files(
+    input_exe,
+    output_exe,
+    file_dirs,
+    extra,
+    opts,
+    resolve_launcher(flags),
   )
 }
 
@@ -479,12 +535,12 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
       let first = if file_dirs.length() > 0 { file_dirs[0] } else { "." }
       pack(first, require_output(output_exe, "--output-exe"), opts)
     } else {
-      bundle(
+      bundle_program(
         input_exe,
         require_output(output_exe, "--output-exe"),
         file_dirs,
+        flags,
         opts,
-        resolve_launcher(flags),
       )
     }
   } catch {
@@ -613,7 +669,7 @@ async fn do_bundle(args : ArrayView[String]) -> Unit {
       Some(e) => with_encryption(opts, e)
       None => opts
     }
-    bundle(input, output, file_dirs_of(flags), opts, resolve_launcher(flags))
+    bundle_program(input, output, file_dirs_of(flags), flags, opts)
   } catch {
     err => {
       println("error: " + err.to_string())

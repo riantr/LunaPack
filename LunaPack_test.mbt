@@ -714,3 +714,104 @@ async test "a refused bundle leaves nothing behind" {
   assert_true(!@fs.exists(out + ".lunapack-archive.tmp"))
   assert_true(!@fs.exists(out + ".lunapack-tmp"))
 }
+
+// ------------------------------------------------- dependency discovery ---
+
+///|
+/// A file that is not a Windows program has no libraries to carry.
+async test "a file that is not a PE image names no library" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let file = dir + "/notes.txt"
+  @fs.write_text(file, "not a program")
+  let data = @fs.read_binary(file)
+  assert_eq(@LunaPack.pe_import_dlls(data).length(), 0)
+}
+
+///|
+/// The program that runs the tests is read like any other program: when it
+/// is a PE image it names the libraries it needs, and when it is not one it
+/// names none.
+async test "the libraries of the running program are read" {
+  match @LunaPack.current_exe_path() {
+    Some(path) => {
+      let data = @fs.read_binary(path) catch { _ => return }
+      let is_pe = data.length() > 1 && data.at(0) == b'M' && data.at(1) == b'Z'
+      let names = @LunaPack.pe_import_dlls(data)
+      if is_pe {
+        assert_true(names.length() > 0)
+      } else {
+        assert_eq(names.length(), 0)
+      }
+    }
+    None => ()
+  }
+}
+
+///|
+/// A program that is not a Windows program needs nothing from beside it.
+async test "a program that is not a PE image needs no libraries" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let file = dir + "/notes.txt"
+  @fs.write_text(file, "not a program")
+  let found = @LunaPack.discover_dependencies(file)
+  assert_eq(found.length(), 0)
+}
+
+///|
+/// The name of an API set is the name of a library that does not exist.
+test "the name of an API set is not a library of the program" {
+  assert_true(@LunaPack.is_api_set_dll("api-ms-win-crt-runtime-l1-1-0.dll"))
+  assert_true(
+    @LunaPack.is_api_set_dll("ext-ms-win-ntuser-dialogbox-l1-1-0.dll"),
+  )
+  assert_true(!@LunaPack.is_api_set_dll("mylib.dll"))
+}
+
+///|
+/// A library of the system is loaded from the system, whatever the program
+/// carries next to itself.
+test "the name of a library of the system is not a library of the program" {
+  assert_true(@LunaPack.is_known_dll("kernel32.dll"))
+  assert_true(@LunaPack.is_known_dll("user32.dll"))
+  assert_true(!@LunaPack.is_known_dll("mylib.dll"))
+}
+
+///|
+/// A file that is carried next to the program lands next to it in the
+/// bundle, which is where the libraries of a Windows program have to be.
+async test "a file carried next to the program lands next to it" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let app = dir + "/app.exe"
+  @fs.write_text(app, "pretend this is an executable")
+  let lib = dir + "/alpha.dll"
+  @fs.write_text(lib, "not a real library")
+  let launcher = dir + "/launcher.exe"
+  @fs.write_text(launcher, "pretend this is a launcher")
+  let out = dir + "/bundle.exe"
+  let opts = @LunaPack.with_defaults(
+    @LunaPack.new_pack_options(
+      "demo",
+      "1.0.0",
+      "windows",
+      "x86_64",
+      None,
+      None,
+      "none",
+    ),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  @LunaPack.bundle_with_files(app, out, [], [lib], opts, launcher)
+  let m = @LunaPack.read_package_manifest(out)
+  assert_eq(m.main_program, "app.exe")
+  assert_eq(m.entries.length(), 2)
+  let mut has_lib = false
+  for e in m.entries {
+    if e.path == "alpha.dll" {
+      has_lib = true
+    }
+  }
+  assert_true(has_lib)
+}

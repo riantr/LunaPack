@@ -762,3 +762,315 @@ async test "resolve_launcher keeps the default and an explicit file" {
   let path = resolve_launcher(parse_flags(["--launcher=/tmp/lp"], 0))
   assert_eq(path, "/tmp/lp")
 }
+
+// ------------------------------------------------- dependency discovery ---
+
+///|
+/// Write a value into a file, two bytes, least significant first.
+fn pe_put16(arr : Array[Byte], off : Int32, v : Int32) -> Unit {
+  arr[off] = (v & 0xff).to_byte()
+  arr[off + 1] = ((v >> 8) & 0xff).to_byte()
+}
+
+///|
+/// Write a value into a file, four bytes, least significant first.
+fn pe_put32(arr : Array[Byte], off : Int32, v : Int32) -> Unit {
+  arr[off] = (v & 0xff).to_byte()
+  arr[off + 1] = ((v >> 8) & 0xff).to_byte()
+  arr[off + 2] = ((v >> 16) & 0xff).to_byte()
+  arr[off + 3] = ((v >> 24) & 0xff).to_byte()
+}
+
+///|
+/// A PE image that imports `names` and loads `delayed` later.
+///
+/// The image has the shape the format asks for: a DOS header with the
+/// offset of the PE header in it, the PE signature, a COFF header, an
+/// optional header with sixteen data directories, one section, the import
+/// directory in that section and the delay-load directory next to it. A
+/// reader that reads it the way it reads a program a compiler wrote is
+/// therefore reading something of the same kind.
+fn build_pe(names : Array[String], delayed : Array[String]) -> Bytes {
+  let pe_off = 0x40
+  let opt = pe_off + 24
+  let sec_table = opt + 240
+  let data_off = 0x200
+  let rva_base = 0x1000
+  // The import directory: one descriptor per library, and a descriptor that
+  // is all zeroes at the end.
+  let dir_size = (names.length() + 1) * 20
+  // The delay-load directory has descriptors of its own.
+  let delay_size = (delayed.length() + 1) * 32
+  // The names come after both directories.
+  let mut name_len = 0
+  for n in names {
+    name_len = name_len + string_to_utf8_bytes(n).length() + 1
+  }
+  for n in delayed {
+    name_len = name_len + string_to_utf8_bytes(n).length() + 1
+  }
+  let body_size = dir_size + delay_size + name_len
+  let arr = Array::make(data_off + body_size, b'\x00')
+  // The DOS header.
+  arr[0] = b'M'
+  arr[1] = b'Z'
+  pe_put32(arr, 0x3c, pe_off)
+  // The PE signature.
+  arr[pe_off] = b'P'
+  arr[pe_off + 1] = b'E'
+  // The COFF header.
+  pe_put16(arr, pe_off + 4, 0x8664)
+  pe_put16(arr, pe_off + 6, 1)
+  pe_put32(arr, pe_off + 8, 0)
+  pe_put32(arr, pe_off + 12, 0)
+  pe_put32(arr, pe_off + 16, 0)
+  pe_put16(arr, pe_off + 20, 240)
+  pe_put16(arr, pe_off + 22, 0x22)
+  // The optional header: the magic, the number of data directories, the
+  // import directory and the delay-load directory.
+  pe_put16(arr, opt, 0x20b)
+  pe_put32(arr, opt + 108, 16)
+  pe_put32(arr, opt + 112 + 8, rva_base)
+  pe_put32(arr, opt + 112 + 12, dir_size)
+  pe_put32(arr, opt + 112 + 13 * 8, rva_base + dir_size)
+  pe_put32(arr, opt + 112 + 13 * 8 + 4, delay_size)
+  // The section table.
+  arr[sec_table] = b'.'
+  arr[sec_table + 1] = b't'
+  arr[sec_table + 2] = b'e'
+  arr[sec_table + 3] = b'x'
+  pe_put32(arr, sec_table + 8, body_size)
+  pe_put32(arr, sec_table + 12, rva_base)
+  pe_put32(arr, sec_table + 16, body_size)
+  pe_put32(arr, sec_table + 20, data_off)
+  pe_put32(arr, sec_table + 36, 0x60000020)
+  // The names of the libraries, and where each of them is written down.
+  let mut at = data_off + dir_size + delay_size
+  let mut i = 0
+  while i < names.length() {
+    // The name of the library is the fourth field of the descriptor.
+    pe_put32(arr, data_off + i * 20 + 12, rva_base + (at - data_off))
+    for b in string_to_utf8_bytes(names[i]) {
+      arr[at] = b
+      at = at + 1
+    }
+    arr[at] = b'\x00'
+    at = at + 1
+    i = i + 1
+  }
+  i = 0
+  while i < delayed.length() {
+    // The name of the library is the second field of the descriptor.
+    pe_put32(arr, data_off + dir_size + i * 32 + 4, rva_base + (at - data_off))
+    for b in string_to_utf8_bytes(delayed[i]) {
+      arr[at] = b
+      at = at + 1
+    }
+    arr[at] = b'\x00'
+    at = at + 1
+    i = i + 1
+  }
+  Bytes::from_array(arr)
+}
+
+///|
+/// The names of the libraries a program imports are read from its image.
+test "the import table of a PE image names the libraries it imports" {
+  let names = pe_import_dlls(build_pe(["alpha.dll", "beta.dll"], []))
+  assert_eq(names.length(), 2)
+  assert_eq(names[0], "alpha.dll")
+  assert_eq(names[1], "beta.dll")
+}
+
+///|
+/// A program that imports nothing has no libraries to carry.
+test "an image that imports nothing names no library" {
+  assert_eq(pe_import_dlls(build_pe([], [])).length(), 0)
+}
+
+///|
+/// A library that is loaded later is a library the program needs as well.
+test "the libraries that are loaded later are named as well" {
+  let names = pe_delay_import_dlls(build_pe(["alpha.dll"], ["beta.dll"]))
+  assert_eq(names.length(), 1)
+  assert_eq(names[0], "beta.dll")
+}
+
+///|
+/// A file that is not a Windows program has no libraries to carry.
+test "a file that is not a PE image names no library" {
+  assert_eq(pe_import_dlls(b"not a program at all").length(), 0)
+}
+
+///|
+/// The name of an API set is the name of a library that does not exist.
+test "the name of an API set is not a library of the program" {
+  assert_true(is_api_set_dll("api-ms-win-crt-runtime-l1-1-0.dll"))
+  assert_true(is_api_set_dll("API-MS-WIN-CORE-SYNCH-L1-2-0.DLL"))
+  assert_true(is_api_set_dll("ext-ms-win-ntuser-dialogbox-l1-1-0.dll"))
+  assert_true(!is_api_set_dll("mylib.dll"))
+}
+
+///|
+/// A library of the system is loaded from the system, whatever the program
+/// carries next to itself.
+test "the name of a library of the system is not a library of the program" {
+  assert_true(is_known_dll("kernel32.dll"))
+  assert_true(is_known_dll("KERNEL32.DLL"))
+  assert_true(is_known_dll("user32.dll"))
+  assert_true(!is_known_dll("mylib.dll"))
+}
+
+///|
+/// The libraries next to a program are the ones it needs from there.
+async test "the libraries next to a program are found" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll", "beta.dll"], []))
+  @fs.write_text(dir + "/alpha.dll", "not a real library")
+  @fs.write_text(dir + "/beta.dll", "not a real library")
+  let found = discover_dependencies(dir + "/app.exe")
+  assert_eq(found.length(), 2)
+  assert_eq(basename(found[0]), "alpha.dll")
+  assert_eq(basename(found[1]), "beta.dll")
+}
+
+///|
+/// A library that is not next to the program is not something a bundle can
+/// carry: it is either part of the system or one the program finds elsewhere.
+async test "a library that is not next to the program is not carried" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(dir + "/app.exe", build_pe(["gamma.dll"], []))
+  let found = discover_dependencies(dir + "/app.exe")
+  assert_eq(found.length(), 0)
+}
+
+///|
+/// A library needs libraries of its own, and they are found in the same
+/// folder.
+async test "the libraries of a library are found as well" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
+  @fs.write_binary(dir + "/alpha.dll", build_pe(["beta.dll"], []))
+  @fs.write_text(dir + "/beta.dll", "not a real library")
+  let found = discover_dependencies(dir + "/app.exe")
+  assert_eq(found.length(), 2)
+  assert_eq(basename(found[0]), "alpha.dll")
+  assert_eq(basename(found[1]), "beta.dll")
+}
+
+///|
+/// The libraries of the system are left out, even when a file with that
+/// name sits next to the program. The API sets are left out as well, and
+/// they are not libraries of the program at all.
+async test "a library of the system next to the program is left out" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(
+    dir + "/app.exe",
+    build_pe(
+      ["kernel32.dll", "api-ms-win-crt-runtime-l1-1-0.dll", "alpha.dll"],
+      [],
+    ),
+  )
+  @fs.write_text(dir + "/kernel32.dll", "not a real library")
+  @fs.write_text(
+    dir + "/api-ms-win-crt-runtime-l1-1-0.dll",
+    "not a real library",
+  )
+  @fs.write_text(dir + "/alpha.dll", "not a real library")
+  let found = discover_dependencies(dir + "/app.exe")
+  assert_eq(found.length(), 1)
+  assert_eq(basename(found[0]), "alpha.dll")
+}
+
+///|
+/// Windows does not care about the case of a file name.
+async test "a library is found whatever the case of the file is" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(dir + "/app.exe", build_pe(["Alpha.dll"], []))
+  @fs.write_text(dir + "/alpha.dll", "not a real library")
+  let found = discover_dependencies(dir + "/app.exe")
+  assert_eq(found.length(), 1)
+  assert_eq(basename(found[0]), "alpha.dll")
+}
+
+///|
+/// The libraries the program needs are carried in the bundle, next to the
+/// program itself.
+async test "the libraries next to the program are carried in the bundle" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
+  @fs.write_text(dir + "/alpha.dll", "not a real library")
+  // The launcher is not a program here: the bundle only needs something to
+  // carry the archive.
+  let launcher = dir + "/launcher.exe"
+  @fs.write_text(launcher, "pretend this is a launcher")
+  let out = dir + "/bundle.exe"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  bundle_program(dir + "/app.exe", out, [], [("launcher", launcher)], opts)
+  let m = read_package_manifest(out)
+  assert_eq(m.main_program, "app.exe")
+  // The program and the library it needs, and nothing else.
+  assert_eq(m.entries.length(), 2)
+  let mut has_lib = false
+  for e in m.entries {
+    if e.path == "alpha.dll" {
+      has_lib = true
+    }
+  }
+  assert_true(has_lib)
+}
+
+///|
+/// A library that the caller named as well is not carried twice: the file
+/// the caller named is the one that is kept.
+async test "a library that the caller named is not carried twice" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
+  @fs.write_text(dir + "/alpha.dll", "not a real library")
+  // The launcher is somewhere else, so the folder of the program holds the
+  // program and the library and nothing else.
+  let elsewhere = @fs.tmpdir(prefix="lunapack_deps")
+  let launcher = elsewhere + "/launcher.exe"
+  @fs.write_text(launcher, "pretend this is a launcher")
+  let out = dir + "/bundle.exe"
+  let opts = with_defaults(
+    new_pack_options("demo", "1.0.0", "windows", "x86_64", None, None, "none"),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  bundle_program(dir + "/app.exe", out, [dir], [("launcher", launcher)], opts)
+  let m = read_package_manifest(out)
+  // The program and the library, and the library is not there twice.
+  assert_eq(m.entries.length(), 2)
+}
+
+///|
+/// The flag `--no-auto-deps` says that only the named files are carried.
+async test "the flag --no-auto-deps leaves the libraries out" {
+  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
+  @fs.write_text(dir + "/alpha.dll", "not a real library")
+  let none = auto_dependency_files(dir + "/app.exe", [("no-auto-deps", "true")])
+  assert_eq(none.length(), 0)
+  // Without the flag the libraries are found.
+  let found = auto_dependency_files(dir + "/app.exe", [])
+  assert_eq(found.length(), 1)
+  assert_eq(basename(found[0]), "alpha.dll")
+}
+
+///|
+/// The flag is a flag the tool knows, and not a mistake.
+test "the flag --no-auto-deps is a flag the tool knows" {
+  assert_true(known_flags().contains("no-auto-deps"))
+  check_flags([("no-auto-deps", "true")]) catch {
+    _ => fail("the flag --no-auto-deps must be known")
+  }
+}
