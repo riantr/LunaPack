@@ -1,0 +1,16 @@
+import {
+  "moonbitlang/core/encoding/utf16",
+}
+
+pkgtype(kind: "foreign_library")
+
+supported_targets = "native"
+
+// The virtual-registry thunks fall through to the real advapi32 entry points.
+// `moon test` links a test executable for this package, so the import library
+// has to be present there too. This module is Windows-only and is never built
+// by the root module's Linux/macOS/wasm jobs.
+
+options(
+  link: { "native": { "cc-link-flags": "advapi32.lib" } },
+)

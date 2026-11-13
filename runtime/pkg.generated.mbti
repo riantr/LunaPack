@@ -1,0 +1,128 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "riantr/lunapack_runtime"
+
+// Values
+pub const MAP_ALLOC_FAILED : Int32 = 5
+
+pub const MAP_BAD_MZ : Int32 = 1
+
+pub const MAP_BAD_PE : Int32 = 2
+
+pub const MAP_EMPTY : Int32 = 10
+
+pub const MAP_IMPORT_API : Int32 = 8
+
+pub const MAP_IMPORT_DLL : Int32 = 7
+
+pub const MAP_NEEDS_RELOC : Int32 = 6
+
+pub const MAP_NOT_X64 : Int32 = 3
+
+pub const MAP_OK : Int32 = 0
+
+pub const MAP_ORDINAL_IMPORT : Int32 = 9
+
+pub const MAP_TRUNCATED : Int32 = 4
+
+pub fn install_iat_hooks(Int64) -> Int32
+
+pub fn lp_get_entry(Int64) -> Int64
+
+pub fn lp_get_export(Int64, Int64) -> Int64
+
+pub fn lp_map_error() -> Int32
+
+pub fn lp_map_image(Int64, Int32) -> Int64
+
+pub fn lp_unmap_image(Int64) -> Int32
+
+pub fn lp_virt_add_file(Int64, Int64, Int32) -> Int32
+
+pub fn lp_virt_reset() -> Unit
+
+pub fn lp_virt_set_reg(Int64, Int64, Int64, Int32, Int64, Int32) -> Int32
+
+pub fn lp_virt_stats(Int64, Int32) -> Int32
+
+pub fn norm_path(String) -> String
+
+pub fn thunk_close_handle(Int64) -> Int32
+
+pub fn thunk_create_file_w(Int64, Int32, Int32, Int64, Int32, Int32, Int64) -> Int64
+
+pub fn thunk_find_first_file_w(Int64, Int64) -> Int64
+
+pub fn thunk_find_next_file_w(Int64, Int64) -> Int32
+
+pub fn thunk_get_file_attributes_w(Int64) -> Int32
+
+pub fn thunk_get_file_size_ex(Int64, Int64) -> Int32
+
+pub fn thunk_get_proc_address(Int64, Int64) -> Int64
+
+pub fn thunk_read_file(Int64, Int64, Int32, Int64, Int64) -> Int32
+
+pub fn thunk_reg_close_key(Int64) -> Int32
+
+pub fn thunk_reg_open_key_ex_w(Int64, Int64, Int32, Int32, Int64) -> Int32
+
+pub fn thunk_reg_query_value_ex_w(Int64, Int64, Int64, Int64, Int64, Int64) -> Int32
+
+pub fn thunk_reg_set_value_ex_w(Int64, Int64, Int64, Int32, Int64, Int32) -> Int32
+
+// Errors
+
+// Types and methods
+type ImageLayout
+
+pub struct RegValue {
+  typ : Int32
+  data : Bytes
+}
+
+type RuntimeState
+
+pub struct Vfs {
+  files : Map[String, Bytes]
+  dirs : Map[String, Unit]
+  handles : Map[Int64, String]
+  offsets : Map[Int64, Int64]
+  find_names : Map[Int64, Array[String]]
+  find_index : Map[Int64, Int32]
+  mut next_handle : Int64
+  mut calls_create : Int32
+  mut calls_read : Int32
+  mut calls_fallback : Int32
+}
+pub fn Vfs::add_file(Self, String, Bytes) -> Unit
+pub fn Vfs::attributes(Self, String) -> Int32
+pub fn Vfs::close(Self, Int64) -> Bool
+pub fn Vfs::close_find(Self, Int64) -> Bool
+pub fn Vfs::find_first(Self, String) -> (Int64, String)?
+pub fn Vfs::find_next(Self, Int64) -> String?
+pub fn Vfs::is_find_handle(Self, Int64) -> Bool
+pub fn Vfs::new() -> Self
+pub fn Vfs::note_create(Self) -> Unit
+pub fn Vfs::note_fallback(Self) -> Unit
+pub fn Vfs::open(Self, String) -> Int64?
+pub fn Vfs::read(Self, Int64, Int32) -> Bytes?
+pub fn Vfs::size(Self, Int64) -> Int64?
+
+pub struct VirtualRegistry {
+  values : Map[String, RegValue]
+  keys : Map[String, Unit]
+  handles : Map[Int64, String]
+  mut next_handle : Int64
+  mut calls_query : Int32
+  mut calls_write : Int32
+}
+pub fn VirtualRegistry::close_key(Self, Int64) -> Bool
+pub fn VirtualRegistry::is_virtual_key(Self, Int64) -> Bool
+pub fn VirtualRegistry::new() -> Self
+pub fn VirtualRegistry::open_key(Self, Int64, String) -> Int64?
+pub fn VirtualRegistry::query_value(Self, Int64, String) -> RegValue?
+pub fn VirtualRegistry::set_value(Self, Int64, String, String, Int32, Bytes) -> Bool
+
+// Type aliases
+
+// Traits

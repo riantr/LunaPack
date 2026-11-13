@@ -1583,6 +1583,59 @@ anti-debugging here, no obfuscation and no code protection. What a license
 gives you is a check a reader can trust, not a barrier a reader cannot
 remove.
 
+## Experimental: the in-process runtime
+
+Alongside the packer there is now a **separate, Windows-only MoonBit module**
+in [`runtime/`](runtime/README.md). It is a research increment towards a
+memory filesystem and registry virtualization, not a feature of the CLI: no
+`lunapack` command uses it, no archive format for virtual files exists yet,
+and nothing from it is compiled into `LunaPack.exe` or the WebAssembly build.
+
+The root module keeps its `native+wasm` shape. The runtime is its own module
+because it calls Win32 directly, is a `foreign_library`, and needs
+`advapi32.lib` on the linker line — none of which belongs in the
+cross-platform CLI or in its Linux and macOS CI jobs.
+
+What it currently does, end to end and in one process:
+
+- an **in-memory filesystem** serves `CreateFileW`, `ReadFile`,
+  `GetFileAttributesW`, `GetFileSizeEx`, `FindFirstFileW` and
+  `FindNextFileW` from MoonBit maps;
+- an **in-memory registry hive** serves `RegOpenKeyExW`,
+  `RegQueryValueExW`, `RegSetValueExW` and `RegCloseKey`, so a write to HKLM
+  needs no administrator rights and never touches the real registry;
+- an **import address table patcher** redirects twelve Win32 entry points of
+  a consumer module, including `GetProcAddress` so dynamically resolved
+  calls are covered too;
+- a **manual PE mapper** maps a consumer DLL from a byte array, so the
+  consumer does not have to exist as a file while it runs — headers,
+  sections, base relocations, imports and section protections are all done
+  in memory.
+
+Anything the runtime does not own falls through to the real Win32 API through
+the runtime DLL's own unpatched import, so ordinary files and registry keys
+keep working. The only memory it writes outside its own heap is the consumer's
+IAT, made temporarily writable with `VirtualProtect` and restored at once.
+There is no `CreateRemoteThread`, `VirtualAllocEx`, `WriteProcessMemory` or
+`OpenProcess` anywhere in it — that remoteness is exactly what made the
+earlier injection experiment unacceptable to security software.
+
+```powershell
+powershell -File scripts\build_runtime_windows.ps1 -Consume
+```
+
+The script builds `lpvirt.dll`, compiles two throwaway C test doubles and runs
+the demo. `-Consume` deletes the consumer DLL from disk *after* its bytes are
+read but *before* they are mapped; the demo still runs and
+`GetModuleHandle("payload.dll")` returns NULL. On the development machine
+(Huorong) this produced no new quarantine entries, while the earlier remote
+injection experiment was isolated eleven times. That is a measurement on one
+engine, not a guarantee: see [the runtime's limits](runtime/README.md) before
+treating any of it as production code.
+
+`lpvirt.dll` is built by an extra Windows CI job and attached to releases as
+an **optional, experimental asset**. Its build is not a release blocker.
+
 ## Running it
 
 ### Via `moonx` (published on Mooncakes)

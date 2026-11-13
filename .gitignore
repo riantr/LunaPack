@@ -4,3 +4,10 @@ target/
 target
 .mooncakes/
 .moonagent/
+
+# Windows runtime build output (scripts/build_runtime_windows.ps1)
+dist/
+*.obj
+*.exp
+*.pdb
+*.ilk

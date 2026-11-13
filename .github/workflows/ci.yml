@@ -108,6 +108,48 @@ jobs:
         run: bash scripts/test_linux.sh
 
   # ---------------------------------------------------------------------------
+  # The Windows runtime is a separate, Windows-only MoonBit module. It is
+  # built here rather than in the matrix above so that its advapi32 link flag
+  # never reaches the Linux/macOS/wasm legs.
+  # ---------------------------------------------------------------------------
+  runtime-windows:
+    name: In-process runtime (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit
+        shell: pwsh
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # The script checks formatting, regenerates the interface, type-checks,
+      # runs the unit tests, links lpvirt.dll and runs the end-to-end demo.
+      # -Consume deletes the consumer DLL from disk before it is mapped, which
+      # is what proves the zero-disk path.
+      - name: Build, link and exercise the runtime
+        shell: pwsh
+        run: ./scripts/build_runtime_windows.ps1 -Consume
+
+      - name: The generated interface must be committed
+        shell: pwsh
+        run: git diff --exit-code -- '*.mbti'
+
+      - name: Upload the runtime DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-lpvirt-dll
+          path: dist/lpvirt.dll
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
   # The source must be formatted and its generated interface up to date.
   # ---------------------------------------------------------------------------
   verify:

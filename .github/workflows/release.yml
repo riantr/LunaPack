@@ -244,6 +244,44 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
+  # The experimental in-process runtime DLL. It lives in its own MoonBit
+  # module (runtime/) and is Windows-only; the CLI binaries above do not
+  # depend on it. This job is deliberately not a release blocker.
+  # ---------------------------------------------------------------------------
+  build-runtime:
+    name: Windows runtime DLL
+    needs: verify-tag
+    runs-on: windows-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install MoonBit
+        shell: pwsh
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build, link and exercise the runtime
+        shell: pwsh
+        run: ./scripts/build_runtime_windows.ps1 -Consume
+
+      - name: Upload the runtime DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-lpvirt-dll
+          path: dist/lpvirt.dll
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
   # Publish to the Mooncakes registry, so
   # `moonx riantr/LunaPack@latest` resolves to this version.
   # ---------------------------------------------------------------------------
@@ -320,7 +358,7 @@ jobs:
       needs.build.result == 'success' &&
       needs.build-wasm.result == 'success' &&
       needs.publish-registry.result == 'success'
-    needs: [verify-tag, build, build-macos, build-wasm, publish-registry]
+    needs: [verify-tag, build, build-macos, build-wasm, build-runtime, publish-registry]
     runs-on: ubuntu-latest
 
     permissions:
@@ -363,6 +401,11 @@ jobs:
               NOTES="$NOTES"$'\n\n'"The binary $name is not part of this release: the runner that builds it was not available when the tag was pushed."
             fi
           done
+          # The runtime DLL comes from an optional job, so its absence has a
+          # different explanation from a missing runner.
+          if [ ! -f "artifacts/lpvirt.dll" ]; then
+            NOTES="$NOTES"$'\n\n'"The experimental Windows in-process runtime lpvirt.dll is not attached to this release: its optional build job did not produce it. It is not needed by any CLI command."
+          fi
           # Studio is built outside CI (proton_cli + CEF is a Windows desktop
           # toolchain). A release without its asset still works on the command
           # line, but `lunapack --GUI` has nothing to download, so the notes

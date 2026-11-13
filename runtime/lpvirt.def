@@ -1,0 +1,25 @@
+LIBRARY lpvirt
+EXPORTS
+  moonbit_init
+  lp_virt_reset
+  lp_virt_add_file
+  lp_virt_set_reg
+  lp_virt_stats
+  lp_install_iat_hooks
+  lp_create_file_w
+  lp_read_file
+  lp_close_handle
+  lp_get_file_attributes_w
+  lp_get_file_size_ex
+  lp_find_first_file_w
+  lp_find_next_file_w
+  lp_reg_open_key_ex_w
+  lp_reg_query_value_ex_w
+  lp_reg_set_value_ex_w
+  lp_reg_close_key
+  lp_get_proc_address
+  lp_map_image
+  lp_map_error
+  lp_get_export
+  lp_get_entry
+  lp_unmap_image
