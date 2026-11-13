@@ -147,11 +147,13 @@ fn file_dirs_of(flags : Array[Flag]) -> Array[String] {
 /// neither is a mistake, and `file_dirs_of` reads the two as one flag.
 fn known_flags() -> Array[String] {
   [
-    "Files", "GUI", "arch", "cli", "compression", "compression-method", "encryption",
-    "encryption-method", "gui", "expected-sha256", "extracted", "files", "i", "input",
-    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "os", "output",
+    "Files", "GUI", "arch", "at", "cli", "compression", "compression-method", "days",
+    "encryption", "encryption-method", "expected-sha256", "extracted", "features",
+    "files", "gui", "i", "input", "input-exe", "input-file", "launcher", "machine",
+    "machine-id", "name", "no-auto-deps", "not-after", "not-before", "o", "os", "output",
     "output-exe", "output-file", "passphrase", "passphrase-file", "post-install",
-    "pre-install", "public-key", "secret-key", "signature", "skip-scripts", "version",
+    "pre-install", "public-key", "secret-key", "serial", "signature", "skip-scripts",
+    "subject", "version",
   ]
 }
 
@@ -377,6 +379,11 @@ fn usage() -> Unit {
   println("  lunapack info   <package>")
   println("  lunapack keygen --public-key <file> --secret-key <file>")
   println(
+    "  lunapack license issue  --subject <s> --secret-key <file> [options]",
+  )
+  println("  lunapack license verify <license> --public-key <file>")
+  println("  lunapack machine-id")
+  println(
     "  lunapack --GUI [--input-file <exe>] [--output-file <exe>] [--Files <dir>]...",
   )
   println("")
@@ -430,6 +437,25 @@ fn usage() -> Unit {
   println(
     "  --passphrase <text>      the passphrase (visible in the process list)",
   )
+  println("")
+  println("licensing:")
+  println("  --subject <text>        who or what the license is issued to")
+  println(
+    "  --machine <hex|*>       bind to a machine id (* = any, the default)",
+  )
+  println("  --days <n>              license valid for n days from now")
+  println(
+    "  --not-before <ms>       epoch ms before which the license is not valid",
+  )
+  println(
+    "  --not-after <ms>        epoch ms after which the license has expired",
+  )
+  println("  --features <a,b,...>    labels the license grants")
+  println("  --serial <id>           serial number (default: a random one)")
+  println(
+    "  --machine-id <hex>      id to check against (default: this machine)",
+  )
+  println("  --at <ms>               check at this time instead of now")
 }
 
 ///|
@@ -991,6 +1017,201 @@ async fn do_info(args : ArrayView[String]) -> Unit {
 }
 
 ///|
+/// The `license` subcommand: issue a signed license, or check one.
+async fn do_license(args : ArrayView[String]) -> Unit {
+  if args.length() < 2 {
+    println("error: license requires 'issue' or 'verify'")
+    usage()
+    exit_with(1)
+    return
+  }
+  if args[1] == "issue" {
+    do_license_issue(args)
+  } else if args[1] == "verify" {
+    do_license_verify(args)
+  } else {
+    println("error: license takes 'issue' or 'verify', not " + args[1])
+    usage()
+    exit_with(1)
+  }
+}
+
+///|
+/// The clock as epoch milliseconds, in a signed integer.
+fn now_millis() -> Int64 {
+  @env.now().reinterpret_as_int64()
+}
+
+///|
+/// A decimal flag; an absent one is unbounded, a wrong one is an error.
+fn decimal_flag(flags : Array[Flag], key : String) -> Int64 raise {
+  let text = flag_value(flags, key)
+  if text == "" {
+    0L
+  } else {
+    match parse_decimal(text) {
+      Some(v) => v
+      None => fail("--" + key + " must be a decimal number")
+    }
+  }
+}
+
+///|
+/// Issue a license: sign its fields with the secret key of the host.
+async fn do_license_issue(args : ArrayView[String]) -> Unit {
+  let flags = parse_flags(args, 2)
+  check_flags(flags) catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+      return
+    }
+  }
+  let subject = flag_value(flags, "subject")
+  let secret_path = flag_value(flags, "secret-key")
+  if subject == "" || secret_path == "" {
+    println(
+      "error: license issue requires --subject <text> and --secret-key <file>",
+    )
+    usage()
+    exit_with(1)
+    return
+  }
+  try {
+    let mut machine = flag_value(flags, "machine")
+    if machine == "" {
+      machine = LICENSE_ANY_MACHINE
+    }
+    let mut serial = flag_value(flags, "serial")
+    if serial == "" {
+      serial = bytes_to_hex(random_bytes(16))
+    }
+    let not_before = decimal_flag(flags, "not-before")
+    let explicit_after = flag_value(flags, "not-after")
+    let days = flag_value(flags, "days")
+    let mut not_after : Int64 = 0L
+    if explicit_after != "" {
+      not_after = match parse_decimal(explicit_after) {
+        Some(v) => v
+        None => fail("--not-after must be a decimal number")
+      }
+    } else if days != "" {
+      let count = match parse_decimal(days) {
+        Some(v) => v
+        None => fail("--days must be a decimal number")
+      }
+      not_after = now_millis() + count * 86400000L
+    }
+    let lic = new_license(
+      subject,
+      machine,
+      not_before,
+      not_after,
+      flag_value(flags, "features"),
+      serial,
+    )
+    let passphrase = read_passphrase(flags)
+    let secret = load_secret_key(secret_path, passphrase)
+    let signed = match license_sign(lic, secret) {
+      Some(s) => s
+      None => fail("the license could not be signed")
+    }
+    let text = license_to_text(signed)
+    let output = flag_value(flags, "output")
+    if output == "" {
+      println(text)
+    } else {
+      @fs.write_text(output, text)
+      println("wrote the license to " + output)
+    }
+  } catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
+  }
+}
+
+///|
+/// Check a license against the public key, an installation and the clock.
+async fn do_license_verify(args : ArrayView[String]) -> Unit {
+  if args.length() < 3 {
+    println("error: license verify requires a license path")
+    usage()
+    exit_with(1)
+    return
+  }
+  let flags = parse_flags(args, 2)
+  check_flags(flags) catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+      return
+    }
+  }
+  let public_path = flag_value(flags, "public-key")
+  if public_path == "" {
+    println("error: license verify requires --public-key <file>")
+    usage()
+    exit_with(1)
+    return
+  }
+  try {
+    let text = read_text_file(args[2]) catch {
+      err => fail("cannot read the license file: " + err.to_string())
+    }
+    let lic = match license_from_text(text) {
+      Some(l) => l
+      None => fail("the file is not a license")
+    }
+    let public = load_signing_public_key(public_path)
+    let mut machine_id = flag_value(flags, "machine-id")
+    if machine_id == "" {
+      machine_id = local_machine_id()
+    }
+    let at = {
+      let t = flag_value(flags, "at")
+      if t == "" {
+        now_millis()
+      } else {
+        match parse_decimal(t) {
+          Some(v) => v
+          None => fail("--at must be a decimal number")
+        }
+      }
+    }
+    let check = license_verify(lic, public, machine_id, at)
+    if check.valid {
+      println("LICENSE OK")
+      println("  subject:  " + lic.subject)
+      println("  serial:   " + lic.serial)
+      println(
+        "  features: " +
+        (if check.features.length() == 0 {
+          "-"
+        } else {
+          check.features.join(", ")
+        }),
+      )
+    } else {
+      println("LICENSE FAILED: " + check.reason)
+      exit_with(1)
+    }
+  } catch {
+    err => {
+      println("error: " + err.to_string())
+      exit_with(1)
+    }
+  }
+}
+
+///|
+/// The `machine-id` subcommand: the identifier a license is bound to.
+fn do_machine_id() -> Unit {
+  println(local_machine_id())
+}
+
+///|
 async fn main {
   // A self-extracting bundle carries its payload inside this executable:
   // start the bundled program instead of acting as a command line tool.
@@ -1033,6 +1254,10 @@ async fn main {
     do_info(argv)
   } else if first == "keygen" {
     do_keygen(argv)
+  } else if first == "license" {
+    do_license(argv)
+  } else if first == "machine-id" {
+    do_machine_id()
   } else if first == "--help" || first == "-h" || first == "help" {
     usage()
   } else {

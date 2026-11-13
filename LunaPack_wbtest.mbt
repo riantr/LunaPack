@@ -1074,3 +1074,249 @@ test "the flag --no-auto-deps is a flag the tool knows" {
     _ => fail("the flag --no-auto-deps must be known")
   }
 }
+
+///|
+/// A fixed secret, so every license test signs with the same key.
+fn license_secret() -> Bytes {
+  hex_to_bytes(
+    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  ).unwrap()
+}
+
+///|
+/// The Ed25519 public key of the pair that license_secret belongs to.
+fn license_public() -> Bytes {
+  ed25519_public_key(ed25519_seed(license_secret())) catch {
+    _ => Default::default()
+  }
+}
+
+///|
+/// A signed license of a perpetual, unbound grant.
+fn signed_license(features : String) -> License {
+  license_sign(
+    new_license("Acme/2.6", LICENSE_ANY_MACHINE, 0L, 0L, features, "ACME-001"),
+    license_secret(),
+  ).unwrap()
+}
+
+///|
+/// A signed license whose term and binding are given by the caller.
+fn signed_with(
+  machine : String,
+  not_before : Int64,
+  not_after : Int64,
+) -> License {
+  license_sign(
+    new_license("Acme/2.6", machine, not_before, not_after, "pro", "ACME-001"),
+    license_secret(),
+  ).unwrap()
+}
+
+///|
+/// A license survives the round trip through its text, and the check says
+/// which labels it grants.
+test "a signed license round-trips and grants its features" {
+  let text = license_to_text(signed_license("pro,export"))
+  let parsed = license_from_text(text).unwrap()
+  let check = license_verify(parsed, license_public(), "", 1000L)
+  assert_true(check.valid)
+  assert_eq(check.reason, "ok")
+  assert_eq(check.features.length(), 2)
+  assert_true(license_has_feature(check, "pro"))
+  assert_true(license_has_feature(check, "export"))
+  assert_true(!license_has_feature(check, "admin"))
+}
+
+///|
+/// An empty feature list is written as a bare `features` line once
+/// `text_lines` trims it. It must still parse: this was a real defect where
+/// a license issued without --features could not be read back at all.
+test "a license with no features still round-trips" {
+  let text = license_to_text(signed_license(""))
+  assert_true(text.contains("features \n"))
+  let parsed = license_from_text(text).unwrap()
+  let check = license_verify(parsed, license_public(), "", 1000L)
+  assert_true(check.valid)
+  assert_eq(check.features.length(), 0)
+}
+
+///|
+/// One field changed by a reader breaks the signature.
+test "a license whose subject was changed is refused" {
+  let lines = text_lines(license_to_text(signed_license("pro")))
+  lines[2] = "subject Evil/9.9"
+  let tampered = lines.join("\n") + "\n"
+  let parsed = license_from_text(tampered).unwrap()
+  let check = license_verify(parsed, license_public(), "", 1000L)
+  assert_true(!check.valid)
+  assert_eq(check.reason, "the signature does not hold for the public key")
+  assert_eq(check.features.length(), 0)
+}
+
+///|
+/// A license made with a different key is refused.
+test "a license signed by another key is refused" {
+  let other = hex_to_bytes(
+    "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100",
+  ).unwrap()
+  let lic = license_sign(
+    new_license("Acme/2.6", LICENSE_ANY_MACHINE, 0L, 0L, "pro", "ACME-001"),
+    other,
+  ).unwrap()
+  let check = license_verify(
+    license_from_text(license_to_text(lic)).unwrap(),
+    license_public(),
+    "",
+    1000L,
+  )
+  assert_true(!check.valid)
+  assert_eq(check.reason, "the signature does not hold for the public key")
+}
+
+///|
+/// The term is checked against the clock the caller supplies.
+test "an expired license and one not yet valid are refused" {
+  let expired = signed_with(LICENSE_ANY_MACHINE, 0L, 1000L)
+  let past = license_verify(expired, license_public(), "", 2000L)
+  assert_true(!past.valid)
+  assert_eq(past.reason, "the license has expired")
+  let future = signed_with(LICENSE_ANY_MACHINE, 1000L, 0L)
+  let early = license_verify(future, license_public(), "", 500L)
+  assert_true(!early.valid)
+  assert_eq(early.reason, "the license is not valid yet")
+  // Inside the term the same license holds.
+  let inside = license_verify(
+    signed_with(LICENSE_ANY_MACHINE, 1000L, 2000L),
+    license_public(),
+    "",
+    1500L,
+  )
+  assert_true(inside.valid)
+}
+
+///|
+/// A license bound to a machine is refused elsewhere, and a bound license
+/// with no identifier at all is refused rather than taken as unbound.
+test "a machine-bound license is checked against the identifier" {
+  let id = machine_id_of(["host", "user"])
+  let lic = signed_with(id, 0L, 0L)
+  let parsed = license_from_text(license_to_text(lic)).unwrap()
+  assert_true(license_verify(parsed, license_public(), id, 1000L).valid)
+  let wrong = license_verify(
+    parsed,
+    license_public(),
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    1000L,
+  )
+  assert_true(!wrong.valid)
+  assert_eq(wrong.reason, "the license was issued for another machine")
+  let missing = license_verify(parsed, license_public(), "", 1000L)
+  assert_true(!missing.valid)
+  assert_eq(
+    missing.reason,
+    "the license is bound to a machine but no identifier was given",
+  )
+}
+
+///|
+/// A fresh copy of the lines of a signed license, so every broken variant
+/// starts from the real thing instead of from what the previous one edited.
+fn license_lines() -> Array[String] {
+  text_lines(license_to_text(signed_license("pro")))
+}
+
+///|
+fn lines_text(lines : Array[String]) -> String {
+  lines.join("\n") + "\n"
+}
+
+///|
+/// A file that is not a license is refused rather than read as a grant.
+test "license_from_text refuses a broken license" {
+  assert_true(license_from_text("not a license\n") is None)
+  // A wrong header.
+  let a = license_lines()
+  a[0] = "lunapack-license v2"
+  assert_true(license_from_text(lines_text(a)) is None)
+  // A missing field: the signature line is gone.
+  let b = license_lines()
+  b.pop() |> ignore
+  assert_true(license_from_text(lines_text(b)) is None)
+  // A field out of order.
+  let c = license_lines()
+  c[2] = "serial ACME-001"
+  c[7] = "subject Acme/2.6"
+  assert_true(license_from_text(lines_text(c)) is None)
+  // A signature that is not hex.
+  let d = license_lines()
+  d[8] = "signature not-hex"
+  assert_true(license_from_text(lines_text(d)) is None)
+  // A timestamp that is not a number.
+  let e = license_lines()
+  e[4] = "not-before tomorrow"
+  assert_true(license_from_text(lines_text(e)) is None)
+}
+
+///|
+/// The decimal reader bounds the number of digits and refuses non-digits.
+test "parse_decimal refuses what is not a bounded decimal" {
+  assert_eq(parse_decimal("0").unwrap(), 0L)
+  assert_eq(parse_decimal("1797143394435").unwrap(), 1797143394435L)
+  assert_true(parse_decimal("") is None)
+  assert_true(parse_decimal("12x") is None)
+  assert_true(parse_decimal("-1") is None)
+  assert_true(parse_decimal("12345678901234567890") is None)
+}
+
+///|
+/// Empty labels are not features.
+test "split_features drops empty labels" {
+  assert_eq(split_features("").length(), 0)
+  assert_eq(split_features(",, ,").length(), 0)
+  let parts = split_features("pro, export ,,")
+  assert_eq(parts.length(), 2)
+  assert_eq(parts[0], "pro")
+  assert_eq(parts[1], "export")
+}
+
+///|
+/// The identifier is stable, and the separator keeps two different lists
+/// from naming the same installation.
+test "machine_id_of is stable and does not collide" {
+  let a = machine_id_of(["ab", "c"])
+  let b = machine_id_of(["a", "bc"])
+  assert_eq(a.length(), 64)
+  assert_eq(a, machine_id_of(["ab", "c"]))
+  assert_true(a != b)
+}
+
+///|
+/// A line break in a field would add a line to the signed payload, so it is
+/// refused at the moment of signing rather than parsed as another license.
+test "a license with a line break in a field is refused" {
+  let bad = new_license(
+    "Acme\nsubject Evil",
+    LICENSE_ANY_MACHINE,
+    0L,
+    0L,
+    "",
+    "ACME-001",
+  )
+  assert_true(license_sign(bad, license_secret()) is None)
+}
+
+///|
+/// The flags of the licensing commands are flags the tool knows.
+test "the licensing flags are flags the tool knows" {
+  for
+    f in [
+      "subject", "machine", "machine-id", "not-before", "not-after", "features",
+      "serial", "days", "at",
+    ] {
+    assert_true(known_flags().contains(f))
+  }
+  check_flags([("subject", "Acme"), ("days", "30")]) catch {
+    _ => fail("the licensing flags must be known")
+  }
+}

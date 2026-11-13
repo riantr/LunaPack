@@ -118,6 +118,14 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
   time the script matching the host platform runs and a script for a different
   platform is skipped, so one package can safely be unpacked anywhere.
 
+* An offline license the host signs
+
+  `lunapack license issue` signs a short text with Ed25519, and
+  `lunapack license verify` checks it with the public key; no server is
+  contacted. The signature covers every field, so a license whose subject,
+  term, machine binding or features was edited is refused, and every refusal
+  says why. See [Licensing](#licensing).
+
 * One format, two front ends
 
   The same library and the same container behind `lunapack` (a native binary)
@@ -157,6 +165,14 @@ data structures, reports and one command line. Concretely:
 | `@LunaPack.verify_package_digest(pkg, digest)` | whether the package has that digest | `Bool` |
 | `@LunaPack.manifest_digest(offset, length, bytes)` | the digest of a manifest | `Bytes` |
 | `@LunaPack.manifest_mac(key, offset, length, bytes)` | the MAC of a manifest | `Bytes` |
+| `@LunaPack.new_license(...)` | a license ready to be signed | `License` |
+| `@LunaPack.license_sign(lic, secret)` | the signed license, or None | `License?` |
+| `@LunaPack.license_to_text(lic)` | a license as a text | `String` |
+| `@LunaPack.license_from_text(text)` | the license in a text | `License?` |
+| `@LunaPack.license_verify(lic, public, machine, now)` | whether it holds, and why | `LicenseCheck` |
+| `@LunaPack.license_has_feature(check, name)` | whether an accepted license grants a label | `Bool` |
+| `@LunaPack.machine_id_of(parts)` | the identifier built from parts the host supplies | `String` |
+| `@LunaPack.local_machine_id()` | the identifier of this installation | `String` |
 
 Every one of those is an explicit data value or a plain function: there is no
 hidden global state, and the same inputs give the same bytes — which is why
@@ -874,13 +890,15 @@ target: a check for those has nothing to do, because no package of the module
 claims one.
 
 The checks are not warning-free, and the numbers are in the open rather than in
-a footnote: `--target native` reports **2 warnings** (a deprecated call in a
-test, and the one below) and `--target wasm` reports **6** (the same two,
-three in the Windows-only icon helpers, which the WebAssembly backend does not
-use, and one for the UTF-16 import that only the Windows native launcher
-needs). No gate runs with `--deny-warn`, and none of the warnings is an error.
+a footnote: `--target native` reports **1 warning** (the blackbox-test notice
+below) and `--target wasm` reports **11** (the same notice, plus Windows-only
+helpers in `icon.mbt` and `launcher.mbt` that the WebAssembly backend does not
+use, and the UTF-16 import that only the Windows native launcher needs). They
+were 2 and 6 at 0.1.20; the extra ones are unused platform stubs the launcher
+gained since, not warnings in the library. The licensing module adds none. No
+gate runs with `--deny-warn`, and none of the warnings is an error.
 
-The second warning is the price of the short coordinate, and it is worth naming
+The warning is the price of the short coordinate, and it is worth naming
 exactly: *"Main package `riantr/LunaPack` uses blackbox-only test inputs
 (`_test.mbt` files) … Main packages will stop generating blackbox tests in a
 future release."* The blackbox tests of the public API run today, and a
@@ -1457,6 +1475,83 @@ receives two environment variables:
 
 Use `--skip-scripts` to unpack without running them.
 
+## Licensing
+
+A package can say what it holds, but it cannot say who is allowed to use it.
+That claim has to come from the host. A **license** is a short text the host
+signs with Ed25519 and the reader checks with the public key. No server is
+contacted, so a machine that never reaches the network can still be checked.
+
+```bash
+# The host holds the secret key; the program ships with host.pub.
+lunapack license issue --subject "Acme Corp / 2.6" \
+  --secret-key host.key --days 30 \
+  --features pro,export --serial ACME-001 --output acme.lic
+
+# On the machine that runs the program.
+lunapack license verify acme.lic --public-key host.pub
+```
+
+```
+LICENSE OK
+  subject:  Acme Corp / 2.6
+  serial:   ACME-001
+  features: pro, export
+```
+
+The license is a text, like the public key and the detached signature:
+
+```
+lunapack-license v1
+algorithm ed25519
+subject Acme Corp / 2.6
+machine *
+not-before 0
+not-after 1797143394435
+features pro,export
+serial ACME-001
+signature e7d63544d8a929f9f43663...
+```
+
+The signature covers **every** line above it, in that order, under a label of
+its own. A field that was changed, a field that was added, a license signed
+for another purpose and a license made with another key are all refused, and
+the refusal names which of them it was:
+
+| Check | What it stops |
+| --- | --- |
+| Ed25519 over the payload | a license that was edited, or issued by someone else |
+| `not-before` / `not-after` | a license used outside the term the host granted |
+| `machine` | a license copied to another installation |
+| `features` | a program taking a label the license did not grant |
+
+`--machine *` (the default) leaves a license unbound. `--machine <hex>` binds
+it to the identifier printed by `lunapack machine-id`, or to one the host
+collects itself and passes with `--machine-id`. `--at <ms>` checks at a given
+time instead of now, which is how a build tests an expiry without waiting for
+it. `--days <n>` and `--not-after <ms>` are the two ways to set a term; a
+license with neither is perpetual.
+
+### The honest limits
+
+Two of them are worth stating plainly.
+
+**The machine binding is not a hardware lock.** `local_machine_id` is built
+from the host name, the user name, the operating system and the architecture,
+because those are what every platform has and what lets the same code compile
+for the WebAssembly build. It is stable across starts and it is cheap, and it
+is also forgeable: it binds a license to an installation, not to a machine. A
+host that needs a stronger binding collects its own identifier — a volume
+serial, an SMBIOS UUID — and passes it to `license_verify` or `--machine-id`.
+The license only ever holds a digest of one.
+
+**A signature cannot make a program ask.** The library answers whether a
+license holds and why, but a program that never calls `license_verify`, or
+that ignores the answer, is not licensed in any meaningful sense. There is no
+anti-debugging here, no obfuscation and no code protection. What a license
+gives you is a check a reader can trust, not a barrier a reader cannot
+remove.
+
 ## Running it
 
 ### Via `moonx` (published on Mooncakes)
@@ -1556,6 +1651,9 @@ lunapack verify <package>      [--extracted <dir>]
 lunapack sign   <package>      --secret-key <file> [--output <file>]
 lunapack info   <package>
 lunapack keygen --public-key <file> --secret-key <file>
+lunapack license issue  --subject <text> --secret-key <file> [options]
+lunapack license verify <license> --public-key <file>
+lunapack machine-id
 ```
 
 Flags accept both `--flag=value` and `--flag value`.

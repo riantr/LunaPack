@@ -36,6 +36,12 @@ pub const KEY_SALT_BYTES : Int32 = 16
 
 pub const KEY_VERSION : Int32 = 1
 
+pub const LICENSE_ALGORITHM : String = "ed25519"
+
+pub const LICENSE_ANY_MACHINE : String = "*"
+
+pub const LICENSE_HEADER : String = "lunapack-license v1"
+
 pub const LZ4_BLOCK_SIZE : Int32 = 4194304
 
 pub const LZ4_MAGIC : UInt32 = 0x184D2204
@@ -186,15 +192,31 @@ pub fn launcher_release_url() -> String
 
 pub fn le8_to_i64(Bytes, Int32) -> Int64
 
+pub fn license_from_text(String) -> License?
+
+pub fn license_has_feature(LicenseCheck, String) -> Bool
+
+pub fn license_payload(License) -> String
+
+pub fn license_sign(License, Bytes) -> License?
+
+pub fn license_to_text(License) -> String
+
+pub fn license_verify(License, Bytes, String, Int64) -> LicenseCheck
+
 pub async fn load_public_key(String) -> Bytes
 
 pub async fn load_secret_key(String, String) -> Bytes
 
 pub async fn load_signing_public_key(String) -> Bytes
 
+pub fn local_machine_id() -> String
+
 pub fn lz4_compress_frame(Bytes) -> Bytes
 
 pub fn lz4_decompress_frame(Bytes, Int32) -> Bytes
+
+pub fn machine_id_of(Array[String]) -> String
 
 pub fn magic_bytes() -> Bytes
 
@@ -213,6 +235,8 @@ pub fn md5_hex_of_string(String) -> String
 pub fn new_encryption(String, String, String, String, Int32, String) -> Encryption
 
 pub fn new_encryption_options(String, String, String, Int32) -> EncryptionOptions
+
+pub fn new_license(String, String, Int64, Int64, String, String) -> License
 
 pub fn new_pack_options(String, String, String, String, Script?, Script?, String) -> PackOptions
 
@@ -239,6 +263,8 @@ pub async fn package_manifest_digest(String) -> String
 pub fn package_tag(Manifest) -> String
 
 pub fn package_tag_of(String) -> String
+
+pub fn parse_decimal(String) -> Int64?
 
 pub fn parse_pe(Bytes) -> PeFile raise
 
@@ -322,6 +348,8 @@ pub fn signature_from_text(String) -> PackageSignature?
 
 pub fn signature_to_text(PackageSignature) -> String
 
+pub fn split_features(String) -> Array[String]
+
 pub fn string_to_utf8_bytes(String) -> Bytes
 
 pub fn studio_asset_name() -> String
@@ -402,6 +430,22 @@ pub struct Entry {
 }
 
 type Integrity
+
+pub struct License {
+  subject : String
+  machine : String
+  not_before : Int64
+  not_after : Int64
+  features : String
+  serial : String
+  signature : String
+}
+
+pub struct LicenseCheck {
+  valid : Bool
+  reason : String
+  features : Array[String]
+}
 
 pub struct Manifest {
   format_version : Int32
