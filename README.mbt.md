@@ -182,7 +182,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.24
+moon add riantr/LunaPack@0.1.25
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -190,7 +190,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.24",
+  "riantr/LunaPack@0.1.25",
 }
 ```
 
@@ -210,7 +210,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.24`, `>=0.1.24`, `0.1` and `v0.1.24` are all rejected. A bare
+`latest`, `^0.1.25`, `>=0.1.25`, `0.1` and `v0.1.25` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -256,6 +256,51 @@ used to return a `&ProcessOutput` trait object and now returns a
 enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
+
+### What changed in 0.1.25
+
+- **The in-process runtime is now part of the repository.** The research
+  increment towards a memory filesystem and registry virtualization lives in
+  [`runtime/`](runtime/README.md) as a **separate, Windows-only MoonBit
+  module**: a `foreign_library` with a virtual file system, a virtual registry
+  hive, an in-process IAT patcher and twelve Win32 C ABI thunks. A virtual
+  file is read from memory, a virtual enumeration lists only memory entries,
+  and an HKLM write lands in the in-memory hive without administrator rights;
+  anything the runtime does not own falls through to the real API. It is
+  separate because its test executables need `advapi32.lib`, and a
+  `moon.pkg` link flag has no per-OS switch — putting it in the root module
+  would break the Linux and macOS builds. The root CLI source is unchanged
+  and still builds for native and Wasm.
+
+- **A manual PE mapper closes the zero-disk gap.** The runtime maps a DLL
+  from a byte array: headers and sections are copied, base relocations are
+  applied, imports are resolved, protections are set per section rather than
+  making the whole image RWX, and the instruction cache is flushed. The demo
+  deletes the consumer DLL from disk before mapping it and still runs the
+  whole file and registry scenario. It covers x64 PE32+ only; ordinal
+  imports, forwarded exports, delay-imports, TLS and SEH are not handled.
+
+- **No process-injection APIs.** There is no `CreateRemoteThread`,
+  `VirtualAllocEx`, `WriteProcessMemory` or `OpenProcess` in the runtime. The
+  only memory writes are to the IAT of a module the host loaded into its own
+  process, made writable with `VirtualProtect` and restored immediately.
+  `GetProcAddress` is intercepted as well, so a consumer that resolves its
+  APIs at run time is covered. On the one machine tested, the security
+  software raised no alert; that is one data point, not a guarantee.
+
+- **CI and release wiring.** `ci.yml` gained a Windows job that builds, tests
+  and exercises the runtime, including the zero-disk mode; `release.yml`
+  gained an **optional** job that attaches `lpvirt.dll` as an experimental
+  asset. Neither the CLI binaries nor the release depend on that job
+  succeeding. `scripts/build_runtime_windows.ps1` reproduces the whole build
+  locally.
+
+- **What did not change.** No CLI command, container format, launcher or
+  cryptographic primitive was touched. The runtime is **not wired into any
+  command**: there is no archive format that seeds the virtual filesystem,
+  and the host harness is a C test double. The 191 CLI tests still pass and
+  the runtime adds 10 of its own. Packing, bundling, unpacking, verifying,
+  signing and licensing behave exactly as they did in 0.1.24.
 
 ### What changed in 0.1.24
 
@@ -961,7 +1006,7 @@ on first use, so a user who only wants the command line never pays for the
 download. Assets for other platforms are named
 `lunapack-studio-<os>-<arch>.zip` and are added as those builds exist.
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.24`
+The release is built by a GitHub workflow when a version tag such as `v0.1.25`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1129,10 +1174,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.24 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.25 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.24 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.25 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1150,7 +1195,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.24 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.25 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
