@@ -182,7 +182,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.23
+moon add riantr/LunaPack@0.1.24
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -190,7 +190,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.23",
+  "riantr/LunaPack@0.1.24",
 }
 ```
 
@@ -210,7 +210,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.23`, `>=0.1.23`, `0.1` and `v0.1.23` are all rejected. A bare
+`latest`, `^0.1.24`, `>=0.1.24`, `0.1` and `v0.1.24` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -256,6 +256,37 @@ used to return a `&ProcessOutput` trait object and now returns a
 enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
+
+### What changed in 0.1.24
+
+- **An offline license the host signs.** `lunapack license issue` signs a
+  short text with Ed25519 and `lunapack license verify` checks it with the
+  public key; no server is contacted. Every field of the license — subject,
+  term, machine binding, features and serial — is covered by the signature,
+  so a license that was edited is refused, and every refusal names its
+  reason. `lunapack machine-id` prints the identifier a license can be bound
+  to, and a host with a stronger one passes it with `--machine-id`. The
+  section "Licensing" has the whole of it, including what it does not do:
+  there is no anti-debugging, no obfuscation and no code protection, and a
+  program that never asks is not licensed.
+
+- **A license with no features can be read back.** The first implementation
+  wrote an empty `features` line that the line reader trimmed to a bare key;
+  the parser refused it, so a license issued without `--features` could not
+  be verified at all. Empty fields are read now, and the signed payload trims
+  every text field so a round trip cannot change the bytes that were signed.
+  A field that carries a line break is refused at signing time.
+
+- **The warning counts in this file were updated to what the checks report**
+  now — native 1, wasm 11. The numbers quoted at 0.1.20 were 2 and 6, and
+  the extra ones are unused Windows launcher stubs, not warnings in the
+  library. The licensing module adds none.
+
+- **The suite grew from 179 to 191 tests.** The new ones cover the license
+  round trip, its empty-field regression, a changed field, a wrong key, the
+  term, the machine binding, malformed license files and field injection.
+  Nothing else changed: packing, bundling, unpacking, verifying and signing
+  behave exactly as they did in 0.1.23.
 
 ### What changed in 0.1.23
 
@@ -930,7 +961,7 @@ on first use, so a user who only wants the command line never pays for the
 download. Assets for other platforms are named
 `lunapack-studio-<os>-<arch>.zip` and are added as those builds exist.
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.23`
+The release is built by a GitHub workflow when a version tag such as `v0.1.24`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1098,10 +1129,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.23 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.24 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.23 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.24 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1119,7 +1150,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.23 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.24 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
