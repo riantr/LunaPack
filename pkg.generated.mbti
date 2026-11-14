@@ -4,7 +4,7 @@ package "riantr/LunaPack"
 // Values
 pub const CHECKSUM_ALGO : String = "sha256"
 
-pub const CLI_VERSION : String = "0.1.25"
+pub const CLI_VERSION : String = "0.1.26"
 
 pub const FORMAT_VERSION : Int32 = 6
 

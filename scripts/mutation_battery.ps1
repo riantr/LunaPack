@@ -322,8 +322,8 @@ Run-Mutation 'folder flag spelling' 'cli.mbt' `
 # tool reads is what catches it -- and only if that list is complete, which is
 # why the flag is written down in two places on purpose.
 Run-Mutation 'platform flag' 'cli.mbt' `
-  '    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "os", "output",' `
-  '    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "output",' `
+  '    "machine-id", "name", "no-auto-deps", "not-after", "not-before", "o", "os", "output",' `
+  '    "machine-id", "name", "no-auto-deps", "not-after", "not-before", "o", "output",' `
   '' '' `
   'the platform flag is a flag the tool knows'
 
@@ -499,8 +499,8 @@ Run-Mutation 'no auto deps flag' 'cli.mbt' `
 # A flag that is not known is refused, and a flag that is refused is a command
 # that cannot be run at all.
 Run-Mutation 'no auto deps known' 'cli.mbt' `
-  '    "input-exe", "input-file", "launcher", "name", "no-auto-deps", "o", "os", "output",' `
-  '    "input-exe", "input-file", "launcher", "name", "o", "os", "output",' `
+  '    "machine-id", "name", "no-auto-deps", "not-after", "not-before", "o", "os", "output",' `
+  '    "machine-id", "name", "not-after", "not-before", "o", "os", "output",' `
   '' '' `
   'the flag --no-auto-deps is a flag the tool knows'
 

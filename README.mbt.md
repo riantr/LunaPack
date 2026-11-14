@@ -182,7 +182,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.25
+moon add riantr/LunaPack@0.1.26
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -190,7 +190,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.25",
+  "riantr/LunaPack@0.1.26",
 }
 ```
 
@@ -210,7 +210,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.25`, `>=0.1.25`, `0.1` and `v0.1.25` are all rejected. A bare
+`latest`, `^0.1.26`, `>=0.1.26`, `0.1` and `v0.1.26` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -256,6 +256,46 @@ used to return a `&ProcessOutput` trait object and now returns a
 enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
+
+### What changed in 0.1.26
+
+- **Three defects of the dependency discovery are fixed.** The discovery reads
+  the import table of a Windows program and carries the libraries that sit next
+  to it, and three things could go wrong with it:
+
+  * A **folder** named like a library was carried as if it were one. The name in
+    an import table says nothing about what is on the disk, so a folder called
+    `mylib.dll` was taken for a library and the bundle failed while it was
+    made. Only a **file** is carried now.
+  * The name of a library was read until the byte that closes it, and a damaged
+    image can point at bytes that are **never closed**. Such a name was read as
+    the rest of the image. The name in an import table is a file name, and a
+    file name is not long: the read stops at **256 bytes** now.
+  * A `--Files` written **without a path** was refused with a message about
+    the file system instead of about the flag that was wrong. It says that the
+    path of `--Files` is empty now, and it says so before anything is written.
+    The library refuses it as well, so the message does not depend on the
+    front end that was used.
+
+- **The suite leaves no scratch behind.** Every test that needs a folder of its
+  own takes it away again when the test is over. Before this, every run of the
+  suite left a few hundred folders under the temporary directory of the system,
+  and a machine that had run it a few hundred times held tens of thousands of
+  them - about 1.5 GB of scratch on the machine this was written on. The suite
+  was the leak, not the tool.
+
+- **The releases carry the command line only.** LunaPack Studio is built on
+  another machine, so the asset `lunapack-studio-<os>-<arch>.zip` is not
+  attached to a release yet. The section "Releases" says so, and `--GUI` says
+  that it cannot find a Studio build instead of pretending to have downloaded
+  one.
+
+- The suite grew from 191 to **199 tests**, and the battery of mutations grew
+  from 33 to 41: every guard of the three fixes and of the cleanup was taken
+  out of the code once, and the test that covers it went red. The table under
+  "Every guard was taken out once" lists them.
+
+- Nothing else changed: the tool behaves exactly as it behaved in 0.1.25.
 
 ### What changed in 0.1.25
 
@@ -995,7 +1035,14 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-| `lunapack-studio-windows-x86_64.zip` | **LunaPack Studio**, the graphical front end of this same release |
+
+**The releases so far carry the command line only.** LunaPack Studio is built
+on another machine, and the asset `lunapack-studio-<os>-<arch>.zip` is not
+attached to a release yet; the release notes say so when it is missing.
+`lunapack --GUI` reports that it cannot find a Studio build and points at
+`LUNAPACK_STUDIO` / `LUNAPACK_STUDIO_URL` for a copy that is somewhere else.
+Assets for other platforms are named `lunapack-studio-<os>-<arch>.zip` and are
+added as those builds exist.
 
 LunaPack and LunaPack Studio are **not two packages**. Studio has no version
 of its own and is not published to Mooncakes: it is an optional asset attached
@@ -1003,10 +1050,9 @@ to the same release as the CLI, and the CLI knows which asset to ask for
 because both carry the version in `moon.mod`. `lunapack --GUI` downloads it
 on first use, so a user who only wants the command line never pays for the
 188 MB window and a user who wants the window never has to find a second
-download. Assets for other platforms are named
-`lunapack-studio-<os>-<arch>.zip` and are added as those builds exist.
+download.
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.25`
+The release is built by a GitHub workflow when a version tag such as `v0.1.26`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1174,10 +1220,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.25 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.26 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.25 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.26 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1195,7 +1241,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.25 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.26 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
@@ -1758,6 +1804,10 @@ older window. A mirror or an offline install can set `LUNAPACK_STUDIO_URL` to
 any URL (or a `file` served over loopback in a test); a bad archive is refused
 with a message naming the reason.
 
+That asset is **not attached to the releases so far** - Studio is built on
+another machine - so `--GUI` says that it cannot find one instead of pretending
+to have downloaded it.
+
 `HTTPS_PROXY`, `HTTP_PROXY` and their lowercase forms are honoured through a
 CONNECT tunnel. `NO_PROXY` (including its `*` wildcard) and all loopback hosts
 are always contacted directly, so a local mirror is not sent out through a
@@ -1971,7 +2021,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261104`): `moon test --target
-native` reports **179 tests, 179 passed, 0 failed**, and `--target wasm`
+native` reports **199 tests, 199 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -2011,6 +2061,13 @@ reference implementation produces.
 There is **no test that runs the `lz4` tool**: the frames are compared against
 the values the format publishes, not against the tool. That is a gap, not a
 claim of coverage, and it is named here rather than left implied.
+
+The suite leaves **no scratch behind**: every test that needs a folder of its
+own takes it away again when the test is over. That is not a detail of the
+hygiene of a test suite, it is the difference between a machine that holds a
+few hundred folders and one that holds tens of thousands of them: a run of
+the suite makes a few hundred, and a machine that has run it a few hundred
+times would otherwise carry a million of them.
 
 The tests of the encryption check every primitive against the vector that its
 standard publishes — FIPS 180-4 for SHA-512, RFC 4231 for HMAC, RFC 5869 for
@@ -2062,6 +2119,14 @@ alone, or the guard is not covered by a test at all.
 | the flag `--no-auto-deps` | the flag --no-auto-deps leaves the libraries out |
 | the flag `--no-auto-deps` among the known flags | the flag --no-auto-deps is a flag the tool knows |
 | the rule "a file is carried once" | a library that the caller named is not carried twice |
+| the rule "a folder is not a library" | a folder named like a library is not carried |
+| the limit of the name of a library | the name of a library that is not closed is cut off |
+| the refusal of a folder without a path | a folder without a path is refused with a clear message |
+| the refusal of a folder to pack without a path | a folder without a path is refused with a clear message |
+| the check of the path of `--Files` | the path of --Files is checked |
+| the removal of the scratch of a test | a folder of scratch is taken away again |
+| the removal of the scratch of a package | the scratch of a package is taken away again |
+| the removal of the scratch of a whitebox test | a folder of scratch of a whitebox test is taken away again |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
@@ -2160,7 +2225,7 @@ lunapack unpack -i myapp.appkg -o /opt/myapp
 From this repository:
 
 ```sh
-moon test                                  # 179 tests
+moon test                                  # 199 tests
 moon build --release --target native       # the binary
 moon build --release --target wasm         # the WebAssembly module
 ```
