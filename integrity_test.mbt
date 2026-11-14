@@ -90,7 +90,7 @@ fn with_text_at(data : Bytes, pos : Int32, old : String, new : String) -> Bytes 
 ///|
 /// A package with one file in it.
 async fn make_package(prefix : String) -> String {
-  let src = @fs.tmpdir(prefix~)
+  let src = scratch_dir(prefix)
   @fs.write_text(src + "/hello.txt", "hello")
   let pkg = src + "/test.appkg"
   let opts = @LunaPack.with_defaults(
@@ -115,7 +115,7 @@ async fn make_package(prefix : String) -> String {
 ///|
 /// A package that is sealed with a passphrase.
 async fn make_sealed_package(prefix : String) -> (String, String, String) {
-  let src = @fs.tmpdir(prefix~)
+  let src = scratch_dir(prefix)
   @fs.write_text(src + "/hello.txt", "hello")
   let pkg = src + "/sealed.appkg"
   let opts = @LunaPack.with_encryption(
@@ -159,6 +159,7 @@ async fn key_of(pkg : String, passphrase : String) -> @LunaPack.PackageKey {
 ///|
 async test "a package carries the integrity block of its manifest" {
   let pkg = make_package("lunapack_integrity")
+  defer drop_package_scratch(pkg)
   let data = @fs.read_binary(pkg)
   let (base, moff, mlen) = manifest_place(data)
   let position = (base + moff).to_int()
@@ -174,6 +175,7 @@ async test "a package carries the integrity block of its manifest" {
 ///|
 async test "a package whose manifest was changed is refused" {
   let pkg = make_package("lunapack_tampered")
+  defer drop_package_scratch(pkg)
   let data = @fs.read_binary(pkg)
   let (base, moff, _mlen) = manifest_place(data)
   let position = (base + moff).to_int()
@@ -192,6 +194,7 @@ async test "a package whose manifest was changed is refused" {
 ///|
 async test "a package whose footer was changed is refused" {
   let pkg = make_package("lunapack_footer")
+  defer drop_package_scratch(pkg)
   let data = @fs.read_binary(pkg)
   let total = data.length()
   // The length of the manifest in the footer: a number that is not the one
@@ -209,6 +212,7 @@ async test "a package whose footer was changed is refused" {
 ///|
 async test "a sealed package carries the MAC of its manifest" {
   let (pkg, passphrase, _src) = make_sealed_package("lunapack_sealed")
+  defer drop_package_scratch(pkg)
   let data = @fs.read_binary(pkg)
   let (base, moff, mlen) = manifest_place(data)
   let position = (base + moff).to_int()
@@ -224,6 +228,7 @@ async test "a sealed package carries the MAC of its manifest" {
 ///|
 async test "a sealed package whose manifest was changed is refused" {
   let (pkg, passphrase, _src) = make_sealed_package("lunapack_sealed_tampered")
+  defer drop_package_scratch(pkg)
   let data = @fs.read_binary(pkg)
   let (base, moff, mlen) = manifest_place(data)
   let position = (base + moff).to_int()
@@ -260,7 +265,9 @@ async test "a sealed package whose manifest was changed is refused" {
 ///|
 async test "a sealed package opens with the right key" {
   let (pkg, passphrase, _src) = make_sealed_package("lunapack_sealed_open")
-  let dest = @fs.tmpdir(prefix="lunapack_sealed_dest")
+  defer drop_package_scratch(pkg)
+  let dest = scratch_dir("lunapack_sealed_dest")
+  defer drop_scratch(dest)
   let key = key_of(pkg, passphrase)
   @LunaPack.unpack(pkg, dest, false, Some(key))
   assert_true(@fs.read_text(dest + "/hello.txt") == "hello")
@@ -269,6 +276,7 @@ async test "a sealed package opens with the right key" {
 ///|
 async test "a damaged package is not taken for a file that is not a package" {
   let pkg = make_package("lunapack_damaged")
+  defer drop_package_scratch(pkg)
   let data = @fs.read_binary(pkg)
   // Cut the package in half: it still carries the marker of a package.
   let half = at(data, 0, data.length() / 2)
@@ -286,7 +294,8 @@ async test "a damaged package is not taken for a file that is not a package" {
 
 ///|
 async test "a file that is not a package is not a damaged package" {
-  let dir = @fs.tmpdir(prefix="lunapack_notapackage")
+  let dir = scratch_dir("lunapack_notapackage")
+  defer drop_scratch(dir)
   let path = dir + "/plain.txt"
   @fs.write_text(path, "not a package at all")
   let result = @LunaPack.probe_archive(path)
@@ -296,6 +305,7 @@ async test "a file that is not a package is not a damaged package" {
 ///|
 async test "a path that walks out of the destination is refused" {
   let pkg = make_package("lunapack_escape")
+  defer drop_package_scratch(pkg)
   let data = @fs.read_binary(pkg)
   let (base, moff, mlen) = manifest_place(data)
   let position = (base + moff).to_int()
@@ -329,6 +339,7 @@ async test "a path that walks out of the destination is refused" {
 ///|
 async test "the signature of a package holds" {
   let pkg = make_package("lunapack_signed")
+  defer drop_package_scratch(pkg)
   let secret = @LunaPack.random_bytes(32)
   let public = @LunaPack.public_key_pair(secret).signing
   let signature = @LunaPack.sign_package(pkg, secret)
@@ -338,6 +349,7 @@ async test "the signature of a package holds" {
 ///|
 async test "a package that was changed after it was signed does not match" {
   let pkg = make_package("lunapack_signed_changed")
+  defer drop_package_scratch(pkg)
   let secret = @LunaPack.random_bytes(32)
   let public = @LunaPack.public_key_pair(secret).signing
   let signature = @LunaPack.sign_package(pkg, secret)
@@ -355,6 +367,7 @@ async test "a package that was changed after it was signed does not match" {
 ///|
 async test "a signature does not hold for another public key" {
   let pkg = make_package("lunapack_signed_other")
+  defer drop_package_scratch(pkg)
   let secret = @LunaPack.random_bytes(32)
   let other = @LunaPack.public_key_pair(@LunaPack.random_bytes(32)).signing
   let signature = @LunaPack.sign_package(pkg, secret)
@@ -364,6 +377,7 @@ async test "a signature does not hold for another public key" {
 ///|
 async test "a signature file keeps what it says" {
   let pkg = make_package("lunapack_signature_file")
+  defer drop_package_scratch(pkg)
   let secret = @LunaPack.random_bytes(32)
   let signature = @LunaPack.sign_package(pkg, secret)
   let text = @LunaPack.signature_to_text(signature)
@@ -391,6 +405,7 @@ async test "a text that is not a signature file is refused" {
 ///|
 async test "the digest that the host published is checked" {
   let pkg = make_package("lunapack_expected_digest")
+  defer drop_package_scratch(pkg)
   let digest = @LunaPack.sha256_hex(@fs.read_binary(pkg))
   assert_true(@LunaPack.verify_package_digest(pkg, digest))
   assert_true(!@LunaPack.verify_package_digest(pkg, "00"))
@@ -399,6 +414,7 @@ async test "the digest that the host published is checked" {
 ///|
 async test "the package is written in one piece" {
   let pkg = make_package("lunapack_atomic")
+  defer drop_package_scratch(pkg)
   // Nothing of the writing is left behind next to the package.
   assert_true(!@fs.exists(pkg + ".lunapack-tmp"))
   // The package is a whole package.
@@ -414,8 +430,10 @@ async test "the package is written in one piece" {
 /// the target has to be there afterwards, whole.
 async test "a pack that fails leaves the target alone" {
   let pkg = make_package("lunapack_atomic_fail")
+  defer drop_package_scratch(pkg)
   let before = @fs.read_binary(pkg)
-  let src = @fs.tmpdir(prefix="lunapack_atomic_fail_src")
+  let src = scratch_dir("lunapack_atomic_fail_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/hello.txt", "hello")
   let opts = @LunaPack.with_encryption(
     @LunaPack.with_defaults(
@@ -464,10 +482,12 @@ async test "a pack that fails leaves the target alone" {
 /// them. A package that says the opposite is a package that was changed.
 async test "a package that says it is not encrypted is refused when a key is given" {
   let pkg = make_package("lunapack_key_refused")
-  let key = key_of(
-    make_sealed_package("lunapack_key_refused_sealed").0,
-    "the passphrase",
+  defer drop_package_scratch(pkg)
+  let (sealed_pkg, _passphrase, _src) = make_sealed_package(
+    "lunapack_key_refused_sealed",
   )
+  defer drop_package_scratch(sealed_pkg)
+  let key = key_of(sealed_pkg, "the passphrase")
   let refused = try {
     ignore(@LunaPack.verify(pkg, Some(key)))
     false

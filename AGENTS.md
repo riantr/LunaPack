@@ -52,6 +52,27 @@ You can browse and install extra skills here:
   `moon coverage analyze > uncovered.log` to see which parts of your code are
   not covered by tests.
 
+## Errors and the published interface
+
+MoonBit tracks the error effect and `fail(...)` raises it. A **synchronous**
+function that calls a raising one has to say so in its signature
+(`-> Unit raise`), but an **`async fn` does not**: the error travels through
+the async runtime instead. That is what lets a guard be added to a public
+async API (`bundle`, `bundle_with_files`, `pack`) without changing
+`pkg.generated.mbti` and without a version bump - measured on 2026-11-14, when
+the empty `--Files` path was given a message that says what is wrong and
+`moon info` left the published interface untouched.
+
+So a new `fail(...)` in a private **sync** helper needs `-> ... raise` on that
+helper, and the caller either handles the error or is itself `async`, which is
+exempt. Do not add `raise` to the public functions to be safe: that changes
+what the users of the package have to write.
+
+The message a user sees is the exception's own text, wrapped by the runtime
+(`error: Failure(... FAILED: the message)`). That is the shape every other
+refusal of the tool already has, so a new refusal does not need a special
+path of its own.
+
 ## Reading the static analyzers
 
 Two published analyzers are run over this repository, and both are worth

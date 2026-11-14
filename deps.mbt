@@ -48,6 +48,11 @@ pub async fn discover_dependencies(exe : String) -> Array[String] {
         None => ()
         Some(file) => {
           let path = norm_sep(dir + "/" + file)
+          // A folder can be named like a library, and a folder is not a
+          // library: it is left out instead of being carried into the bundle.
+          if !is_regular_file(path) {
+            continue
+          }
           if out.contains(path) {
             continue
           }
@@ -60,6 +65,19 @@ pub async fn discover_dependencies(exe : String) -> Array[String] {
     }
   }
   out
+}
+
+///|
+/// Is the path a file that can be read?
+///
+/// A folder can be named like a library, and the name in an import table says
+/// nothing about what is on the disk: only a file can be carried into a
+/// bundle, so only a file is taken.
+async fn is_regular_file(path : String) -> Bool {
+  match @fs.kind(path) {
+    @fs.FileKind::Regular => true
+    _ => false
+  }
 }
 
 ///|

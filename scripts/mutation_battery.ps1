@@ -519,5 +519,126 @@ Run-Mutation 'no duplicate library' 'pack.mbt' `
   '' '' `
   'a library that the caller named is not carried twice'
 
+# 34. A folder that is named like a library is carried.
+#
+# The name in an import table says nothing about what is on the disk: a folder
+# can be named like a library. A folder is not a library, and carrying it
+# fails when the bundle is made.
+Run-Mutation 'folder is not a library' 'deps.mbt' `
+  '          if !is_regular_file(path) {
+            continue
+          }' `
+  '          if false {
+            continue
+          }' `
+  '' '' `
+  'a folder named like a library is not carried'
+
+# 35. The name of a library is not cut off.
+#
+# A name in an import table is a file name, and a file name is not long. A
+# damaged image can point at bytes that are never closed, and without the
+# limit one such name is read as the rest of the image.
+Run-Mutation 'the name of a library is cut off' 'pe.mbt' `
+  'const MAX_IMPORT_NAME : Int64 = 256' `
+  'const MAX_IMPORT_NAME : Int64 = 4096' `
+  '' '' `
+  'the name of a library that is not closed is cut off'
+
+# 36. A folder to bundle without a path is not refused.
+#
+# The path that the system gives back for a name that is not there is not an
+# answer anybody can use, so the mistake is said out loud instead of being
+# carried on.
+Run-Mutation 'a folder to bundle without a path' 'pack.mbt' `
+  '    if d == "" {
+      fail(
+        "the path of the folder to bundle is empty: give the folder to carry",
+      )
+    }' `
+  '    if d == "" {
+      continue
+    }' `
+  '' '' `
+  'a folder without a path is refused with a clear message'
+
+# 37. A folder to pack without a path is not refused.
+#
+# The same mistake, on the other way of making a package: the folder to pack
+# is a path, and an empty path is not a folder.
+Run-Mutation 'a folder to pack without a path' 'pack.mbt' `
+  '  if input == "" {
+    fail("the path of the folder to pack is empty: give the folder to pack")
+  }' `
+  '  if input == "" {
+    return
+  }' `
+  '' '' `
+  'a folder without a path is refused with a clear message'
+
+# 38. The path of --Files is not checked.
+#
+# The flag is written by hand, and a flag written without a path is a
+# mistake. The mistake has to be said out loud: the path that the system
+# gives back for a name that is not there is not an answer anybody can use.
+Run-Mutation 'the path of --Files is checked' 'cli.mbt' `
+  '    if d == "" || d == "true" {
+      fail("the path of --Files is empty: give the folder to carry")
+    }' `
+  '    if false {
+      fail("the path of --Files is empty: give the folder to carry")
+    }' `
+  '' '' `
+  'the path of --Files is checked'
+
+# 39. The scratch of a test is not taken away again.
+#
+# Every run of the suite makes a few hundred folders of scratch, and without
+# the removal every one of them would still be there the next morning: a
+# machine that has run the suite a few hundred times holds tens of thousands
+# of them. The removal is the whole point of the scratch.
+Run-Mutation 'the scratch is taken away' 'scratch_test.mbt' `
+  'async fn drop_scratch(dir : String) -> Unit nocancel {
+  @fs.rmdir(dir, recursive=true, allow_missing=true) catch {
+    _ => ()
+  }
+}' `
+  'async fn drop_scratch(dir : String) -> Unit nocancel {
+  let _ = dir
+}' `
+  '' '' `
+  'a folder of scratch is taken away again'
+
+# 40. The scratch a package was made in is not taken away again.
+#
+# The package lies in the folder it was made in, so the folder above it is
+# the one that has to go. A package whose scratch is left behind is a folder
+# of scratch that nobody ever cleans up.
+Run-Mutation 'the scratch of a package is taken away' 'scratch_test.mbt' `
+  'async fn drop_package_scratch(pkg : String) -> Unit nocancel {
+  drop_scratch(@LunaPack.dirname(pkg))
+}' `
+  'async fn drop_package_scratch(pkg : String) -> Unit nocancel {
+  let _ = pkg
+}' `
+  '' '' `
+  'the scratch of a package is taken away again'
+
+# 41. The scratch of a whitebox test is not taken away again.
+#
+# The whitebox tests are a package of their own, so they carry their own copy
+# of the removal. A copy that does not remove anything leaves the scratch of
+# every whitebox test behind.
+Run-Mutation 'the scratch of a whitebox test is taken away' 'LunaPack_wbtest.mbt' `
+  'async fn drop_scratch(dir : String) -> Unit nocancel {
+  @fs.rmdir(dir, recursive=true, allow_missing=true) catch {
+    _ => ()
+  }
+}' `
+  'async fn drop_scratch(dir : String) -> Unit nocancel {
+  let _ = dir
+}' `
+  '' '' `
+  'a folder of scratch of a whitebox test is taken away again'
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

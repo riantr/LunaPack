@@ -226,7 +226,8 @@ test "a package without an encryption has none" {
 ///|
 /// The key files survive the round trip.
 async test "the key files survive the round trip" {
-  let dir = @fs.tmpdir(prefix="lunapack_key")
+  let dir = scratch_dir("lunapack_key")
+  defer drop_scratch(dir)
   let public_path = dir + "/a.pub"
   let secret_path = dir + "/a.key"
   let secret = @LunaPack.random_bytes(32)

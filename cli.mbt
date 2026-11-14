@@ -487,6 +487,22 @@ async fn auto_dependency_files(
 }
 
 ///|
+/// The folders of `--Files`, checked.
+///
+/// A flag written without a path is a mistake, and the mistake has to be said
+/// out loud: the path that the system gives back for a name that is not there
+/// is not an answer anybody can use.
+fn check_file_dirs(file_dirs : Array[String]) -> Unit raise {
+  for d in file_dirs {
+    // The parser puts the word "true" in a flag that was written without a
+    // value, so that is the other way of writing the same mistake.
+    if d == "" || d == "true" {
+      fail("the path of --Files is empty: give the folder to carry")
+    }
+  }
+}
+
+///|
 /// Bundle the program at `input_exe` into the file at `output_exe`.
 ///
 /// The files the caller named are carried, and so are the libraries the
@@ -500,6 +516,7 @@ async fn bundle_program(
   flags : Array[Flag],
   opts : PackOptions,
 ) -> Unit {
+  check_file_dirs(file_dirs)
   let extra = auto_dependency_files(input_exe, flags)
   bundle_with_files(
     input_exe,
@@ -558,6 +575,7 @@ async fn do_flags(flags : Array[Flag]) -> Unit {
     }
     if input_exe == "" {
       // No executable given: write a plain archive instead.
+      check_file_dirs(file_dirs)
       let first = if file_dirs.length() > 0 { file_dirs[0] } else { "." }
       pack(first, require_output(output_exe, "--output-exe"), opts)
     } else {

@@ -2,6 +2,41 @@
 // helpers that are not part of the public API.
 
 ///|
+/// A folder of scratch under the temporary directory of the system.
+///
+/// The blackbox tests carry a copy of this function and of the one below: a
+/// blackbox test cannot see the private items of the package it tests, so
+/// the two test packages cannot share one.
+async fn scratch_dir(prefix : String) -> String {
+  @fs.tmpdir(prefix~)
+}
+
+///|
+/// Take a folder of scratch away again.
+///
+/// The folder and everything in it are removed. A folder that is already gone
+/// is not an error: what happens to the scratch once the test is over does
+/// not matter to the tool.
+///
+/// The removal cannot be cancelled, because it runs in a `defer`: scratch
+/// that is left behind because the test was cancelled is exactly the pile of
+/// scratch this is here to avoid.
+async fn drop_scratch(dir : String) -> Unit nocancel {
+  @fs.rmdir(dir, recursive=true, allow_missing=true) catch {
+    _ => ()
+  }
+}
+
+///|
+/// The scratch of a whitebox test is taken away again when the test is over.
+async test "a folder of scratch of a whitebox test is taken away again" {
+  let dir = scratch_dir("lunapack_scratch")
+  @fs.write_text(dir + "/a.txt", "hello")
+  drop_scratch(dir)
+  assert_true(!@fs.exists(dir))
+}
+
+///|
 test "little-endian int64 encoding round-trips" {
   assert_true(le8_to_i64(i64_to_le8(0L), 0) == 0L)
   assert_true(le8_to_i64(i64_to_le8(1L), 0) == 1L)
@@ -36,7 +71,8 @@ test "the magic marker is exactly eight bytes" {
 
 ///|
 async test "the extracted files are checked against their md5 fingerprint" {
-  let src = @fs.tmpdir(prefix="lunapack_md5_src")
+  let src = scratch_dir("lunapack_md5_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_defaults(
@@ -47,7 +83,8 @@ async test "the extracted files are checked against their md5 fingerprint" {
     "x86_64",
   )
   pack(src, pkg, opts)
-  let dest = @fs.tmpdir(prefix="lunapack_md5_dest")
+  let dest = scratch_dir("lunapack_md5_dest")
+  defer drop_scratch(dest)
   unpack(pkg, dest, false, None)
   // Every file is written back with the fingerprint it had in the package.
   let data = @fs.read_binary(dest + "/a.txt")
@@ -56,7 +93,8 @@ async test "the extracted files are checked against their md5 fingerprint" {
 
 ///|
 async test "a changed file is reported as an md5 mismatch" {
-  let src = @fs.tmpdir(prefix="lunapack_md5_src2")
+  let src = scratch_dir("lunapack_md5_src2")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_defaults(
@@ -67,7 +105,8 @@ async test "a changed file is reported as an md5 mismatch" {
     "x86_64",
   )
   pack(src, pkg, opts)
-  let dest = @fs.tmpdir(prefix="lunapack_md5_dest2")
+  let dest = scratch_dir("lunapack_md5_dest2")
+  defer drop_scratch(dest)
   unpack(pkg, dest, false, None)
   // Change the file on the disk after it was extracted.
   @fs.write_text(dest + "/a.txt", "tampered\n")
@@ -80,7 +119,8 @@ async test "a changed file is reported as an md5 mismatch" {
 
 ///|
 async test "a missing file is reported as an md5 mismatch" {
-  let src = @fs.tmpdir(prefix="lunapack_md5_src3")
+  let src = scratch_dir("lunapack_md5_src3")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_defaults(
@@ -91,7 +131,8 @@ async test "a missing file is reported as an md5 mismatch" {
     "x86_64",
   )
   pack(src, pkg, opts)
-  let dest = @fs.tmpdir(prefix="lunapack_md5_dest3")
+  let dest = scratch_dir("lunapack_md5_dest3")
+  defer drop_scratch(dest)
   unpack(pkg, dest, false, None)
   @fs.remove(dest + "/a.txt")
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
@@ -103,7 +144,8 @@ async test "a missing file is reported as an md5 mismatch" {
 
 ///|
 async test "an extracted folder can be audited against the package" {
-  let src = @fs.tmpdir(prefix="lunapack_audit_src")
+  let src = scratch_dir("lunapack_audit_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_defaults(
@@ -114,7 +156,8 @@ async test "an extracted folder can be audited against the package" {
     "x86_64",
   )
   pack(src, pkg, opts)
-  let dest = @fs.tmpdir(prefix="lunapack_audit_dest")
+  let dest = scratch_dir("lunapack_audit_dest")
+  defer drop_scratch(dest)
   unpack(pkg, dest, false, None)
   // The extracted folder matches the package.
   assert_true(verify_extracted_dir(pkg, dest))
@@ -155,7 +198,8 @@ async test "a missing interpreter is named in the error" {
 /// failure that skipped the cleanup would leave it there. The interpreter is
 /// one that cannot exist on any host, so the path is the same everywhere.
 async test "a script that could not be started is removed again" {
-  let dir = @fs.tmpdir(prefix="lunapack_cleanup")
+  let dir = scratch_dir("lunapack_cleanup")
+  defer drop_scratch(dir)
   let script = new_script("posix", "#!/bin/sh\nexit 0\n")
   let message = try {
     let status = run_script(
@@ -230,7 +274,8 @@ test "a checksum that is the same twice is accepted" {
 /// The cache of a bundle is used again only when it holds what the package
 /// carries.
 async test "the cache is only used again when it holds what the package carries" {
-  let src = @fs.tmpdir(prefix="lunapack_cache_src")
+  let src = scratch_dir("lunapack_cache_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_defaults(
@@ -242,7 +287,8 @@ async test "the cache is only used again when it holds what the package carries"
   )
   pack(src, pkg, opts)
   let manifest = read_package_manifest(pkg)
-  let dir = @fs.tmpdir(prefix="lunapack_cache_dir")
+  let dir = scratch_dir("lunapack_cache_dir")
+  defer drop_scratch(dir)
   extract_to(pkg, dir, None)
   assert_true(cache_matches_reporting(manifest, dir, None))
   // The file in the cache is changed after it was unpacked.
@@ -258,7 +304,8 @@ async test "the cache is only used again when it holds what the package carries"
 /// the disk, and that is half of what a warm start spends its time on. A
 /// start that says nothing while it does so looks like a start that hangs.
 async test "the files of a cache that is used again are counted one by one" {
-  let src = @fs.tmpdir(prefix="lunapack_warm_src")
+  let src = scratch_dir("lunapack_warm_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_defaults(
@@ -271,7 +318,8 @@ async test "the files of a cache that is used again are counted one by one" {
   pack(src, pkg, opts)
   let manifest = read_package_manifest(pkg)
   // The bundle is in a folder of its own, so the cache is the one next to it.
-  let home = @fs.tmpdir(prefix="lunapack_warm_home")
+  let home = scratch_dir("lunapack_warm_home")
+  defer drop_scratch(home)
   let exe = home + "/demo.exe"
   // The first start unpacks the payload and leaves the cache behind.
   assert_true(extract_to_cache(pkg, exe, manifest, None, None, None) is Some(_))
@@ -301,7 +349,8 @@ async test "the files of a cache that is used again are counted one by one" {
 /// a folder of its own on every start is a payload that is unpacked again on
 /// every start, and the unpacking is the whole cost of a start.
 async test "the cache of a bundle that cannot be written next to it is found again" {
-  let src = @fs.tmpdir(prefix="lunapack_fallback_src")
+  let src = scratch_dir("lunapack_fallback_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_defaults(
@@ -318,7 +367,8 @@ async test "the cache of a bundle that cannot be written next to it is found aga
   @fs.write_text(blocked, "a file where a folder should be\n")
   let exe = blocked + "/demo.exe"
   // The cache of the user is named by the environment.
-  let home = norm_sep(@fs.tmpdir(prefix="lunapack_fallback_home"))
+  let home = norm_sep(scratch_dir("lunapack_fallback_home"))
+  defer drop_scratch(home)
   @env.set_env_var("LUNAPACK_CACHE_HOME", home)
   let first = cache_dir(exe, package_tag(manifest))
   let second = cache_dir(exe, package_tag(manifest))
@@ -426,7 +476,8 @@ test "the console of the terminal is not taken away" {
 /// A folder that does not hold what the package carries is not handed out as
 /// the cache of that package.
 async test "a cache that does not hold the payload is not handed out" {
-  let src = @fs.tmpdir(prefix="lunapack_accept_src")
+  let src = scratch_dir("lunapack_accept_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   @fs.write_text(src + "/b.txt", "world\n")
   let pkg = src + "/demo.appkg"
@@ -439,7 +490,8 @@ async test "a cache that does not hold the payload is not handed out" {
   )
   pack(src, pkg, opts)
   let manifest = read_package_manifest(pkg)
-  let dir = @fs.tmpdir(prefix="lunapack_accept_dir")
+  let dir = scratch_dir("lunapack_accept_dir")
+  defer drop_scratch(dir)
   extract_to(pkg, dir, None)
   // A folder that holds what the package carries is handed out.
   assert_true(accept_cache_reporting(manifest, dir, None) is Some(_))
@@ -455,7 +507,8 @@ async test "a cache that does not hold the payload is not handed out" {
 /// The program of a bundle is not started when it was changed after it was
 /// unpacked.
 async test "the program of a bundle is checked before it is started" {
-  let src = @fs.tmpdir(prefix="lunapack_program_src")
+  let src = scratch_dir("lunapack_program_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/a.txt", "hello\n")
   let pkg = src + "/demo.appkg"
   let opts = with_main_program(
@@ -470,7 +523,8 @@ async test "the program of a bundle is checked before it is started" {
   )
   pack(src, pkg, opts)
   let manifest = read_package_manifest(pkg)
-  let dir = @fs.tmpdir(prefix="lunapack_program_dir")
+  let dir = scratch_dir("lunapack_program_dir")
+  defer drop_scratch(dir)
   extract_to(pkg, dir, None)
   assert_true(program_matches(manifest, dir + "/a.txt"))
   // The program is changed after it was unpacked.
@@ -636,7 +690,8 @@ test "the directory of a path is in front of the last separator" {
 /// analyzer calls it unreachable. Reading a passphrase from a file is what
 /// runs it.
 async test "a passphrase that is read from a file has no line ending" {
-  let dir = @fs.tmpdir(prefix="lunapack_passphrase")
+  let dir = scratch_dir("lunapack_passphrase")
+  defer drop_scratch(dir)
   let path = dir + "/pass.txt"
   @fs.write_text(path, "a secret\n")
   let flags = parse_flags(["--passphrase-file=" + path], 0)
@@ -924,7 +979,8 @@ test "the name of a library of the system is not a library of the program" {
 ///|
 /// The libraries next to a program are the ones it needs from there.
 async test "the libraries next to a program are found" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll", "beta.dll"], []))
   @fs.write_text(dir + "/alpha.dll", "not a real library")
   @fs.write_text(dir + "/beta.dll", "not a real library")
@@ -938,7 +994,8 @@ async test "the libraries next to a program are found" {
 /// A library that is not next to the program is not something a bundle can
 /// carry: it is either part of the system or one the program finds elsewhere.
 async test "a library that is not next to the program is not carried" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(dir + "/app.exe", build_pe(["gamma.dll"], []))
   let found = discover_dependencies(dir + "/app.exe")
   assert_eq(found.length(), 0)
@@ -948,7 +1005,8 @@ async test "a library that is not next to the program is not carried" {
 /// A library needs libraries of its own, and they are found in the same
 /// folder.
 async test "the libraries of a library are found as well" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
   @fs.write_binary(dir + "/alpha.dll", build_pe(["beta.dll"], []))
   @fs.write_text(dir + "/beta.dll", "not a real library")
@@ -963,7 +1021,8 @@ async test "the libraries of a library are found as well" {
 /// name sits next to the program. The API sets are left out as well, and
 /// they are not libraries of the program at all.
 async test "a library of the system next to the program is left out" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(
     dir + "/app.exe",
     build_pe(
@@ -985,7 +1044,8 @@ async test "a library of the system next to the program is left out" {
 ///|
 /// Windows does not care about the case of a file name.
 async test "a library is found whatever the case of the file is" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(dir + "/app.exe", build_pe(["Alpha.dll"], []))
   @fs.write_text(dir + "/alpha.dll", "not a real library")
   let found = discover_dependencies(dir + "/app.exe")
@@ -997,7 +1057,8 @@ async test "a library is found whatever the case of the file is" {
 /// The libraries the program needs are carried in the bundle, next to the
 /// program itself.
 async test "the libraries next to the program are carried in the bundle" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
   @fs.write_text(dir + "/alpha.dll", "not a real library")
   // The launcher is not a program here: the bundle only needs something to
@@ -1030,12 +1091,14 @@ async test "the libraries next to the program are carried in the bundle" {
 /// A library that the caller named as well is not carried twice: the file
 /// the caller named is the one that is kept.
 async test "a library that the caller named is not carried twice" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
   @fs.write_text(dir + "/alpha.dll", "not a real library")
   // The launcher is somewhere else, so the folder of the program holds the
   // program and the library and nothing else.
-  let elsewhere = @fs.tmpdir(prefix="lunapack_deps")
+  let elsewhere = scratch_dir("lunapack_deps")
+  defer drop_scratch(elsewhere)
   let launcher = elsewhere + "/launcher.exe"
   @fs.write_text(launcher, "pretend this is a launcher")
   let out = dir + "/bundle.exe"
@@ -1055,7 +1118,8 @@ async test "a library that the caller named is not carried twice" {
 ///|
 /// The flag `--no-auto-deps` says that only the named files are carried.
 async test "the flag --no-auto-deps leaves the libraries out" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
   @fs.write_text(dir + "/alpha.dll", "not a real library")
   let none = auto_dependency_files(dir + "/app.exe", [("no-auto-deps", "true")])
@@ -1318,5 +1382,69 @@ test "the licensing flags are flags the tool knows" {
   }
   check_flags([("subject", "Acme"), ("days", "30")]) catch {
     _ => fail("the licensing flags must be known")
+  }
+}
+
+///|
+/// A folder can be named like a library, and the name in an import table says
+/// nothing about what is on the disk. A folder is not a library, so it is not
+/// carried into the bundle.
+async test "a folder named like a library is not carried" {
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
+  @fs.write_binary(dir + "/app.exe", build_pe(["alpha.dll"], []))
+  @fs.mkdir(dir + "/alpha.dll")
+  let found = discover_dependencies(dir + "/app.exe")
+  assert_eq(found.length(), 0)
+}
+
+///|
+/// The name of a library in an import table is a file name, and a file name
+/// is not long. A damaged image can point at bytes that are never closed, so
+/// the read stops instead of running to the end of the image.
+test "the name of a library that is not closed is cut off" {
+  let arr = Array::make(400, b'a')
+  let name = cstr_at(Bytes::from_array(arr), 0)
+  assert_eq(name.length(), 256)
+}
+
+///|
+/// A name that is closed is read as it is, and the limit does not touch it.
+test "the name of a library is read as it is" {
+  let arr = Array::make(11, b'\x00')
+  arr[0] = b'a'
+  arr[1] = b'l'
+  arr[2] = b'p'
+  arr[3] = b'h'
+  arr[4] = b'a'
+  arr[5] = b'.'
+  arr[6] = b'd'
+  arr[7] = b'l'
+  arr[8] = b'l'
+  assert_eq(cstr_at(Bytes::from_array(arr), 0), "alpha.dll")
+}
+
+///|
+/// The path of `--Files` is checked before anything is written, and the
+/// mistake is said out loud.
+test "the path of --Files is checked" {
+  let message = try {
+    check_file_dirs([""])
+    ""
+  } catch {
+    err => err.to_string()
+  }
+  assert_true(message.contains("--Files"))
+  // A flag written without a path is the same mistake in another spelling.
+  let message = try {
+    check_file_dirs(["true"])
+    ""
+  } catch {
+    err => err.to_string()
+  }
+  assert_true(message.contains("--Files"))
+  // A folder that is named is left alone.
+  check_file_dirs(["somewhere"]) catch {
+    _ => fail("a folder that is named must not be refused")
   }
 }

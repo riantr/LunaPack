@@ -219,15 +219,7 @@ pub fn find_resource(
 ///|
 /// Read `size` bytes at `off` from the image.
 pub fn read_at(pe : PeFile, off : Int64, size : Int64) -> Bytes {
-  let start = off.to_int()
-  let len = size.to_int()
-  let arr = []
-  let mut i = 0
-  while i < len {
-    arr.push(pe.data.at((start + i : Int32)))
-    i = i + 1
-  }
-  Bytes::from_array(arr)
+  bytes_at(pe.data, off, size)
 }
 
 ///|
@@ -391,14 +383,47 @@ fn data_dir(data : Bytes, index : Int32) -> (Int64, Int64) {
 }
 
 ///|
+/// The longest name an import table may carry.
+///
+/// A name in an import table is a file name, and a file name is not long. The
+/// limit is what keeps a damaged image from being read as one huge name: a
+/// name that is not closed is cut off here instead of running to the end of
+/// the file.
+const MAX_IMPORT_NAME : Int64 = 256
+
+///|
 /// The name that starts at `off` and ends at the byte that closes it.
-fn cstr_at(pe : PeFile, off : Int64) -> String {
-  let limit = pe.data.length().to_int64()
+///
+/// The read stops at the end of the file, at the byte that closes the name, or
+/// at `MAX_IMPORT_NAME` bytes, whichever comes first. A damaged image can
+/// point at bytes that are never closed, and without the limit one such name
+/// would be read as the rest of the image.
+fn cstr_at(data : Bytes, off : Int64) -> String {
+  let limit = data.length().to_int64()
+  let stop = if off + MAX_IMPORT_NAME < limit {
+    off + MAX_IMPORT_NAME
+  } else {
+    limit
+  }
   let mut end = off
-  while end < limit && pe.data.at(end.to_int()) != 0 {
+  while end < stop && data.at(end.to_int()) != 0 {
     end = end + 1
   }
-  utf8_bytes_to_string(read_at(pe, off, end - off))
+  utf8_bytes_to_string(bytes_at(data, off, end - off))
+}
+
+///|
+/// The `size` bytes at `off` of `data`.
+fn bytes_at(data : Bytes, off : Int64, size : Int64) -> Bytes {
+  let start = off.to_int()
+  let len = size.to_int()
+  let arr = []
+  let mut i = 0
+  while i < len {
+    arr.push(data.at((start + i : Int32)))
+    i = i + 1
+  }
+  Bytes::from_array(arr)
 }
 
 ///|
@@ -406,7 +431,7 @@ fn cstr_at(pe : PeFile, off : Int64) -> String {
 /// or None when the image does not carry that name.
 fn import_name_at(pe : PeFile, name_rva : Int64) -> String? {
   let off = rva_to_offset(pe, name_rva) catch { _ => return None }
-  Some(cstr_at(pe, off))
+  Some(cstr_at(pe.data, off))
 }
 
 ///|

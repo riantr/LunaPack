@@ -251,11 +251,13 @@ async test "every compression method round-trips" {
 
 ///|
 async test "pack produces a manifest that round-trips" {
-  let src = @fs.tmpdir(prefix="lunapack_src")
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/hello.txt", "hello")
   @fs.mkdir(src + "/sub", recursive=true, allow_exist=true)
   @fs.write_text(src + "/sub/nested.txt", "nested")
-  let outdir = @fs.tmpdir(prefix="lunapack_out")
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
   let pkg = outdir + "/test.appkg"
   let opts = @LunaPack.new_pack_options(
     "demo",
@@ -298,11 +300,13 @@ async test "pack produces a manifest that round-trips" {
 
 ///|
 async test "unpack restores the original tree" {
-  let src = @fs.tmpdir(prefix="lunapack_src")
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
   @fs.write_text(src + "/hello.txt", "hello")
   @fs.mkdir(src + "/sub", recursive=true, allow_exist=true)
   @fs.write_text(src + "/sub/nested.txt", "nested")
-  let outdir = @fs.tmpdir(prefix="lunapack_out")
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
   let pkg = outdir + "/test.appkg"
   let dest = outdir + "/unpacked"
   let opts = @LunaPack.new_pack_options(
@@ -326,7 +330,8 @@ async test "unpack restores the original tree" {
 async test "posix install script runs through sh" {
   // Exercises the POSIX code path (the one used on Linux/macOS). It needs a
   // `sh` on PATH: /bin/sh on Linux, Git Bash / MSYS on Windows.
-  let dir = @fs.tmpdir(prefix="lunapack_test")
+  let dir = scratch_dir("lunapack_test")
+  defer drop_scratch(dir)
   let script = @LunaPack.new_script(
     "posix", "#!/bin/sh\nprintf 'ran-%s' \"$LUNAPACK_PHASE\" > out.txt\n",
   )
@@ -338,12 +343,15 @@ async test "posix install script runs through sh" {
 
 ///|
 async test "bundle appends an archive to the executable" {
-  let src = @fs.tmpdir(prefix="lunapack_src")
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
   let app = src + "/app.exe"
   @fs.write_text(app, "pretend this is an executable")
-  let res = @fs.tmpdir(prefix="lunapack_res")
+  let res = scratch_dir("lunapack_res")
+  defer drop_scratch(res)
   @fs.write_text(res + "/data.txt", "resource")
-  let outdir = @fs.tmpdir(prefix="lunapack_out")
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
   let bundle_path = outdir + "/app.exe"
   let opts = @LunaPack.new_pack_options(
     "demo",
@@ -540,12 +548,14 @@ test "the PE reader reports no icon when there is none" {
 /// The launcher that the archive is appended to can be named, so that a
 /// bundle can be made for a machine other than the one that makes it.
 async test "bundle uses the launcher that is named" {
-  let src = @fs.tmpdir(prefix="lunapack_src")
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
   let app = src + "/app.exe"
   @fs.write_text(app, "the program")
   let launcher = src + "/launcher.exe"
   @fs.write_text(launcher, "the launcher")
-  let outdir = @fs.tmpdir(prefix="lunapack_out")
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
   let bundle_path = outdir + "/app.exe"
   let opts = @LunaPack.new_pack_options(
     "demo",
@@ -576,10 +586,12 @@ async test "bundle uses the launcher that is named" {
 /// A launcher that does not exist is refused, rather than producing a file
 /// that cannot start itself.
 async test "bundle refuses a launcher that does not exist" {
-  let src = @fs.tmpdir(prefix="lunapack_src")
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
   let app = src + "/app.exe"
   @fs.write_text(app, "the program")
-  let outdir = @fs.tmpdir(prefix="lunapack_out")
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
   let opts = @LunaPack.new_pack_options(
     "demo",
     "1.0.0",
@@ -642,7 +654,8 @@ test "the subsystem of a PE image is read" {
 /// there is none. The flag of the toolchain only covers the removal of the
 /// folder itself, so the folder has to be looked at before it is removed.
 async test "a folder that is not there is removed without an error" {
-  let dir = @fs.tmpdir(prefix="lunapack_rm")
+  let dir = scratch_dir("lunapack_rm")
+  defer drop_scratch(dir)
   let missing = dir + "/nothing-here"
   // Removing a folder that was never there is fine.
   @LunaPack.remove_dir(missing)
@@ -680,7 +693,8 @@ test "the two kinds of bundle are told apart" {
 /// to prevent, and the file it keeps is exactly the one that looks like the
 /// bundle that the user asked for.
 async test "a refused bundle leaves nothing behind" {
-  let dir = @fs.tmpdir(prefix="lunapack_refused")
+  let dir = scratch_dir("lunapack_refused")
+  defer drop_scratch(dir)
   let exe = dir + "/myapp.exe"
   @fs.write_binary(exe, b"\x4d\x5a\x90\x00")
   let out = dir + "/out.exe"
@@ -720,7 +734,8 @@ async test "a refused bundle leaves nothing behind" {
 ///|
 /// A file that is not a Windows program has no libraries to carry.
 async test "a file that is not a PE image names no library" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   let file = dir + "/notes.txt"
   @fs.write_text(file, "not a program")
   let data = @fs.read_binary(file)
@@ -750,7 +765,8 @@ async test "the libraries of the running program are read" {
 ///|
 /// A program that is not a Windows program needs nothing from beside it.
 async test "a program that is not a PE image needs no libraries" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   let file = dir + "/notes.txt"
   @fs.write_text(file, "not a program")
   let found = @LunaPack.discover_dependencies(file)
@@ -780,7 +796,8 @@ test "the name of a library of the system is not a library of the program" {
 /// A file that is carried next to the program lands next to it in the
 /// bundle, which is where the libraries of a Windows program have to be.
 async test "a file carried next to the program lands next to it" {
-  let dir = @fs.tmpdir(prefix="lunapack_deps")
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
   let app = dir + "/app.exe"
   @fs.write_text(app, "pretend this is an executable")
   let lib = dir + "/alpha.dll"
@@ -814,4 +831,49 @@ async test "a file carried next to the program lands next to it" {
     }
   }
   assert_true(has_lib)
+}
+
+///|
+/// A folder given without a path is a mistake, and the mistake is said out
+/// loud: the path that the system gives back for a name that is not there is
+/// not an answer anybody can use.
+async test "a folder without a path is refused with a clear message" {
+  let dir = scratch_dir("lunapack_deps")
+  defer drop_scratch(dir)
+  let app = dir + "/app.exe"
+  @fs.write_text(app, "pretend this is an executable")
+  let launcher = dir + "/launcher.exe"
+  @fs.write_text(launcher, "pretend this is a launcher")
+  let out = dir + "/bundle.exe"
+  let opts = @LunaPack.with_defaults(
+    @LunaPack.new_pack_options(
+      "demo",
+      "1.0.0",
+      "windows",
+      "x86_64",
+      None,
+      None,
+      "none",
+    ),
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+  )
+  // A folder of the bundle that has no path.
+  let message = try {
+    @LunaPack.bundle_with_files(app, out, [""], [], opts, launcher)
+    ""
+  } catch {
+    err => err.to_string()
+  }
+  assert_true(message.contains("is empty"))
+  // A folder to pack that has no path.
+  let message = try {
+    @LunaPack.pack("", dir + "/out.appkg", opts)
+    ""
+  } catch {
+    err => err.to_string()
+  }
+  assert_true(message.contains("is empty"))
 }

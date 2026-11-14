@@ -13,7 +13,7 @@
 ///|
 /// A package with one file in it.
 async fn make_demo_package(prefix : String) -> String {
-  let src = @fs.tmpdir(prefix~)
+  let src = scratch_dir(prefix)
   @fs.write_text(src + "/hello.txt", "hello")
   let pkg = src + "/test.appkg"
   let opts = @LunaPack.with_defaults(
@@ -49,8 +49,10 @@ async fn make_key_pair(dir : String, secret : Bytes) -> (String, String) {
 ///|
 async test "the signing key of a pair checks a signature made with it" {
   let pkg = make_demo_package("lunapack_keypair")
+  defer drop_package_scratch(pkg)
   let prefix = "lunapack_keypair"
-  let dir = @fs.tmpdir(prefix~)
+  let dir = scratch_dir(prefix)
+  defer drop_scratch(dir)
   let secret = @LunaPack.random_bytes(32)
   let (public_path, secret_path) = make_key_pair(dir, secret)
   // The secret key file gives back the secret it was written from.
@@ -66,8 +68,10 @@ async test "the signing key of a pair checks a signature made with it" {
 ///|
 async test "a signature does not hold for another pair" {
   let pkg = make_demo_package("lunapack_keypair_other")
+  defer drop_package_scratch(pkg)
   let prefix = "lunapack_keypair_other"
-  let dir = @fs.tmpdir(prefix~)
+  let dir = scratch_dir(prefix)
+  defer drop_scratch(dir)
   let secret = @LunaPack.random_bytes(32)
   let (public_path, secret_path) = make_key_pair(dir, secret)
   let sig = @LunaPack.sign_package(
@@ -86,8 +90,10 @@ async test "a signature does not hold for another pair" {
 ///|
 async test "a package that was changed after it was signed does not match" {
   let pkg = make_demo_package("lunapack_keypair_changed")
+  defer drop_package_scratch(pkg)
   let prefix = "lunapack_keypair_changed"
-  let dir = @fs.tmpdir(prefix~)
+  let dir = scratch_dir(prefix)
+  defer drop_scratch(dir)
   let secret = @LunaPack.random_bytes(32)
   let (public_path, secret_path) = make_key_pair(dir, secret)
   let sig = @LunaPack.sign_package(
@@ -117,7 +123,8 @@ async test "the two roles of a pair are separated" {
 ///|
 async test "a public key file holds both public keys of the pair" {
   let prefix = "lunapack_keypair_file"
-  let dir = @fs.tmpdir(prefix~)
+  let dir = scratch_dir(prefix)
+  defer drop_scratch(dir)
   let secret = @LunaPack.random_bytes(32)
   let pair = @LunaPack.public_key_pair(secret)
   let path = dir + "/a.pub"
@@ -133,7 +140,8 @@ async test "a public key file holds both public keys of the pair" {
 ///|
 async test "a public key file of the older form cannot sign" {
   let prefix = "lunapack_keypair_old"
-  let dir = @fs.tmpdir(prefix~)
+  let dir = scratch_dir(prefix)
+  defer drop_scratch(dir)
   let secret = @LunaPack.random_bytes(32)
   let pair = @LunaPack.public_key_pair(secret)
   let path = dir + "/old.pub"

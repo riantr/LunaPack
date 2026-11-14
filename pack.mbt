@@ -247,6 +247,12 @@ async fn write_archive(
 ///|
 /// Bundle every file under `input` into a `.appkg` file at `output`.
 pub async fn pack(input : String, output : String, opts : PackOptions) -> Unit {
+  // A folder given without a path is a mistake, and the mistake is said out
+  // loud: the path that the system gives back for a name that is not there
+  // is not an answer anybody can use.
+  if input == "" {
+    fail("the path of the folder to pack is empty: give the folder to pack")
+  }
   let base = norm_sep(@fs.realpath(input))
   let files = collect_files(base)
   let items = []
@@ -343,6 +349,14 @@ pub async fn bundle_with_files(
   items.push((input_exe, main_name))
   let single = file_dirs.length() == 1
   for d in file_dirs {
+    // A folder given without a path is a mistake, and the mistake is said
+    // out loud: the path that the system gives back for a name that is not
+    // there is not an answer anybody can use.
+    if d == "" {
+      fail(
+        "the path of the folder to bundle is empty: give the folder to carry",
+      )
+    }
     let base = norm_sep(@fs.realpath(d))
     let files = collect_files(base)
     let prefix = if single { "" } else { basename(base) }
