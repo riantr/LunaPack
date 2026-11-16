@@ -182,7 +182,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.26
+moon add riantr/LunaPack@0.1.27
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -190,7 +190,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.26",
+  "riantr/LunaPack@0.1.27",
 }
 ```
 
@@ -210,7 +210,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.26`, `>=0.1.26`, `0.1` and `v0.1.26` are all rejected. A bare
+`latest`, `^0.1.27`, `>=0.1.27`, `0.1` and `v0.1.27` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -256,6 +256,44 @@ used to return a `&ProcessOutput` trait object and now returns a
 enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
+
+### What changed in 0.1.27
+
+- **The gzip entries are packed faster.** The encoder stores the data that
+  looks like noise instead of looking for matches in it. On the files of this
+  repository and the release binary of it (54 files, 3.5 MB) the packing of
+  the entries takes **288 ms instead of 363 ms**, for **0.07% more bytes**:
+  the data that is already compressed was not worth the time of looking for
+  matches in it.
+
+- **The gzip entries are read into a buffer of the size the manifest
+  carries.** The size of an entry is in the manifest, so the stream is read
+  into a place of exactly that size instead of one that grows while it is
+  read. On the same corpus the reading of the entries takes **19 ms instead
+  of 71 ms** — about four times less time. The unpacking of a whole package is
+  bound by the file system, so that gain does not show in the time of the
+  command.
+
+- **A claim about the size of an entry is not taken for a size.** A deflate
+  stream cannot grow beyond a known factor, so a size that the stored bytes
+  cannot reach is refused before it becomes an allocation. The length in the
+  gzip trailer has to be the length that was asked for, and the stream has to
+  hold exactly that many bytes.
+
+- **The CRC-32 of the gzip stream is not checked on the path that reads an
+  entry.** The entry carries a MD5 and a SHA-256 of its content, and the
+  unpacker checks both of them right after the entry is read, so the CRC would
+  be a third check over the same bytes. The length in the trailer is checked,
+  because it is what says how long the content is. A damaged entry is refused
+  exactly as before, by the checksum of the entry, and the `gzip_decompress`
+  of the library still checks the CRC as any gzip reader does.
+
+- The suite grew from 199 to **209 tests**, and the battery of mutations grew
+  from 41 to **46**: every guard of the two changes was taken out of the code
+  once, and the test that covers it went red. The table under "Every guard
+  was taken out once" lists them.
+
+- Nothing else changed: the tool behaves exactly as it behaved in 0.1.26.
 
 ### What changed in 0.1.26
 
@@ -1052,7 +1090,7 @@ on first use, so a user who only wants the command line never pays for the
 188 MB window and a user who wants the window never has to find a second
 download.
 
-The release is built by a GitHub workflow when a version tag such as `v0.1.26`
+The release is built by a GitHub workflow when a version tag such as `v0.1.27`
 is pushed; the same tag is published to the Mooncakes registry, so
 `moonx riantr/LunaPack@latest` resolves to it. The tag is the source
 of truth: the workflow compares it against the version in `moon.mod` before it
@@ -1220,10 +1258,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.26 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.27 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.26 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.27 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1241,7 +1279,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.26 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.27 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
@@ -1508,6 +1546,42 @@ ships none. What it produces is a standard `.lz4` frame, so the `lz4` tool
 decompresses it, and this package decompresses what that tool produces. The
 suite checks the frames against the values the format publishes; it does not
 run the `lz4` tool.
+
+#### How the gzip entries are written and read
+
+Two things about the gzip entries are worth stating, because both of them are
+about what the tool does **not** do.
+
+**The data that does not compress is not parsed for matches.** The encoder
+samples the entry first and stores the data that looks like noise — images,
+archives, media — the way it is, instead of looking for matches in bytes that
+have none. On the files of this repository and the release binary of it (54
+files, 3.5 MB) the packing of the entries takes **288 ms instead of 363 ms**,
+for **0.07% more bytes**. The packing of the whole package is about a tenth
+faster; the rest of that command is the file system and the checksums.
+
+**An entry is read into a buffer of the size the manifest carries.** The size
+of an entry is in the manifest, so the stream is read into a place of exactly
+that size instead of into one that grows while it is read. On the same corpus
+the reading of the entries takes **19 ms instead of 71 ms** — about four
+times less time. The unpacking of the whole package is bound by the file
+system, so that gain does not show in the time of the command.
+
+Two guards come with the second one, and both of them are about a claim:
+
+- A **deflate stream cannot grow beyond a known factor**, so a size that the
+  stored bytes cannot reach is refused before it becomes an allocation.
+- The **length in the gzip trailer** has to be the length that was asked for,
+  and the stream has to hold exactly that many bytes. A stream that does not
+  is not read.
+
+**The CRC-32 of the gzip stream is not checked on that path.** The entry
+carries a MD5 and a SHA-256 of its content, and the unpacker checks both of
+them right after the entry is read, so the CRC would be a third check over the
+same bytes. The length in the trailer *is* checked, because it is what says
+how long the content is. A damaged entry is refused exactly as before — by
+the checksum of the entry — and the `gzip_decompress` of the library still
+checks the CRC, as any gzip reader does.
 
 ### Encryption
 
@@ -2021,7 +2095,7 @@ is the end-to-end suite on top of it.
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
 
 Measured on this machine (Windows, `moon 0.1.20261104`): `moon test --target
-native` reports **199 tests, 199 passed, 0 failed**, and `--target wasm`
+native` reports **209 tests, 209 passed, 0 failed**, and `--target wasm`
 reports the same.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
@@ -2127,6 +2201,11 @@ alone, or the guard is not covered by a test at all.
 | the removal of the scratch of a test | a folder of scratch is taken away again |
 | the removal of the scratch of a package | the scratch of a package is taken away again |
 | the removal of the scratch of a whitebox test | a folder of scratch of a whitebox test is taken away again |
+| the fast path of the gzip entries | the data that looks like noise is stored instead of being parsed for matches |
+| the bound on the size of a gzip entry | the size of a gzip entry is bounded by what the stored bytes can grow into |
+| the check of the header of a gzip entry | a stream that is not a gzip stream is refused |
+| the check of the length in the trailer | a gzip entry whose length in the trailer does not hold is refused |
+| the check of the size the stream decodes to | a gzip entry that does not decode to the size it claims is refused |
 
 The battery that does this is `scripts/mutation_battery.ps1`. It restores the
 file it changed, so a run leaves the tree exactly as it was.
