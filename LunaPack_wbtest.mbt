@@ -70,6 +70,159 @@ test "the magic marker is exactly eight bytes" {
 }
 
 ///|
+test "the size of a gzip entry is bounded by what the stored bytes can grow into" {
+  // A claim that the stored bytes can back is the size to read the entry
+  // into.
+  assert_true(gzip_entry_size(1000, 1000) == Some(1000))
+  assert_true(gzip_entry_size(1000, 0) == Some(0))
+  // A deflate stream cannot grow beyond the factor, so a claim beyond it is
+  // not a size that the stored bytes can reach.
+  assert_true(gzip_entry_size(1000, 1032000) == Some(1032000))
+  assert_true(gzip_entry_size(1000, 1032001) == None)
+  assert_true(gzip_entry_size(1000, 1000000) == Some(1000000))
+  assert_true(gzip_entry_size(0, 1) == None)
+  // A size that does not fit in an address, and one that is not a size at
+  // all, are both refused.
+  assert_true(gzip_entry_size(1000, 2147483648L) == None)
+  assert_true(gzip_entry_size(1000, -1L) == None)
+}
+
+///|
+/// A payload of text that compresses well.
+fn compressible_text() -> String {
+  let mut text = ""
+  let mut i = 0
+  while i < 200 {
+    text = text + "the quick brown fox jumps over the lazy dog "
+    i = i + 1
+  }
+  text
+}
+
+///|
+/// A payload of `n` bytes that does not compress.
+///
+/// The bytes are the hashes of the hashes of a fixed seed, so there is no
+/// pattern in them for the encoder to find.
+fn noise_bytes(n : Int32) -> Bytes {
+  let arr = Array::make(n, b'\x00')
+  let mut seed = string_to_utf8_bytes("lunapack noise")
+  let mut i = 0
+  while i < n {
+    seed = sha512(seed)
+    let mut j = 0
+    while j < 64 && i < n {
+      arr[i] = seed.at(j)
+      i = i + 1
+      j = j + 1
+    }
+  }
+  Bytes::from_array(arr)
+}
+
+///|
+test "the data that looks like noise is stored instead of being parsed for matches" {
+  // Two blocks of noise, the second one a copy of the first. The copy is
+  // what an encoder that looks for matches would find, and the noise is what
+  // the fast path looks at: such data is stored as it is.
+  let noise = noise_bytes(4096)
+  let payload = bytes_concat(noise, noise)
+  // The payload is not data that nothing can compress: an encoder that looks
+  // for matches finds the copy and nearly halves it. Without this check the
+  // test would also hold for a payload that simply cannot be compressed.
+  let coded = @gzip.compress(
+    payload,
+    strategy=@flate.Strategy::Standard(level=GZIP_LEVEL),
+  )
+  assert_true(coded.length() < payload.length() * 3 / 4)
+  // The entry of LunaPack holds the data as it is.
+  let gz = gzip_compress(payload)
+  // The gzip header is ten bytes, and the first byte of the deflate stream
+  // that follows it says what the block is: 00 for a block that is stored as
+  // it is, 01 or 10 for a block that was coded.
+  assert_true((gz.at(10).to_int() & 0x06) == 0)
+  // A stored block is not smaller than what it holds.
+  assert_true(gz.length() > payload.length())
+}
+
+///|
+test "a gzip entry is read back into a buffer of its own size" {
+  let data = string_to_utf8_bytes(compressible_text())
+  let gz = gzip_compress(data)
+  // The stream is far smaller than what it holds: the entry is read into a
+  // buffer of the size the manifest carries.
+  assert_true(gz.length() < data.length() / 4)
+  assert_true(gzip_decompress_into(gz, data.length()) == data)
+}
+
+///|
+test "a gzip entry that claims less than it holds is refused" {
+  let data = string_to_utf8_bytes(compressible_text())
+  let gz = gzip_compress(data)
+  // The claim is the size of the stream itself, which is far less than what
+  // the stream holds. The entry is not read into a buffer that small.
+  assert_true(gzip_decompress_into(gz, gz.length()) == gz)
+}
+
+///|
+test "a gzip entry that claims more than it holds is refused" {
+  let data = string_to_utf8_bytes(compressible_text())
+  let gz = gzip_compress(data)
+  // The claim is bigger than the content and still within what the stored
+  // bytes could grow into, so it is the size that does not hold, and not the
+  // bound, that refuses the entry.
+  assert_true(gzip_decompress_into(gz, data.length() * 2) == gz)
+}
+
+///|
+test "a gzip entry that claims more than the stored bytes can back is refused" {
+  let data = string_to_utf8_bytes(compressible_text())
+  let gz = gzip_compress(data)
+  // The claim is far beyond what a deflate stream can grow into. It is
+  // refused before it becomes an allocation.
+  assert_true(gzip_decompress_into(gz, 10000000) == gz)
+}
+
+///|
+test "a stream that is not a gzip stream is refused" {
+  let data = string_to_utf8_bytes(compressible_text())
+  let gz = gzip_compress(data)
+  // The magic is broken. The body of the stream is still a deflate stream, so
+  // only the header tells that this is not one of ours.
+  let broken = bytes_concat(b"\x00", gz[1:].to_owned())
+  assert_true(gzip_decompress_into(broken, data.length()) == broken)
+}
+
+///|
+test "a gzip entry whose length in the trailer does not hold is refused" {
+  let data = string_to_utf8_bytes(compressible_text())
+  let gz = gzip_compress(data)
+  // The length in the trailer is the one the stream has about itself. It says
+  // something else here, so the entry is not read.
+  let broken = bytes_concat(
+    gz[0:gz.length() - 4].to_owned(),
+    b"\x40\x00\x00\x00",
+  )
+  assert_true(gzip_decompress_into(broken, data.length()) == broken)
+}
+
+///|
+test "a gzip entry that does not decode to the size it claims is refused" {
+  // A stream whose body holds fifty bytes and whose trailer says it holds a
+  // hundred: the two do not agree, and the entry is not read.
+  let fifty = string_to_utf8_bytes(
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  )
+  let gz = gzip_compress(fifty)
+  let body = gz[GZIP_HEADER_BYTES:gz.length() - GZIP_TRAILER_BYTES].to_owned()
+  let stream = bytes_concat(
+    bytes_concat(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff", body),
+    b"\x00\x00\x00\x00\x64\x00\x00\x00",
+  )
+  assert_true(gzip_decompress_into(stream, 100) == stream)
+}
+
+///|
 async test "the extracted files are checked against their md5 fingerprint" {
   let src = scratch_dir("lunapack_md5_src")
   defer drop_scratch(src)

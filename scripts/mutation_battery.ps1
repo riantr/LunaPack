@@ -640,5 +640,66 @@ Run-Mutation 'the scratch of a whitebox test is taken away' 'LunaPack_wbtest.mbt
 }' `
   '' '' `
   'a folder of scratch of a whitebox test is taken away again'
+
+# 42. The data that looks like noise is parsed for matches anyway.
+#
+# The encoder of the entries is told to store the data that looks like noise
+# instead of looking for matches in it. Without that, the entries of a
+# package that carries images are parsed for matches that are not there, and
+# the packing takes a fifth longer for a package that is barely smaller.
+Run-Mutation 'the data that looks like noise is stored' 'compress.mbt' `
+  '    strategy=@flate.Strategy::Standard(level=GZIP_LEVEL),
+    fast_store=true,
+  )' `
+  '    strategy=@flate.Strategy::Standard(level=GZIP_LEVEL),
+  )' `
+  '' '' `
+  'the data that looks like noise is stored instead of being parsed for matches'
+
+# 43. The size of a gzip entry is not bounded.
+#
+# A deflate stream cannot grow beyond a known factor, so a claim beyond it
+# is not a size that the stored bytes can reach. Without the bound, a claim
+# from a damaged manifest becomes the size of an allocation.
+Run-Mutation 'the size of a gzip entry is not bounded' 'compress.mbt' `
+  '  if claimed > max_output {' `
+  '  if false {' `
+  '' '' `
+  'the size of a gzip entry is bounded by what the stored bytes can grow into'
+
+# 44. The header of a gzip entry is not checked.
+#
+# The body of a stream that is not one of ours is not a deflate stream, so
+# the header has to be read before the body is.
+Run-Mutation 'the header of a gzip entry is not checked' 'compress.mbt' `
+  '  if data.at(0) != b''\x1f'' ||
+    data.at(1) != b''\x8b'' ||
+    data.at(2) != b''\x08'' ||
+    data.at(3) != b''\x00'' {' `
+  '  if false {' `
+  '' '' `
+  'a stream that is not a gzip stream is refused'
+
+# 45. The length in the trailer of a gzip entry is not checked.
+#
+# The trailer carries the length of the content, and it has to be the length
+# that was asked for. Without the check, a stream that holds something else
+# is read into a buffer of the wrong size.
+Run-Mutation 'the length in the trailer is not checked' 'compress.mbt' `
+  '  if isize != real.reinterpret_as_uint() {' `
+  '  if false {' `
+  '' '' `
+  'a gzip entry whose length in the trailer does not hold is refused'
+
+# 46. A gzip entry that does not hold its size is taken for one that does.
+#
+# The stream has to hold what the manifest says it holds. Without the
+# check, a stream that holds less than it claims is read into a buffer that
+# is partly empty, and the entry is written out as if it were whole.
+Run-Mutation 'a gzip entry that does not hold its size is taken for one that does' 'compress.mbt' `
+  '  if !finished || produced != size {' `
+  '  if false {' `
+  '' '' `
+  'a gzip entry that does not decode to the size it claims is refused'
 Write-Output '--- the tree is back to what it was ---'
 git -C $repo status --short

@@ -250,6 +250,51 @@ async test "every compression method round-trips" {
 }
 
 ///|
+/// A payload of text that compresses well.
+fn compressible_text() -> String {
+  let mut text = ""
+  let mut i = 0
+  while i < 200 {
+    text = text + "the quick brown fox jumps over the lazy dog "
+    i = i + 1
+  }
+  text
+}
+
+///|
+async test "a package of compressed files unpacks to the original bytes" {
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
+  let text = compressible_text()
+  @fs.write_text(src + "/story.txt", text)
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
+  let pkg = outdir + "/test.appkg"
+  let dest = outdir + "/unpacked"
+  let opts = @LunaPack.new_pack_options(
+    "demo",
+    "1.0.0",
+    "linux",
+    "x86_64",
+    None,
+    None,
+    "auto",
+  )
+  @LunaPack.pack(src, pkg, opts)
+  // The file is big enough to be compressed, so the package holds it as a
+  // gzip entry and the unpacker has to read it back.
+  let m = @LunaPack.read_package_manifest(pkg)
+  assert_true(m.entries.length() == 1)
+  assert_true(m.entries[0].codec == "gzip")
+  assert_true(m.entries[0].size == text.length().to_int64())
+  assert_true(m.entries[0].stored_size < m.entries[0].size)
+  @LunaPack.unpack(pkg, dest, false, None)
+  let back = @fs.read_binary(dest + "/story.txt")
+  assert_true(back == @LunaPack.string_to_utf8_bytes(text))
+  assert_true(@LunaPack.verify(pkg, None))
+}
+
+///|
 async test "pack produces a manifest that round-trips" {
   let src = scratch_dir("lunapack_src")
   defer drop_scratch(src)

@@ -421,7 +421,10 @@ async fn entry_payload(
     None => stored
   }
   if e.codec == "gzip" {
-    gzip_decompress(plain)
+    // The manifest carries the size of the entry, so the stream is read into
+    // a buffer of exactly that size instead of one that grows while it is
+    // read.
+    gzip_decompress_into(plain, e.size.to_int())
   } else if e.codec == "lz4" {
     lz4_decompress_frame(plain, e.size.to_int())
   } else {
