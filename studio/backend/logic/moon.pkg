@@ -1,0 +1,10 @@
+import {
+  "moonbit-community/proton",
+  "riantr/LunaPackGUI_backend/core",
+  "riantr/LunaPackGUI_shared" @shared,
+  "moonbitlang/core/env",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/process",
+}
+
+supported_targets = "native"

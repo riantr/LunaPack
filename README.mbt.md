@@ -1073,14 +1073,19 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
+| `lpvirt.dll` | the optional in-process runtime for Windows |
+| `lunapack-studio-windows-x86_64.zip` | LunaPack Studio for Windows (v0.1.27 onward) |
 
-**The releases so far carry the command line only.** LunaPack Studio is built
-on another machine, and the asset `lunapack-studio-<os>-<arch>.zip` is not
-attached to a release yet; the release notes say so when it is missing.
-`lunapack --GUI` reports that it cannot find a Studio build and points at
-`LUNAPACK_STUDIO` / `LUNAPACK_STUDIO_URL` for a copy that is somewhere else.
-Assets for other platforms are named `lunapack-studio-<os>-<arch>.zip` and are
-added as those builds exist.
+The **source of LunaPack Studio lives in [`studio/`](studio/)** in this
+repository: a separate MoonBit workspace with a Rabbita frontend, a Proton
+native backend and a shared contract package. It is not part of the root
+module, so the CLI's own checks, tests and builds do not depend on it. The
+Studio window is packaged by `proton_cli package --release` from that
+workspace, and its output is attached to the same versioned release as the
+CLI. `LUNAPACK_STUDIO` / `LUNAPACK_STUDIO_URL` still override the lookup and
+the download source for a local build or a mirror. Assets for other platforms
+are named `lunapack-studio-<os>-<arch>.zip` and are added as those builds
+exist.
 
 LunaPack and LunaPack Studio are **not two packages**. Studio has no version
 of its own and is not published to Mooncakes: it is an optional asset attached

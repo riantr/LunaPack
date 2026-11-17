@@ -1,0 +1,17 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "riantr/LunaPackGUI_backend/logic"
+
+import {
+  "moonbit-community/proton/command",
+}
+
+// Values
+pub fn register_commands(@command.CommandRegistrar) -> Unit raise
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

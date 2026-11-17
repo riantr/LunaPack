@@ -1,0 +1,149 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "riantr/LunaPackGUI_shared"
+
+import {
+  "moonbit-community/proton_contract",
+  "moonbitlang/core/json",
+}
+
+// Values
+pub let pick_path : @proton_contract.Command[PickRequest, PickReply]
+
+pub let probe_cli : @proton_contract.Command[ProbeRequest, ProbeReply]
+
+pub let run_pack : @proton_contract.Command[ProcessRequest, ProcessReply]
+
+pub let scan_dir : @proton_contract.Command[ScanRequest, ScanReply]
+
+pub let startup_args : @proton_contract.Command[StartupRequest, StartupReply]
+
+// Errors
+
+// Types and methods
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct FileNode {
+  name : String
+  path : String
+  is_dir : Bool
+}
+pub fn FileNode::equal(Self, Self) -> Bool
+pub fn FileNode::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn FileNode::not_equal(Self, Self) -> Bool
+pub fn FileNode::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct PickReply {
+  path : String
+}
+pub fn PickReply::equal(Self, Self) -> Bool
+pub fn PickReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn PickReply::not_equal(Self, Self) -> Bool
+pub fn PickReply::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct PickRequest {
+  kind : String
+  current : String
+}
+pub fn PickRequest::equal(Self, Self) -> Bool
+pub fn PickRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn PickRequest::not_equal(Self, Self) -> Bool
+pub fn PickRequest::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct ProbeReply {
+  cli_path : String
+  found : Bool
+}
+pub fn ProbeReply::equal(Self, Self) -> Bool
+pub fn ProbeReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProbeReply::not_equal(Self, Self) -> Bool
+pub fn ProbeReply::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct ProbeRequest {
+  hint : String
+}
+pub fn ProbeRequest::equal(Self, Self) -> Bool
+pub fn ProbeRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProbeRequest::not_equal(Self, Self) -> Bool
+pub fn ProbeRequest::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct ProcessReply {
+  ok : Bool
+  exit_code : Int32
+  output : String
+}
+pub fn ProcessReply::equal(Self, Self) -> Bool
+pub fn ProcessReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProcessReply::not_equal(Self, Self) -> Bool
+pub fn ProcessReply::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct ProcessRequest {
+  input_exe : String
+  output_exe : String
+  file_dirs : Array[String]
+  cli_path : String
+  launcher : String
+  compression : String
+  name : String
+  version : String
+  target_os : String
+  arch : String
+}
+pub fn ProcessRequest::equal(Self, Self) -> Bool
+pub fn ProcessRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProcessRequest::not_equal(Self, Self) -> Bool
+pub fn ProcessRequest::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct ScanReply {
+  nodes : Array[FileNode]
+}
+pub fn ScanReply::equal(Self, Self) -> Bool
+pub fn ScanReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ScanReply::not_equal(Self, Self) -> Bool
+pub fn ScanReply::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct ScanRequest {
+  path : String
+}
+pub fn ScanRequest::equal(Self, Self) -> Bool
+pub fn ScanRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ScanRequest::not_equal(Self, Self) -> Bool
+pub fn ScanRequest::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct StartupReply {
+  input_exe : String
+  output_exe : String
+  file_dirs : Array[String]
+  cli_path : String
+  launcher : String
+  compression : String
+  name : String
+  version : String
+  target_os : String
+  arch : String
+  has_args : Bool
+}
+pub fn StartupReply::equal(Self, Self) -> Bool
+pub fn StartupReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn StartupReply::not_equal(Self, Self) -> Bool
+pub fn StartupReply::to_json(Self) -> @json.Json
+
+#derive(Eq, @json.FromJson, @json.ToJson)
+pub(all) struct StartupRequest {
+  hint : String
+}
+pub fn StartupRequest::equal(Self, Self) -> Bool
+pub fn StartupRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn StartupRequest::not_equal(Self, Self) -> Bool
+pub fn StartupRequest::to_json(Self) -> @json.Json
+
+// Type aliases
+
+// Traits

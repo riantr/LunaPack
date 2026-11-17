@@ -1,0 +1,5 @@
+import {
+  "riantr/LunaPackGUI_shared" @shared,
+}
+
+supported_targets = "native"

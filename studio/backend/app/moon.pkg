@@ -1,0 +1,9 @@
+import {
+  "moonbitlang/async",
+  "moonbit-community/proton",
+  "riantr/LunaPackGUI_backend/logic",
+}
+
+supported_targets = "native"
+
+pkgtype(kind: "executable")

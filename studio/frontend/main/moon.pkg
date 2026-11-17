@@ -1,0 +1,11 @@
+import {
+  "riantr/LunaPackGUI_shared" @shared,
+  "moonbit-community/proton_client",
+  "moonbit-community/proton_rabbita",
+  "moonbit-community/rabbita",
+  "moonbit-community/rabbita/html",
+}
+
+supported_targets = "js"
+
+pkgtype(kind: "executable")

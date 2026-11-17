@@ -1,0 +1,25 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "riantr/LunaPackGUI_backend/core"
+
+import {
+  "riantr/LunaPackGUI_shared",
+}
+
+// Values
+pub fn bundle_arguments(@LunaPackGUI_shared.ProcessRequest) -> Array[String]
+
+pub fn cli_candidates() -> Array[String]
+
+pub fn default_cli() -> String
+
+pub fn empty_startup_reply() -> @LunaPackGUI_shared.StartupReply
+
+pub fn parse_startup_args(Array[String]) -> @LunaPackGUI_shared.StartupReply
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

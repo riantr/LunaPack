@@ -1,0 +1,530 @@
+/* A light desktop-tool look, in the spirit of the packer windows this app
+   replaces. Everything is plain CSS: no framework, no web fonts. */
+:root {
+  color: #1b1b1b;
+  background: #f0f0f0;
+  font-family: "Segoe UI", Tahoma, "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
+  height: 100vh;
+}
+
+.window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 680px;
+  background: #f0f0f0;
+}
+
+/* ------------------------------------------------------------- menu bar */
+.menubar {
+  display: flex;
+  align-items: stretch;
+  height: 26px;
+  flex: 0 0 26px;
+  padding-left: 4px;
+  border-bottom: 1px solid #dedede;
+  background: #f7f7f7;
+}
+
+.menu-slot {
+  position: relative;
+}
+
+.menu-label {
+  height: 25px;
+  min-width: 52px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.menu-label:hover,
+.menu-label.is-open {
+  border-color: #b8d6f5;
+  background: #e5f1fd;
+}
+
+.menu-title {
+  margin-left: auto;
+  align-self: center;
+  padding-right: 12px;
+  color: #8a8a8a;
+  font-size: 11px;
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: 25px;
+  left: 0;
+  z-index: 20;
+  min-width: 210px;
+  padding: 4px 0;
+  border: 1px solid #a9a9a9;
+  background: #ffffff;
+  box-shadow: 2px 3px 6px rgba(0, 0, 0, 0.18);
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  height: 24px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #1b1b1b;
+  font: inherit;
+  line-height: 24px;
+  text-align: left;
+  text-decoration: none;
+  cursor: default;
+}
+
+.menu-item:hover {
+  background: #e5f1fd;
+}
+
+.menu-note {
+  color: #666;
+}
+
+.menubar hr {
+  margin: 4px 1px;
+  border: 0;
+  border-top: 1px solid #e2e2e2;
+}
+
+/* --------------------------------------------------------- input fields */
+.top {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 12px 4px;
+}
+
+.logo {
+  width: 46px;
+  height: 46px;
+  margin: 6px auto 0;
+  border: 1px solid #d9a441;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 210deg,
+    #f6a623,
+    #fbe0a2,
+    #2d7dd2,
+    #8ec5f0,
+    #f6a623
+  );
+  box-shadow: inset 0 0 0 6px #ffffff, 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.fields {
+  min-width: 0;
+}
+
+.path-row {
+  margin-bottom: 6px;
+}
+
+.path-label {
+  margin-bottom: 3px;
+  color: #222;
+}
+
+.path-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 6px;
+}
+
+input,
+select {
+  height: 24px;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid #8a8a8a;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1b1b1b;
+  font: inherit;
+}
+
+input:focus,
+select:focus {
+  outline: 1px solid #2b7cd3;
+  border-color: #2b7cd3;
+}
+
+.path-input,
+.setting-input {
+  width: 100%;
+}
+
+button {
+  height: 24px;
+  min-width: 88px;
+  padding: 2px 10px;
+  border: 1px solid #adadad;
+  border-radius: 3px;
+  background: linear-gradient(#ffffff, #eeeeee);
+  color: #1b1b1b;
+  font: inherit;
+  cursor: default;
+}
+
+button:hover:not(:disabled) {
+  border-color: #2b7cd3;
+  background: linear-gradient(#f4f9ff, #e6f1fd);
+}
+
+button:active:not(:disabled) {
+  background: #dce9f8;
+}
+
+button:disabled {
+  color: #999;
+  background: #f2f2f2;
+}
+
+.browse-button {
+  min-width: 88px;
+}
+
+/* -------------------------------------------------------------- banner */
+.banner {
+  margin: 4px 12px 0;
+  padding: 9px 14px 11px;
+  border: 1px solid #e4d9a8;
+  background: #fffdf0;
+}
+
+.banner-head {
+  margin-bottom: 3px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.2px;
+}
+
+.banner-body {
+  line-height: 1.5;
+}
+
+.banner-link,
+.project-link {
+  color: #1456b8;
+  text-decoration: underline;
+}
+
+.notice {
+  min-height: 20px;
+  padding: 3px 14px 0;
+  color: #3a6d2c;
+  font-size: 11px;
+}
+
+.notice.is-error {
+  color: #a1261d;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ tab strip */
+.work-area {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 12px 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding-left: 2px;
+  border-bottom: 1px solid #a0a0a0;
+}
+
+.tab {
+  min-width: 76px;
+  height: 24px;
+  border: 1px solid #c0c0c0;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  background: #ececec;
+}
+
+.tab.is-active {
+  position: relative;
+  top: 1px;
+  background: #ffffff;
+  border-color: #a0a0a0;
+  font-weight: 600;
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 150px;
+  margin-top: -1px;
+  padding: 0;
+  border: 1px solid #a0a0a0;
+  border-top: none;
+  background: #ffffff;
+  overflow: auto;
+}
+
+/* ------------------------------------------------------------ file tree */
+.tree {
+  padding: 6px 4px;
+  font-size: 12px;
+}
+
+.tree-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.tree-level1 {
+  padding-left: 20px;
+}
+
+.tree-level2 {
+  padding-left: 36px;
+  cursor: default;
+}
+
+.tree-level3 {
+  padding-left: 54px;
+  color: #333;
+}
+
+.tree-line.is-selected {
+  background: #cce4f7;
+  outline: 1px dotted #7aa9d6;
+}
+
+.tree-root {
+  font-weight: 600;
+}
+
+.caret {
+  width: 12px;
+  color: #555;
+  font-size: 10px;
+  text-align: center;
+}
+
+.icon {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 12px;
+  flex: 0 0 14px;
+}
+
+.icon-folder::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 3px;
+  width: 12px;
+  height: 8px;
+  border: 1px solid #b8860b;
+  border-radius: 1px;
+  background: #f6d77a;
+}
+
+.icon-folder::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  width: 6px;
+  height: 3px;
+  border: 1px solid #b8860b;
+  background: #f9e4a6;
+}
+
+.icon-file::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 8px;
+  height: 10px;
+  border: 1px solid #9a9a9a;
+  background: #ffffff;
+}
+
+.icon-root::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 2px;
+  width: 12px;
+  height: 9px;
+  border: 1px solid #4a7ab0;
+  border-radius: 1px;
+  background: #cfe1f5;
+}
+
+.tree-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-empty {
+  padding: 24px 12px;
+  color: #8a8a8a;
+  text-align: center;
+}
+
+.hint {
+  flex: 0 0 auto;
+  padding: 5px 0;
+  color: #333;
+  text-align: center;
+}
+
+.actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 2px 0 10px;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* -------------------------------------------------------- other panels */
+.info-panel,
+.settings-panel {
+  padding: 16px 18px;
+}
+
+.info-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.info-text {
+  margin: 6px 0;
+  max-width: 700px;
+  line-height: 1.6;
+  color: #333;
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.setting-label {
+  color: #333;
+}
+
+.setting-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 6px;
+}
+
+.setting-row select {
+  width: 220px;
+}
+
+.log-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.small-button {
+  min-width: 64px;
+  height: 20px;
+  font-size: 11px;
+}
+
+.log {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 150px;
+  overflow: auto;
+  border: 1px solid #cfcfcf;
+  background: #fbfbfb;
+  color: #333;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* --------------------------------------------------------------- footer */
+.footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid #d4d4d4;
+  background: #f6f6f6;
+}
+
+.project-line {
+  margin-bottom: 2px;
+}
+
+.project-path {
+  color: #333;
+}
+
+.project-link {
+  font-size: 11px;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.process-button {
+  min-width: 124px;
+  height: 30px;
+  border: 2px solid #2b7cd3;
+  border-radius: 4px;
+  background: linear-gradient(#f4faff, #dfeeff);
+  font-size: 13px;
+  font-weight: 600;
+}
