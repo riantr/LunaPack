@@ -332,6 +332,10 @@ pub fn lp_nt_read_file(
 /// NtClose: virtual handles must not reach the real kernel.
 #export_name("lp_nt_close")
 pub fn lp_nt_close(handle : Int64) -> Int32 {
+  if state_reg().close_key(handle) {
+    g_runtime.ntdll_hits = g_runtime.ntdll_hits + 1
+    return STATUS_SUCCESS
+  }
   if state_vfs().close(handle) {
     g_runtime.ntdll_hits = g_runtime.ntdll_hits + 1
     STATUS_SUCCESS

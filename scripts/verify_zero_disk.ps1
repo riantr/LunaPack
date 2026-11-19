@@ -10,7 +10,7 @@
 # Invariants:
 #   1. payload.dll is deleted before mapping, and is still absent afterward
 #   2. OS loader never knows payload.dll
-#   3. 21 IAT slots are patched (12 base + 7 L1 + 1 ExitProcess + 1 L2.2 LoadLibraryA)
+#   3. every hooked API this payload imports gets its IAT slot rewritten (22)
 #   4. real HKLM key was never created
 #   5. no new file in the dist directory other than the harness's own real.txt
 #   6. no new lunapack/lpvirt/payload-named file in %TEMP%
@@ -65,7 +65,7 @@ Check ($exit -eq 0) "host.exe exit code 0 (got $exit)"
 Check ($out -match 'payload file deleted before mapping: YES') 'payload deleted before mapping'
 Check ($out -match 'OS loader knows payload.dll: NO') 'OS loader does not know payload.dll'
 Check ($out -match 'payload file still on disk : NO') 'payload absent from disk after run'
-Check ($out -match 'patched IAT slots\s+: 21') '21 IAT slots patched (12 base + 7 L1 + 1 ExitProcess + 1 LoadLibraryA)'
+Check ($out -match 'patched IAT slots\s+: 22') '22 IAT slots patched (one per hooked API the payload imports; 21 before the L5 hooks grew the table)'
 Check ($out -match 'DllMain\(DLL_PROCESS_ATTACH\): TRUE') 'DllMain attach succeeded'
 Check ($out -match 'real registry key open = 2') 'real HKLM key never created'
 Check ($out -match 'virtual file :.*VIRTUAL-FS-OK') 'virtual file read from memory'

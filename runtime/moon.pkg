@@ -10,7 +10,11 @@ supported_targets = "native"
 // `moon test` links a test executable for this package, so the import library
 // has to be present there too. This module is Windows-only and is never built
 // by the root module's Linux/macOS/wasm jobs.
+//
+// ntdll.lib is for NtQueryKey: a runtime that already holds a real key handle
+// (combase caches the classes root this way) can only be answered if that
+// handle is translated back into a path.
 
 options(
-  link: { "native": { "cc-link-flags": "advapi32.lib" } },
+  link: { "native": { "cc-link-flags": "advapi32.lib ntdll.lib" } },
 )

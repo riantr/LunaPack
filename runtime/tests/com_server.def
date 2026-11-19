@@ -1,0 +1,6 @@
+LIBRARY com_server
+EXPORTS
+  DllGetClassObject
+  DllCanUnloadNow
+  DllRegisterServer
+  DllUnregisterServer

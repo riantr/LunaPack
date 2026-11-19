@@ -24,6 +24,21 @@ EXPORTS
   lp_reg_query_value_ex_w
   lp_reg_set_value_ex_w
   lp_reg_close_key
+  lp_reg_get_value_w
+  lp_reg_create_key_ex_w
+  lp_reg_create_key_ex_a
+  lp_reg_open_key_ex_a
+  lp_reg_delete_key_w
+  lp_reg_delete_key_a
+  lp_reg_delete_value_w
+  lp_reg_enum_key_ex_w
+  lp_reg_enum_value_w
+  lp_reg_query_info_key_w
+  lp_reg_stats
+  lp_api_hits
+  lp_api_hits_reset
+  lp_reg_log_count
+  lp_reg_log_get
   lp_get_proc_address
   lp_exit_process
   lp_virt_exit_query
@@ -39,10 +54,14 @@ EXPORTS
   lp_load_library_w
   lp_load_library_ex_a
   lp_load_library_ex_w
+  lp_get_module_file_name_w
   lp_nt_create_file
   lp_nt_open_file
   lp_nt_read_file
   lp_nt_close
+  lp_nt_open_key
+  lp_nt_query_value_key
+  lp_nt_query_key
   lp_virt_ntdll_stats
   lp_virt_set_temp_path
   lp_virt_set_meta
@@ -56,6 +75,7 @@ EXPORTS
   lp_unmap_image
   lp_mapped_attach
   lp_mapped_detach
+  lp_set_module_path
   lp_virt_lifecycle_stats
   lp_virt_fallback_audit
   lp_get_tls_callbacks

@@ -26,6 +26,10 @@ pub const MAP_TRUNCATED : Int32 = 4
 
 pub fn install_iat_hooks(Int64) -> Int32
 
+pub fn lp_api_hits(Int64) -> Int32
+
+pub fn lp_api_hits_reset() -> Unit
+
 pub fn lp_create_process_a(Int64, Int64, Int64, Int64, Int32, Int32, Int64, Int64, Int64, Int64) -> Int32
 
 pub fn lp_create_process_w(Int64, Int64, Int64, Int64, Int32, Int32, Int64, Int64, Int64, Int64) -> Int32
@@ -52,13 +56,27 @@ pub fn lp_nt_create_file(Int64, Int32, Int64, Int64, Int64, Int32, Int32, Int32,
 
 pub fn lp_nt_open_file(Int64, Int32, Int64, Int64, Int32, Int32) -> Int32
 
+pub fn lp_nt_open_key(Int64, Int32, Int64) -> Int32
+
+pub fn lp_nt_query_key(Int64, Int32, Int64, Int32, Int64) -> Int32
+
+pub fn lp_nt_query_value_key(Int64, Int64, Int32, Int64, Int32, Int64) -> Int32
+
 pub fn lp_nt_read_file(Int64, Int64, Int64, Int64, Int64, Int64, Int32, Int64, Int64) -> Int32
 
 pub fn lp_proc_stats(Int64, Int32) -> Int32
 
+pub fn lp_reg_log_count() -> Int32
+
+pub fn lp_reg_log_get(Int32, Int64, Int32) -> Int32
+
+pub fn lp_reg_stats(Int64, Int32) -> Int32
+
 pub fn lp_register_eh(Int64) -> Int32
 
 pub fn lp_set_bootstrap_path(Int64) -> Int32
+
+pub fn lp_set_module_path(Int64, Int64) -> Int32
 
 pub fn lp_unmap_image(Int64) -> Int32
 
@@ -130,6 +148,8 @@ pub fn thunk_get_file_information_by_handle(Int64, Int64) -> Int32
 
 pub fn thunk_get_file_size_ex(Int64, Int64) -> Int32
 
+pub fn thunk_get_module_file_name_w(Int64, Int64, Int32) -> Int32
+
 pub fn thunk_get_proc_address(Int64, Int64) -> Int64
 
 pub fn thunk_get_queued_completion_status(Int64, Int64, Int64, Int64, Int32) -> Int32
@@ -152,7 +172,27 @@ pub fn thunk_read_file(Int64, Int64, Int32, Int64, Int64) -> Int32
 
 pub fn thunk_reg_close_key(Int64) -> Int32
 
+pub fn thunk_reg_create_key_ex_a(Int64, Int64, Int32, Int64, Int32, Int32, Int64, Int64, Int64) -> Int32
+
+pub fn thunk_reg_create_key_ex_w(Int64, Int64, Int32, Int64, Int32, Int32, Int64, Int64, Int64) -> Int32
+
+pub fn thunk_reg_delete_key_a(Int64, Int64) -> Int32
+
+pub fn thunk_reg_delete_key_w(Int64, Int64) -> Int32
+
+pub fn thunk_reg_delete_value_w(Int64, Int64) -> Int32
+
+pub fn thunk_reg_enum_key_ex_w(Int64, Int32, Int64, Int64, Int64, Int64, Int64, Int64) -> Int32
+
+pub fn thunk_reg_enum_value_w(Int64, Int32, Int64, Int64, Int64, Int64, Int64, Int64) -> Int32
+
+pub fn thunk_reg_get_value_w(Int64, Int64, Int64, Int32, Int64, Int64, Int64) -> Int32
+
+pub fn thunk_reg_open_key_ex_a(Int64, Int64, Int32, Int32, Int64) -> Int32
+
 pub fn thunk_reg_open_key_ex_w(Int64, Int64, Int32, Int32, Int64) -> Int32
+
+pub fn thunk_reg_query_info_key_w(Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> Int32
 
 pub fn thunk_reg_query_value_ex_w(Int64, Int64, Int64, Int64, Int64, Int64) -> Int32
 
@@ -254,6 +294,7 @@ pub fn Vfs::path_info(Self, String) -> FileInfo?
 pub fn Vfs::post_completion(Self, Int64, Int64, Int64) -> Unit
 pub fn Vfs::read(Self, Int64, Int32) -> Bytes?
 pub fn Vfs::read_at(Self, Int64, Int32, Int64) -> Bytes?
+pub fn Vfs::read_file(Self, String) -> Bytes?
 pub fn Vfs::rename_file(Self, String, String) -> Bool
 pub fn Vfs::resolve(Self, String) -> String
 pub fn Vfs::seek(Self, Int64, Int64, Int32) -> Int64?
@@ -270,13 +311,30 @@ pub struct VirtualRegistry {
   mut next_handle : Int64
   mut calls_query : Int32
   mut calls_write : Int32
+  mut calls_open : Int32
+  mut calls_create : Int32
+  mut calls_enum : Int32
+  mut calls_delete : Int32
 }
+pub fn VirtualRegistry::claims(Self, Int64, String) -> Bool
 pub fn VirtualRegistry::close_key(Self, Int64) -> Bool
+pub fn VirtualRegistry::contains_path(Self, String) -> Bool
+pub fn VirtualRegistry::create_key(Self, Int64, String) -> (Int64, Bool)?
+pub fn VirtualRegistry::delete_key(Self, Int64, String) -> Bool
+pub fn VirtualRegistry::delete_value(Self, Int64, String) -> Bool
+pub fn VirtualRegistry::enum_key(Self, Int64, Int32) -> String?
+pub fn VirtualRegistry::enum_value_at(Self, Int64, Int32) -> (String, RegValue)?
+pub fn VirtualRegistry::handle_for(Self, String) -> Int64
+pub fn VirtualRegistry::has_key(Self, Int64, String) -> Bool
+pub fn VirtualRegistry::info(Self, Int64) -> (Int32, Int32, Int32, Int32, Int32)?
 pub fn VirtualRegistry::is_virtual_key(Self, Int64) -> Bool
 pub fn VirtualRegistry::new() -> Self
 pub fn VirtualRegistry::open_key(Self, Int64, String) -> Int64?
 pub fn VirtualRegistry::query_value(Self, Int64, String) -> RegValue?
+pub fn VirtualRegistry::read_value(Self, Int64, String, String) -> RegValue?
+pub fn VirtualRegistry::resolve_existing(Self, Int64, String) -> String?
 pub fn VirtualRegistry::set_value(Self, Int64, String, String, Int32, Bytes) -> Bool
+pub fn VirtualRegistry::value_in_path(Self, String, String) -> RegValue?
 
 // Type aliases
 

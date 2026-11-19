@@ -719,6 +719,23 @@ fn read_from(v : Vfs, handle : Int64, max_len : Int32, at : Int64?) -> Bytes? {
 }
 
 ///|
+/// Whole contents of a virtual file, for the paths that map an image or hash an
+/// entry rather than stream it.
+pub fn Vfs::read_file(self : Vfs, path : String) -> Bytes? {
+  let h = match self.open(path) {
+    Some(x) => x
+    None => return None
+  }
+  let n = match self.size(h) {
+    Some(s) => s.to_int()
+    None => 0
+  }
+  let data = self.read(h, n)
+  ignore(self.close(h))
+  data
+}
+
+///|
 pub fn Vfs::read(self : Vfs, handle : Int64, max_len : Int32) -> Bytes? {
   read_from(self, handle, max_len, None)
 }

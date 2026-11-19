@@ -542,7 +542,17 @@ pub fn lp_get_export(base : Int64, name : Int64) -> Int64 {
   if base == 0L || name == 0L {
     return 0L
   }
-  let wanted = ascii_at(name, 128)
+  export_address(base, ascii_at(name, 128))
+}
+
+///|
+/// Address of a named export of a mapped image, or 0 when it has none. Split
+/// out from the exported wrapper so a thunk that already holds a MoonBit
+/// string does not have to build a C string first.
+fn export_address(base : Int64, wanted : String) -> Int64 {
+  if base == 0L || wanted.length() == 0 {
+    return 0L
+  }
   let pe_off = peek32(base + 0x3cL)
   let opt = base + pe_off + 24L
   if peek16(opt) != 0x20b {
@@ -601,6 +611,21 @@ pub fn lp_get_entry(base : Int64) -> Int64 {
 #export_name("lp_mapped_attach")
 pub fn lp_mapped_attach(base : Int64) -> Int32 {
   note_attach(base)
+  0
+}
+
+///|
+/// L5.5: tell the runtime where a manually mapped image lives. A host that maps
+/// a component itself (the way regsvr32 runs DllRegisterServer) has to do this
+/// before calling into it, because the component asks GetModuleFileName where it
+/// is and writes the answer into InprocServer32. The path is the virtual one, so
+/// the class ends up pointing back at the archive.
+#export_name("lp_set_module_path")
+pub fn lp_set_module_path(base : Int64, path : Int64) -> Int32 {
+  if base == 0L || path == 0L {
+    return -1
+  }
+  note_mapped_image(base, wide_to_string(path))
   0
 }
 

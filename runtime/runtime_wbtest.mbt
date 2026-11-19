@@ -667,3 +667,133 @@ test "a damaged blob is refused and leaves the tree alone" {
     ),
   )
 }
+
+///|
+test "a component registration lands in the hive, and HKCR answers" {
+  let r = VirtualRegistry::new()
+  let clsid = "CLSID\\{9B1F0A4C-2D3E-4A55-8F01-112233445566}"
+  let dll = utf16le("C:/virt/com_server.dll")
+  assert_true(
+    r.set_value(HKEY_CLASSES_ROOT, clsid + "\\InprocServer32", "", REG_SZ, dll),
+  )
+  // Opening the class key through HKCR finds it.
+  let h = r.open_key(HKEY_CLASSES_ROOT, clsid)
+  assert_true(h is Some(_))
+  // The same key reached through the machine classes subtree is the same key.
+  let via_machine = r.open_key(
+    HKEY_LOCAL_MACHINE,
+    "Software\\Classes\\" + clsid,
+  )
+  assert_true(via_machine is Some(_))
+  match r.read_value(HKEY_CLASSES_ROOT, clsid + "\\InprocServer32", "") {
+    Some(v) => {
+      // REG_SZ is stored as UTF-16LE, so the payload is the same bytes the
+      // component wrote.
+      assert_true(v.typ == REG_SZ)
+      assert_true(v.data.length() == dll.length())
+      assert_true(v.data[0] == b'C')
+      assert_true(v.data[1] == b'\x00')
+    }
+    None => assert_true(false)
+  }
+  // Enumeration reports the class as one subkey of CLSID.
+  let clsid_key = r.open_key(HKEY_CLASSES_ROOT, "CLSID")
+  match clsid_key {
+    Some(k) => {
+      assert_true(
+        r.enum_key(k, 0) == Some("{9b1f0a4c-2d3e-4a55-8f01-112233445566}"),
+      )
+      assert_true(r.enum_key(k, 1) is None)
+      match r.info(k) {
+        Some((n_sub, _m_key, _n_val, _m_name, _m_data)) =>
+          assert_true(n_sub == 1)
+        None => assert_true(false)
+      }
+    }
+    None => assert_true(false)
+  }
+  // Unregister removes the class and everything under it.
+  assert_true(r.delete_key(HKEY_CLASSES_ROOT, clsid))
+  assert_true(r.open_key(HKEY_CLASSES_ROOT, clsid) is None)
+  assert_true(
+    r.read_value(HKEY_CLASSES_ROOT, clsid + "\\InprocServer32", "") is None,
+  )
+}
+
+///|
+test "creating a class key through HKCR is claimed and counted" {
+  let r = VirtualRegistry::new()
+  let clsid = "CLSID\\{9B1F0A4C-2D3E-4A55-8F01-112233445566}"
+  assert_true(r.claims(HKEY_CLASSES_ROOT, clsid))
+  match r.create_key(HKEY_CLASSES_ROOT, clsid) {
+    Some((h, existed)) => {
+      assert_true(!existed)
+      assert_true(r.calls_create == 1)
+      assert_true(r.handles.contains(h))
+      // A second create reports the key as already there.
+      match r.create_key(HKEY_CLASSES_ROOT, clsid) {
+        Some((_, again)) => assert_true(again)
+        None => assert_true(false)
+      }
+    }
+    None => assert_true(false)
+  }
+}
+
+///|
+test "a mapped image reports its virtual path through GetModuleFileNameW" {
+  let base = 0x1234_5678L
+  let path = "C:\\virt\\com_server_crt.dll"
+  assert_true(mapped_path_of(base) is None)
+  note_mapped_image(base, path)
+  assert_true(mapped_path_of(base) == Some(path))
+  // The image is now one the GetProcAddress and GetModuleFileName thunks answer
+  // for, which is what makes a self-registering component work.
+  assert_true(is_mapped_image(base))
+
+  let cap = 260
+  let buf = virtual_alloc(
+    0L,
+    (cap * 2).to_int64(),
+    MEM_COMMIT | MEM_RESERVE,
+    PAGE_READWRITE,
+  )
+  assert_true(buf != 0L)
+  let n = thunk_get_module_file_name_w(base, buf, cap)
+  // The reported count is characters, without the terminator.
+  assert_true(n == path.length())
+  assert_true(wide_to_string(buf) == path)
+
+  // A buffer that cannot hold the path returns the buffer size, writes no
+  // terminator past the end, and reports why.
+  let tiny = virtual_alloc(0L, 16L, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
+  assert_true(tiny != 0L)
+  assert_true(write_module_path(path, tiny, 8) == 8)
+
+  // A base the loader owns is not in the map, so the thunk does not answer for
+  // it: the caller is sent back to the real API instead of getting a guess.
+  assert_true(mapped_path_of(0x7ff0_0000_0000L) is None)
+  ignore(virtual_free(buf, 0L, MEM_RELEASE))
+  ignore(virtual_free(tiny, 0L, MEM_RELEASE))
+}
+
+///|
+test "the entry stub encodes the DllMain call it documents" {
+  let code = entry_stub_code()
+  assert_true(code.length() == 39)
+  // sub rsp, 28h
+  assert_true(code[0] == b'\x48' && code[1] == b'\x83' && code[3] == b'\x28')
+  // mov rcx, imm64 -- the base goes in at offset 6
+  assert_true(code[4] == b'\x48' && code[5] == b'\xb9')
+  // mov edx, 1 (DLL_PROCESS_ATTACH)
+  assert_true(code[14] == b'\xba' && code[15] == b'\x01')
+  // xor r8d, r8d -- lpReserved = NULL
+  assert_true(code[19] == b'\x45' && code[21] == b'\xc0')
+  // mov rax, imm64 -- the entry point goes in at offset 24
+  assert_true(code[22] == b'\x48' && code[23] == b'\xb8')
+  // call rax / add rsp, 28h / ret
+  assert_true(code[32] == b'\xff' && code[33] == b'\xd0')
+  assert_true(code[38] == b'\xc3')
+  // An image with no entry point is skipped rather than called.
+  assert_true(run_entry_point(0x1000L, 0L) == 0)
+}

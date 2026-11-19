@@ -96,7 +96,7 @@ $ucrtArg = $ucrtLib.Replace('\', '/')
   "/LIBPATH:`"$umArg`"",
   "/LIBPATH:`"$ucrtArg`"",
   "`"$archiveArg`"",
-  'kernel32.lib', 'user32.lib', 'advapi32.lib', 'bcrypt.lib',
+  'kernel32.lib', 'user32.lib', 'advapi32.lib', 'bcrypt.lib', 'ntdll.lib',
   'shell32.lib', 'dbghelp.lib', 'ws2_32.lib'
 ) | Set-Content -Path $rsp -Encoding ascii
 Write-Host '==> link lpvirt.dll'
@@ -196,6 +196,48 @@ Assert-Ok 'cl crt_target.exe'
 Write-Host '==> compile launcher.exe'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$launcherExe" "$launcherSrc" /link kernel32.lib
 Assert-Ok 'cl launcher.exe'
+
+# ---------------------------------------------------------- 4c. L5 COM pair
+# A real in-proc COM server, its client, and the host that makes COM see the
+# hive. The server has a DllMain and refuses to serve a class factory until it
+# has run, so activation working is the same thing as the runtime having called
+# the entry point of a hand-mapped image.
+$comServerSrc = Join-Path $runtimeDir 'tests\com_server.c'
+$comServerDef = Join-Path $runtimeDir 'tests\com_server.def'
+$comServerDll = Join-Path $distDir 'com_server.dll'
+$comServerObj = Join-Path $distDir 'com_server.obj'
+$comConsumerSrc = Join-Path $runtimeDir 'tests\com_consumer.c'
+$comConsumerExe = Join-Path $distDir 'com_consumer.exe'
+$comConsumerObj = Join-Path $distDir 'com_consumer.obj'
+$comHostSrc = Join-Path $runtimeDir 'tests\com_host.c'
+$comHostExe = Join-Path $distDir 'com_host.exe'
+Write-Host '==> compile com_server.dll (in-proc server, no CRT, /ENTRY:DllMain)'
+& $clExe /nologo /c /GS- "/Fo:$comServerObj" "$comServerSrc"
+Assert-Ok 'cl com_server.c'
+& $linkExe /nologo /DLL /ENTRY:DllMain /NODEFAULTLIB /MACHINE:X64 "/DEF:$comServerDef" `
+  "/OUT:$comServerDll" "$comServerObj" kernel32.lib advapi32.lib
+Assert-Ok 'link com_server.dll'
+# The same component built the ordinary way: CRT start-up, real DllMain, and it
+# registers itself through GetModuleFileNameW instead of a hard-coded path.
+$comCrtSrc = Join-Path $runtimeDir 'tests\com_server_crt.c'
+$comCrtDll = Join-Path $distDir 'com_server_crt.dll'
+Write-Host '==> compile com_server_crt.dll (ordinary build: CRT + real DllMain)'
+& $clExe /nologo /LD "/Fo:$objDir" "/Fe:$comCrtDll" "$comCrtSrc" /link /DEF:"$comServerDef" advapi32.lib kernel32.lib
+Assert-Ok 'cl com_server_crt.dll'
+Write-Host '==> compile com_consumer.exe (no CRT, /ENTRY:com_main)'
+& $clExe /nologo /c /GS- "/Fo:$comConsumerObj" "$comConsumerSrc"
+Assert-Ok 'cl com_consumer.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:com_main /NODEFAULTLIB `
+  "/OUT:$comConsumerExe" "$comConsumerObj" kernel32.lib ole32.lib advapi32.lib
+Assert-Ok 'link com_consumer.exe'
+Write-Host '==> compile com_host.exe (L5 host: register, activate, unregister)'
+& $clExe /nologo "/Fo:$objDir" "/Fe:$comHostExe" "$comHostSrc" /link kernel32.lib ole32.lib advapi32.lib
+Assert-Ok 'cl com_host.exe'
+$comRealSrc = Join-Path $runtimeDir 'tests\com_real_host.c'
+$comRealExe = Join-Path $distDir 'com_real_host.exe'
+Write-Host '==> compile com_real_host.exe (L5.5: a shipped component, registered from memory)'
+& $clExe /nologo "/Fo:$objDir" "/Fe:$comRealExe" "$comRealSrc" /link kernel32.lib ole32.lib advapi32.lib
+Assert-Ok 'cl com_real_host.exe'
 
 # --------------------------------------------------------------- 5. run demos
 $args = @($distDir)

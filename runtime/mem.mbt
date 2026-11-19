@@ -282,6 +282,18 @@ fn wide_exact(addr : Int64, byte_len : Int32) -> String {
 }
 
 ///|
+/// Decode a UTF-16LE string that already sits in a byte buffer, for callers
+/// that receive a structure with an inline string.
+fn wide_from_bytes(b : Bytes, off : Int32, byte_len : Int32) -> String {
+  if off < 0 || byte_len <= 0 || off + byte_len > b.length() {
+    return ""
+  }
+  @utf16.decode(bytes_slice(b, off, off + byte_len)) catch {
+    _ => ""
+  }
+}
+
+///|
 /// Encode an ASCII-only MoonBit string as UTF-16LE without a terminator.
 fn utf16le_no_nul(s : String) -> Bytes {
   let a = FixedArray::make(s.length() * 2, b'\x00')

@@ -138,7 +138,7 @@ inside a DLL is not initialized by the OS loader.
 | `lp_virt_set_cwd` | Set the directory used to resolve relative virtual paths. |
 | `lp_virt_add_alias` | Register a short-name alias (e.g. `progra~1` -> `program files`). |
 | `lp_virt_post_completion` | Post an overlapped completion record to the in-memory queue. |
-| `lp_install_iat_hooks` | Patch the 36 hooked IAT slots of an image base (32 Win32 + 4 ntdll L2.3). Works for loaded and manually mapped images. |
+| `lp_install_iat_hooks` | Patch the 52 hooked IAT slots of an image base (45 Win32 + 7 ntdll). Works for loaded and manually mapped images. |
 | `lp_virt_exit_query` | Did a mapped image call ExitProcess, and with what code? Returns 1/0; writes the code to the given address. |
 | `lp_virt_set_temp_path` | Seed the virtual temp directory returned by GetTempPathW (UTF-16LE). Empty disables the override. |
 | `lp_map_image` | Manually map a PE32+ DLL from a byte array. Returns the image base, or 0. |
@@ -151,7 +151,7 @@ inside a DLL is not initialized by the OS loader.
 | `lp_virt_fallback_audit` | L2.5: `[self_thunk_hits, probes, unresolved, status]`. `self_thunk_hits=0` proves lpvirt.dll's own IAT is unpatched (no trampoline/recursion). |
 | `lp_get_tls_callbacks` | L3.4: allocate a TLS index and return the callback array VA of a mapped image (host invokes each callback). |
 | `lp_register_eh`, `lp_unregister_eh` | L3.4: register/unregister the mapped image's `.pdata` with RtlAdd/DeleteFunctionTable for SEH unwinding. |
-| `lp_*_w` / `lp_*` | The 12 Win32 thunks. |
+| `lp_*_w` / `lp_*` | The Win32 thunks, one per name in the hook table. |
 | `lp_nt_create_file`, `lp_nt_open_file`, `lp_nt_read_file`, `lp_nt_close` | L2.3 native file API thunks, reached through static ntdll IAT slots or the hooked `GetProcAddress`. |
 | `lp_virt_ntdll_stats` | Current ntdll-boundary hit count. |
 | `lp_create_process_w`, `lp_create_process_a` | L4.1: start a program under the virtual layer by redirecting the request into the launcher. Inert unless a bootstrap path is set. |
@@ -159,6 +159,13 @@ inside a DLL is not initialized by the OS loader.
 | `lp_import_inherited_state` | L4.2: open the section named in `LUNAPACK_VFS_SECTION` and replace the virtual tree with its contents. Returns 0 imported, 1 nothing to import, 2-5 specific failures. |
 | `lp_proc_stats` | L4: `[redirects, failures, sections_kept_open, last_error]`. |
 | `lp_vfs_export` / `lp_vfs_import` | L4.2 serialization of the whole tree (files + metadata + dirs + aliases + cwd + temp path + registry) as a self-describing blob. |
+| `lp_reg_get_value_w`, `lp_reg_create_key_ex_w/a`, `lp_reg_open_key_ex_a`, `lp_reg_delete_key_w/a`, `lp_reg_delete_value_w`, `lp_reg_enum_key_ex_w`, `lp_reg_enum_value_w`, `lp_reg_query_info_key_w` | L5 registry thunks: the surface a component registers itself with and the class database activates through. |
+| `lp_nt_open_key`, `lp_nt_query_value_key`, `lp_nt_query_key` | L5 native registry entry points. combase reaches the class database through these as well as through Win32, so both layers answer from the hive. `NtQueryKey(KeyNameInformation)` is also how a real key handle is translated back into a hive path. |
+| `lp_reg_stats` | L5: `[open, create, enum, delete, query, write]` request counters. |
+| `lp_reg_log_count` / `lp_reg_log_get` | L5: the last registry requests the thunks saw (`kind detail`), so a failed activation can be read back instead of guessed at. |
+| `lp_api_hits` / `lp_api_hits_reset` | L5: how often each thunk was reached, by API name. Tells a registration path apart from an activation path. |
+| `lp_get_module_file_name_w` | L5.5: answer `GetModuleFileNameW` for a mapped image with its virtual path. A component that registers itself writes that path into `InprocServer32`, so this is what makes the class point back into the archive. |
+| `lp_set_module_path` | L5.5: tell the runtime where a host's own manually mapped image lives, before calling into it. |
 
 ## Limits — read these before treating this as production code
 
@@ -213,6 +220,32 @@ inside a DLL is not initialized by the OS loader.
   A mapped image's `GetCommandLineW` and CRT `argv` still describe the launcher,
   not the image, because the PEB belongs to the process — PEB fidelity is L6
   work.
+- **COM components register and activate without administrator rights (L5).**
+  The whole `HKCR` namespace (and both `Software\Classes` subtrees, which are
+  folded onto `hkcr`) is owned by the hive, so `DllRegisterServer` writes land in
+  memory and the class database reads them back; reads of keys the hive does not
+  hold still fall through to the real registry, so already-installed components
+  keep working. `CoCreateInstance` then finds `InprocServer32`, `LoadLibrary*` is
+  answered out of the virtual filesystem, `GetProcAddress` is answered from the
+  image's own export directory, and the entry point is run by the runtime (a
+  hand-mapped image gets no `DllMain` from the loader). `GetModuleFileNameW` is
+  answered with the virtual path, which is what a self-registering component
+  writes into `InprocServer32`. **Not** covered: type-library registration.
+  `scrrun.dll` fails with `TYPE_E_CANTLOADLIBRARY` because `RegisterTypeLib`
+  loads the typelib from a path that does not exist on disk, and `wshom.ocx`
+  fails with `0x80040201` *natively as well*, so that one is the component's
+  limit, not ours. Shipped OCX that self-register through an embedded typelib
+  need typelib virtualization, tracked as L5.6. Only the wide
+  `GetModuleFileNameW` is virtualized, so VB6-era ANSI servers remain out of
+  reach — they need the VB runtime, which manual mapping does not provide.
+- **A mapped image runs its entry point only when the runtime maps it.** For an
+  image the runtime loads out of the VFS it calls `DllMain(base,
+  DLL_PROCESS_ATTACH, NULL)` itself, through a small stub the runtime writes
+  into its own page and hands to `InitOnceExecuteOnce` (MoonBit cannot call a
+  computed address, and the runtime stays free of C). A host that maps an image
+  itself — the way `regsvr32` runs `DllRegisterServer` — still has to make that
+  call, and should call `lp_set_module_path` first so the image can answer
+  `GetModuleFileNameW`.
 - **AV behaviour is measured, not assumed.** On the development machine
   (Huorong), the P0 remote-injection experiment was quarantined 11 times as
   `HVM:Trojan/Injector.gen!A`; this in-process runtime, including the manual
@@ -309,10 +342,13 @@ and 5 older entries; none are from this runtime.
 | --- | --- |
 | `mem.mbt` | Raw in-process memory reads/writes, PE integer helpers, ASCII/UTF-16 conversion, FILETIME/OVERLAPPED helpers. |
 | `vfs.mbt` | In-memory filesystem: writable files, dispositions, handles/offsets, metadata, enumeration, path normalization and aliases, completion queue. |
-| `registry.mbt` | In-memory registry hive, HKLM/HKCU redirection. |
-| `state.mbt` | Lazy process-wide state and the 32-entry hook table. |
+| `registry.mbt` | In-memory registry hive, HKLM/HKCU/HKCR redirection, handle translation for real keys. |
+| `registry_api.mbt` | L5: the Win32 registry thunks (`RegCreateKeyEx*`, `RegOpenKeyExA`, `RegDelete*`, `RegEnum*`, `RegQueryInfoKeyW`, `RegGetValueW`), the request log and the hive counters. |
+| `registry_nt.mbt` | L5: the native registry entry points (`NtOpenKey`, `NtQueryValueKey`, `NtQueryKey`) that combase uses alongside Win32. |
+| `state.mbt` | Lazy process-wide state and the 52-entry hook table. |
+| `entry.mbt` | L5.3: emits a `DllMain(base, DLL_PROCESS_ATTACH, NULL)` stub and has the system call it, for images the runtime maps itself. |
 | `iat.mbt` | In-process import address table patcher; also patches runtime-loaded modules, skipping Windows system DLLs. |
-| `thunks.mbt` | The 32 Win32-compatible C ABI thunks and management exports. |
+| `thunks.mbt` | The Win32-compatible C ABI thunks and management exports. |
 | `mapper.mbt` | Manual PE mapping, relocations, imports, protections, export lookup. |
-| `runtime_wbtest.mbt` | Unit tests for the data model, L1/L2.1 VFS semantics and the PE layout reader (21 tests). |
+| `runtime_wbtest.mbt` | Unit tests for the data model, L1/L2.1 VFS semantics, the PE layout reader, the hive and the entry stub (36 tests). |
 | `tests/dynlib.c` | L2.2 runtime-loaded DLL whose static virtualized imports prove LoadLibrary IAT patching. |

@@ -289,7 +289,9 @@ pub fn thunk_reg_open_key_ex_w(
   sam : Int32,
   result : Int64,
 ) -> Int32 {
+  hit("RegOpenKeyExW")
   let r = state_reg()
+  log_reg("open " + hkey.to_string(), wide_to_string(subkey))
   match r.open_key(hkey, wide_to_string(subkey)) {
     Some(h) => {
       if result != 0L {
@@ -311,25 +313,19 @@ pub fn thunk_reg_query_value_ex_w(
   data : Int64,
   size : Int64,
 ) -> Int32 {
+  hit("RegQueryValueExW")
   let r = state_reg()
+  log_reg("query " + hkey.to_string(), wide_to_string(name))
   match r.query_value(hkey, wide_to_string(name)) {
-    Some(val) => {
-      let need = val.data.length().to_int64()
-      let requested = if size != 0L { peek32(size) } else { 0L }
-      if typ != 0L {
-        poke_bytes(typ, u32le(val.typ.to_int64()), 4)
-      }
-      if size != 0L {
-        poke_bytes(size, u32le(need), 4)
-      }
-      if data != 0L && requested >= need {
-        poke_bytes(data, val.data, val.data.length())
-        ERROR_SUCCESS
+    Some(val) => emit_value(val, typ, data, size)
+    None =>
+      // Our own key, no such value: the real API cannot be asked about a
+      // handle that exists only in this process.
+      if r.is_virtual_key(hkey) {
+        ERROR_FILE_NOT_FOUND
       } else {
-        ERROR_MORE_DATA
+        real_reg_query_value_ex_w(hkey, name, reserved, typ, data, size)
       }
-    }
-    None => real_reg_query_value_ex_w(hkey, name, reserved, typ, data, size)
   }
 }
 
@@ -343,6 +339,7 @@ pub fn thunk_reg_set_value_ex_w(
   data : Int64,
   len : Int32,
 ) -> Int32 {
+  hit("RegSetValueExW")
   let r = state_reg()
   if !r.is_virtual_key(hkey) {
     return real_reg_set_value_ex_w(hkey, name, reserved, typ, data, len)
@@ -358,6 +355,8 @@ pub fn thunk_reg_set_value_ex_w(
 ///|
 #export_name("lp_reg_close_key")
 pub fn thunk_reg_close_key(hkey : Int64) -> Int32 {
+  hit("RegCloseKey")
+  log_reg("close", hkey.to_string())
   let r = state_reg()
   if r.close_key(hkey) {
     ERROR_SUCCESS
@@ -777,6 +776,7 @@ pub fn lp_virt_set_temp_path(path : Int64) -> Int32 {
 /// GetProcAddress("CreateFileW") gets our thunk instead of the real function.
 #export_name("lp_get_proc_address")
 pub fn thunk_get_proc_address(hmod : Int64, name : Int64) -> Int64 {
+  hit("GetProcAddress")
   if name == 0L {
     return 0L
   }
@@ -788,6 +788,19 @@ pub fn thunk_get_proc_address(hmod : Int64, name : Int64) -> Int64 {
     return 0L
   }
   let api = ascii_at(name, 128)
+  // L5.3: a module that came out of the archive was mapped by hand, so it is not
+  // in the loader's module list and the real GetProcAddress cannot see it. Answer
+  // from the image's own export directory. This is the step that lets combase
+  // find DllGetClassObject in a server that was never unpacked to disk.
+  if is_mapped_image(hmod) {
+    let found = export_address(hmod, api)
+    if found != 0L {
+      g_runtime.dynamic_hits = g_runtime.dynamic_hits + 1
+      return found
+    }
+    log_reg("gpa-miss", api)
+    return 0L
+  }
   let real = real_get_proc_address(hmod, cstring(api))
   match lookup_thunk(api) {
     Some(thunk_name) => {
@@ -803,12 +816,59 @@ pub fn thunk_get_proc_address(hmod : Int64, name : Int64) -> Int64 {
 }
 
 ///|
+/// L5.3: a module that only exists inside the archive. The class database hands
+/// combase the `InprocServer32` path of a component that was never unpacked to
+/// disk, so `LoadLibrary*` has to satisfy the request from the virtual
+/// filesystem. The image is mapped by the same code path as `lp_map_image`, gets
+/// the same hook table as any other mapped module, and its base is recorded so
+/// the `GetProcAddress` thunk can answer for it. Returns 0 when the path is not
+/// virtual, which sends the caller back to the real loader.
+fn load_image_from_vfs(name : Int64, wide : Bool) -> Int64 {
+  if name == 0L {
+    return 0L
+  }
+  let path = if wide { wide_to_string(name) } else { ansi_to_string(name) }
+  if path == "" {
+    return 0L
+  }
+  let data = match state_vfs().read_file(path) {
+    Some(d) => d
+    None => return 0L
+  }
+  let base = map_image_bytes(data)
+  if base == 0L {
+    // The path was virtual, so the real loader would fail too. Keep the reason
+    // for the host instead of silently falling through.
+    log_reg("load-fail", path + " err=" + g_runtime.map_error.to_string())
+    return 0L
+  }
+  note_mapped_image(base, path)
+  ignore(install_hooks(base, false, false))
+  // A hand-mapped module gets no DllMain from the loader. Run it here, after the
+  // hooks are in place so the module's own initialisation is virtualised too.
+  let attach = run_entry_point(base, lp_get_entry(base))
+  if attach != 0 {
+    note_attach(base)
+  }
+  log_reg(
+    "load-map",
+    path + " base=" + base.to_string() + " dllmain=" + attach.to_string(),
+  )
+  base
+}
+
+///|
 /// L2.2: LoadLibrary variants. The real loader brings the module in, then we
 /// rewrite that module's IAT with the same hook table used for mapped images.
 /// lpvirt.dll itself is skipped inside patch_loaded_module so the real-API
 /// fall-through references are never replaced (which would recurse).
 #export_name("lp_load_library_a")
 pub fn thunk_load_library_a(name : Int64) -> Int64 {
+  hit("LoadLibraryA")
+  let from_vfs = load_image_from_vfs(name, false)
+  if from_vfs != 0L {
+    return from_vfs
+  }
   // mapper.mbt already binds the LoadLibraryA C symbol; a second extern for
   // the same symbol is rejected by link-core. Reuse that binding by turning
   // the incoming raw ANSI pointer into a MoonBit string first.
@@ -820,6 +880,11 @@ pub fn thunk_load_library_a(name : Int64) -> Int64 {
 ///|
 #export_name("lp_load_library_w")
 pub fn thunk_load_library_w(name : Int64) -> Int64 {
+  hit("LoadLibraryW")
+  let from_vfs = load_image_from_vfs(name, true)
+  if from_vfs != 0L {
+    return from_vfs
+  }
   let h = real_load_library_w(name)
   ignore(patch_loaded_module(h))
   h
@@ -832,6 +897,11 @@ pub fn thunk_load_library_ex_a(
   file : Int64,
   flags : Int32,
 ) -> Int64 {
+  hit("LoadLibraryExA")
+  let from_vfs = load_image_from_vfs(name, false)
+  if from_vfs != 0L {
+    return from_vfs
+  }
   let h = real_load_library_ex_a(name, file, flags)
   ignore(patch_loaded_module(h))
   h
@@ -844,9 +914,64 @@ pub fn thunk_load_library_ex_w(
   file : Int64,
   flags : Int32,
 ) -> Int64 {
+  hit("LoadLibraryExW")
+  let from_vfs = load_image_from_vfs(name, true)
+  if from_vfs != 0L {
+    return from_vfs
+  }
   let h = real_load_library_ex_w(name, file, flags)
   ignore(patch_loaded_module(h))
   h
+}
+
+///|
+/// A mapped image is not in the loader's module list, so the real
+/// GetModuleFileNameW cannot name it. A component that registers itself writes
+/// that name into InprocServer32, which means answering "where do I live" with
+/// the virtual path is what makes a class registered from inside the archive
+/// point back at the archive (L5.5).
+extern "C" fn real_get_module_file_name_w(
+  hmod : Int64,
+  buf : Int64,
+  cap : Int32,
+) -> Int32 = "GetModuleFileNameW"
+
+///|
+const ERROR_INSUFFICIENT_BUFFER : Int32 = 122
+
+///|
+/// Copy `path` into a caller-owned wide buffer with GetModuleFileNameW's
+/// contract: returns the number of characters written without the terminator,
+/// or `cap` with ERROR_INSUFFICIENT_BUFFER when the buffer is too small (and
+/// then writes no terminator at all).
+fn write_module_path(path : String, buf : Int64, cap : Int32) -> Int32 {
+  if buf == 0L || cap <= 0 {
+    return 0
+  }
+  let b = utf16le(path)
+  let chars = b.length() / 2 - 1
+  if chars >= cap {
+    let n = cap * 2
+    poke_bytes(buf, bytes_slice(b, 0, n), n)
+    set_last_error(ERROR_INSUFFICIENT_BUFFER)
+    return cap
+  }
+  poke_bytes(buf, b, b.length())
+  chars
+}
+
+///|
+#export_name("lp_get_module_file_name_w")
+pub fn thunk_get_module_file_name_w(
+  hmod : Int64,
+  buf : Int64,
+  cap : Int32,
+) -> Int32 {
+  hit("GetModuleFileNameW")
+  match mapped_path_of(hmod) {
+    Some(path) => write_module_path(path, buf, cap)
+    None => real_get_module_file_name_w(hmod, buf, cap)
+  }
 }
 
 ///|
@@ -897,6 +1022,10 @@ pub fn lp_virt_reset() -> Unit {
   g_runtime.child_redirects = 0
   g_runtime.child_failures = 0
   g_runtime.child_last_error = 0
+  g_runtime.api_hits.clear()
+  g_runtime.reg_log.clear()
+  g_runtime.mapped_images.clear()
+  g_runtime.mapped_paths.clear()
 }
 
 ///|
