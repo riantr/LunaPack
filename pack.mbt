@@ -284,8 +284,8 @@ async fn append_file(
   while off < total {
     let rest = total - off
     let n = if rest < chunk { rest } else { chunk }
-    let buf = src.read_exactly_at(n.to_int(), position=off)
-    dst.write_at(buf, position=position + off)
+    let buf = src.at(off).read_exactly(n.to_int())
+    dst.at(position + off).write(buf)
     match digest {
       Some(d) => d.update(buf)
       None => ()

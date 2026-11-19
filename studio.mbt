@@ -346,7 +346,7 @@ async fn open_download(
   let mut hops = 0
   while hops < 6 {
     let proxy = download_proxy(current)
-    let (header, conn) = @http.get(current, proxy?)
+    let (header, conn) = @http.get_stream(current, proxy?)
     let code = header.code
     if code >= 300 && code < 400 {
       let location = header_value(header, "location")
@@ -449,7 +449,7 @@ async fn download_to(url : String, path : String) -> Unit {
 /// Download and unpack Studio, then report the executable that appeared.
 async fn install_studio(url : String) -> String {
   let dir = studio_dir()
-  @fs.mkdir(dir, recursive=true, allow_exist=true)
+  @fs.mkdir(dir, recursive=true, allow_existing=true)
   let archive = dir + "/studio.zip"
   download_to(url, archive)
   say("Extracting LunaPack Studio into " + dir)

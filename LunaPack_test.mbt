@@ -299,7 +299,7 @@ async test "pack produces a manifest that round-trips" {
   let src = scratch_dir("lunapack_src")
   defer drop_scratch(src)
   @fs.write_text(src + "/hello.txt", "hello")
-  @fs.mkdir(src + "/sub", recursive=true, allow_exist=true)
+  @fs.mkdir(src + "/sub", recursive=true, allow_existing=true)
   @fs.write_text(src + "/sub/nested.txt", "nested")
   let outdir = scratch_dir("lunapack_out")
   defer drop_scratch(outdir)
@@ -348,7 +348,7 @@ async test "unpack restores the original tree" {
   let src = scratch_dir("lunapack_src")
   defer drop_scratch(src)
   @fs.write_text(src + "/hello.txt", "hello")
-  @fs.mkdir(src + "/sub", recursive=true, allow_exist=true)
+  @fs.mkdir(src + "/sub", recursive=true, allow_existing=true)
   @fs.write_text(src + "/sub/nested.txt", "nested")
   let outdir = scratch_dir("lunapack_out")
   defer drop_scratch(outdir)
@@ -705,7 +705,7 @@ async test "a folder that is not there is removed without an error" {
   // Removing a folder that was never there is fine.
   @LunaPack.remove_dir(missing)
   // And removing one that is there takes everything below it with it.
-  @fs.mkdir(missing + "/deep", recursive=true, allow_exist=true)
+  @fs.mkdir(missing + "/deep", recursive=true, allow_existing=true)
   @fs.write_text(missing + "/deep/file.txt", "content")
   @LunaPack.remove_dir(missing)
   assert_true(!@fs.exists(missing))

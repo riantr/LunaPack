@@ -52,21 +52,35 @@ You can browse and install extra skills here:
   `moon coverage analyze > uncovered.log` to see which parts of your code are
   not covered by tests.
 
-## Toolchain version is pinned in CI
+## The toolchain moves, and CI follows it
 
 Both workflows read `vars.MOONBIT_VERSION` and pass it to the installer as
-`MOONBIT_INSTALL_VERSION`. The repository variable is set to `0.1.20261102`,
-the toolchain every number in `runtime/README.md` was measured on. Leave it
-empty and CI installs whatever released that morning; that is how the
-`moonbitlang/core/async` API moved under us on 2026-11-19 (`mkdir` lost
-`allow_exist`, `File.write_at` and `File.read_exactly_at` were renamed,
-`MessageBody.close` was dropped) and turned four legs red on a commit that
-only touched `runtime/`.
+`MOONBIT_INSTALL_VERSION`. The variable is empty, which means CI installs
+whatever the current release is. That is deliberate: `cli.moonbitlang.com`
+only serves `latest` and `nightly` as aliases, so there is no immutable
+version string to pin to. A `MOONBIT_VERSION` set to a dated build such as
+`0.1.20261102` fails the install step with HTTP 403 — that build is no longer
+hosted.
 
-Bumping the pin is a migration, not a one-line change: run `moon check
---target native` and `moon test --target native` locally with the new
-toolchain, fix the async API call sites, then update the variable. Do not
-bump it in the same push as a feature.
+The consequence is that a `moonbitlang/core` API change lands on this
+repository without warning. On 2026-11-19 that turned four legs red on a
+commit that only touched `runtime/`, because `async` moved:
+
+| Before | After |
+| --- | --- |
+| `@fs.mkdir(p, allow_exist=true)` | `allow_existing=true` |
+| `file.read_exactly_at(n, position=p)` | `file.at(p).read_exactly(n)` |
+| `file.write_at(b, position=p)` | `file.at(p).write(b)` |
+| `@fs.rmdir(...)` | `@fs.remove(...)` (rmdir is a deprecated alias) |
+| `UInt32::trunc_double(d)` | `d.to_uint()` |
+| `@http.get(...)` returning a connection | `@http.get_stream(...)`; plain `get` returns a buffered `MessageBody` |
+| exhaustive `match @async_rt.platform` | `Platform` is `#non_exhaustive`, needs a `_ =>` arm |
+
+`AGENTS.md` is where that list lives so the next one is a checklist instead
+of an archaeology session. When CI goes red on files you did not touch, run
+`moon check --target native` locally first: the local toolchain is the same
+`latest` that CI just installed once you reinstall, and the error names the
+method that moved.
 
 ## Errors and the published interface
 

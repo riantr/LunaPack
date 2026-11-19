@@ -112,7 +112,7 @@ pub async fn extract_zip(data : Bytes, dest : String) -> Unit {
   if entries.length() == 0 {
     fail("the downloaded Studio archive contains no files")
   }
-  @fs.mkdir(dest, recursive=true, allow_exist=true)
+  @fs.mkdir(dest, recursive=true, allow_existing=true)
   for e in entries {
     let name = normalized_zip_name(e.name)
     if !safe_zip_name(name) {
@@ -125,7 +125,7 @@ pub async fn extract_zip(data : Bytes, dest : String) -> Unit {
       // A trailing slash makes some runtimes report NotFound for the last
       // component. The directory itself is the same path without it.
       let trimmed = name[:name.length() - 1].to_owned()
-      @fs.mkdir(dest + "/" + trimmed, recursive=true, allow_exist=true)
+      @fs.mkdir(dest + "/" + trimmed, recursive=true, allow_existing=true)
       continue
     }
     let lh = e.local_off

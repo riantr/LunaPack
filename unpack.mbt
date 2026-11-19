@@ -89,7 +89,7 @@ async fn carries_marker(file : @fs.File) -> Bool {
   if file.size() < 8 {
     return false
   }
-  has_marker(file.read_exactly_at(8, position=0))
+  has_marker(file.at(0L).read_exactly(8))
 }
 
 ///|
@@ -105,19 +105,17 @@ async fn find_integrity(
   moff : Int64,
 ) -> Integrity {
   if moff >= INTEGRITY_BLOCK_BYTES_ENCRYPTED.to_int64() + 8L {
-    let block = file.read_exactly_at(
-      INTEGRITY_BLOCK_BYTES_ENCRYPTED,
-      position=base + moff - INTEGRITY_BLOCK_BYTES_ENCRYPTED.to_int64(),
-    )
+    let block = file
+      .at(base + moff - INTEGRITY_BLOCK_BYTES_ENCRYPTED.to_int64())
+      .read_exactly(INTEGRITY_BLOCK_BYTES_ENCRYPTED)
     if is_integrity_block_encrypted(block) {
       return Sealed(block)
     }
   }
   if moff >= INTEGRITY_BLOCK_BYTES.to_int64() + 8L {
-    let block = file.read_exactly_at(
-      INTEGRITY_BLOCK_BYTES,
-      position=base + moff - INTEGRITY_BLOCK_BYTES.to_int64(),
-    )
+    let block = file
+      .at(base + moff - INTEGRITY_BLOCK_BYTES.to_int64())
+      .read_exactly(INTEGRITY_BLOCK_BYTES)
     if is_integrity_block(block) {
       return Plain(block)
     }
@@ -141,7 +139,7 @@ async fn read_archive(file : @fs.File) -> Archive {
     }
     fail("not a LunaPack file (too small)")
   }
-  let footer = file.read_exactly_at(24, position=total - 24)
+  let footer = file.at(total - 24L).read_exactly(24)
   if !has_marker(footer) {
     if carries_marker(file) {
       fail(
@@ -163,11 +161,11 @@ async fn read_archive(file : @fs.File) -> Archive {
     fail("not a LunaPack file (bad footer)")
   }
   // The archive must start with the magic as well.
-  let head = file.read_exactly_at(8, position=base)
+  let head = file.at(base).read_exactly(8)
   if !has_marker(head) {
     fail("not a LunaPack file (bad magic)")
   }
-  let mbytes = file.read_exactly_at(mlen.to_int(), position=base + moff)
+  let mbytes = file.at(base + moff).read_exactly(mlen.to_int())
   let manifest = json_to_manifest(utf8_bytes_to_string(mbytes))
   let integrity = find_integrity(file, base, moff)
   {
@@ -360,7 +358,7 @@ pub async fn probe_archive(path : String) -> (Int64, Manifest)? {
     }
     return None
   }
-  let footer = file.read_exactly_at(24, position=total - 24)
+  let footer = file.at(total - 24L).read_exactly(24)
   if !has_marker(footer) {
     if carries_marker(file) {
       fail(
@@ -403,10 +401,7 @@ async fn entry_payload(
   index : Int32,
   key : PackageKey?,
 ) -> Bytes {
-  let stored = file.read_exactly_at(
-    e.stored_size.to_int(),
-    position=base + e.offset,
-  )
+  let stored = file.at(base + e.offset).read_exactly(e.stored_size.to_int())
   let plain = match key {
     Some(k) =>
       match open_entry(k, index, e.path, stored) {
@@ -579,7 +574,7 @@ async fn extract_to_reporting(
   report : ((Int32, Int64, Int64, String) -> Unit)?,
 ) -> Unit {
   let dest = norm_sep(dest)
-  @fs.mkdir(dest, recursive=true, allow_exist=true)
+  @fs.mkdir(dest, recursive=true, allow_existing=true)
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
   let archive = read_archive(file)
@@ -658,7 +653,7 @@ async fn unpack_reporting(
   report : ((Int32, Int64, Int64, String) -> Unit)?,
 ) -> Unit {
   let dest = norm_sep(dest)
-  @fs.mkdir(dest, recursive=true, allow_exist=true)
+  @fs.mkdir(dest, recursive=true, allow_existing=true)
   let file = @fs.open(pkg, mode=@fs.Mode::ReadOnly)
   defer file.close()
   let archive = read_archive(file)
@@ -817,6 +812,6 @@ async fn mkdir_parent(dest : String, rel : String) -> Unit {
   if i > 0 {
     let dir_rel = rel[:i].to_owned()
     let d = dest + "/" + dir_rel
-    @fs.mkdir(d, recursive=true, allow_exist=true)
+    @fs.mkdir(d, recursive=true, allow_existing=true)
   }
 }

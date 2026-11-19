@@ -531,6 +531,6 @@ pub async fn set_pe_subsystem(path : String, subsystem : Int32) -> Bool {
   let bytes = FixedArray::make(2, b'\x00')
   bytes[0] = (subsystem & 0xff).to_byte()
   bytes[1] = ((subsystem >> 8) & 0xff).to_byte()
-  out.write_at(Bytes::from_array(bytes[:]), position=at)
+  out.at(at).write(Bytes::from_array(bytes[:]))
   true
 }

@@ -19,6 +19,9 @@ pub fn host_platform() -> String {
     Linux => "linux"
     MacOS => "macos"
     Windows => "windows"
+    // Platform is `#non_exhaustive`, so a future target has to be named
+    // rather than break the build.
+    _ => "unknown"
   }
 }
 
@@ -133,7 +136,7 @@ pub async fn ensure_parent_dir(path : String) -> Unit {
   // The parent of a path at the root of a drive is the drive itself, and
   // that exists already; creating it would fail.
   if parent != "" && !@fs.exists(parent) {
-    @fs.mkdir(parent, recursive=true, allow_exist=true)
+    @fs.mkdir(parent, recursive=true, allow_existing=true)
   }
 }
 

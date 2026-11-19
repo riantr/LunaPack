@@ -86,14 +86,14 @@ pub fn xxhash32(
   } else {
     h = seed + XH_P5
   }
-  h = h + UInt32::trunc_double((end - start).to_double())
+  h = h + (end - start).to_double().to_uint()
   while p + 4 <= end {
     h = h + read_le32(data, p) * XH_P3
     h = xxh_rotl(h, 17) * XH_P4
     p = p + 4
   }
   while p < end {
-    h = h + UInt32::trunc_double(data.at(p).to_double()) * XH_P5
+    h = h + data.at(p).to_double().to_uint() * XH_P5
     h = xxh_rotl(h, 11) * XH_P1
     p = p + 1
   }

@@ -28,7 +28,7 @@ async fn scratch_dir(prefix : String) -> String {
 /// that is left behind because the test was cancelled is exactly the pile of
 /// scratch this is here to avoid.
 async fn drop_scratch(dir : String) -> Unit nocancel {
-  @fs.rmdir(dir, recursive=true, allow_missing=true) catch {
+  @fs.remove(dir, recursive=true, allow_missing=true) catch {
     _ => ()
   }
 }

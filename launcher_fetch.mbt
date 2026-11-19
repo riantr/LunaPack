@@ -104,7 +104,7 @@ async fn resolve_launcher(flags : Array[Flag]) -> String {
 /// printed before and after it so the wait is explained rather than silent.
 async fn download_launcher() -> String {
   let dir = launcher_dir()
-  @fs.mkdir(dir, recursive=true, allow_exist=true)
+  @fs.mkdir(dir, recursive=true, allow_existing=true)
   let asset = launcher_asset_name()
   let path = dir + "/" + asset
   // A launcher downloaded before is reused: re-downloading on every `bundle`

@@ -907,7 +907,7 @@ async fn path_exists(path : String) -> Bool {
 async fn writable_dir(path : String) -> Bool {
   // The cache holds the payload of the bundle, and only the user who owns
   // it has any business in it.
-  @fs.mkdir(path, recursive=true, allow_exist=true, permission=0o700) catch {
+  @fs.mkdir(path, recursive=true, allow_existing=true, permission=0o700) catch {
     _ => return false
   }
   true
@@ -1014,7 +1014,7 @@ async fn extract_to_cache(
   // result is not known here.
   let staging = dir + ".staging"
   remove_dir(staging)
-  @fs.mkdir(staging, recursive=true, allow_exist=true, permission=0o700)
+  @fs.mkdir(staging, recursive=true, allow_existing=true, permission=0o700)
   try {
     extract_to_reporting(pkg, staging, key, unpack_report)
     @fs.write_text(staging + "/.lunapack-complete", "ok")
@@ -1060,7 +1060,7 @@ async fn accept_cache_reporting(
 /// Remove the folder at `path` and everything below it, whether it is there
 /// or not.
 ///
-/// `@fs.rmdir` takes `allow_missing`, but the flag only covers the removal of
+/// `@fs.remove` takes `allow_missing`, but the flag only covers the removal of
 /// the folder itself: a recursive removal opens the folder first, and that
 /// fails when there is none. So the folder is looked at before it is
 /// removed.
@@ -1068,7 +1068,7 @@ pub async fn remove_dir(path : String) -> Unit {
   if !path_exists(path) {
     return
   }
-  @fs.rmdir(path, recursive=true, allow_missing=true) catch {
+  @fs.remove(path, recursive=true, allow_missing=true) catch {
     _ => ()
   }
 }
