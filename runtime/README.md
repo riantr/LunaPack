@@ -154,6 +154,11 @@ inside a DLL is not initialized by the OS loader.
 | `lp_*_w` / `lp_*` | The 12 Win32 thunks. |
 | `lp_nt_create_file`, `lp_nt_open_file`, `lp_nt_read_file`, `lp_nt_close` | L2.3 native file API thunks, reached through static ntdll IAT slots or the hooked `GetProcAddress`. |
 | `lp_virt_ntdll_stats` | Current ntdll-boundary hit count. |
+| `lp_create_process_w`, `lp_create_process_a` | L4.1: start a program under the virtual layer by redirecting the request into the launcher. Inert unless a bootstrap path is set. |
+| `lp_set_bootstrap_path` | L4.1: record the launcher's own path (and put it in `LUNAPACK_BOOTSTRAP`). Called by the launcher on itself. |
+| `lp_import_inherited_state` | L4.2: open the section named in `LUNAPACK_VFS_SECTION` and replace the virtual tree with its contents. Returns 0 imported, 1 nothing to import, 2-5 specific failures. |
+| `lp_proc_stats` | L4: `[redirects, failures, sections_kept_open, last_error]`. |
+| `lp_vfs_export` / `lp_vfs_import` | L4.2 serialization of the whole tree (files + metadata + dirs + aliases + cwd + temp path + registry) as a self-describing blob. |
 
 ## Limits — read these before treating this as production code
 
@@ -198,6 +203,16 @@ inside a DLL is not initialized by the OS loader.
   **not** rewrite ntdll code, kernel32/KernelBase internals, or issue direct
   syscalls; programs that obtain the Win32 API outside our IAT/GPA hooks still
   bypass the runtime. Inline hooking remains a separate AV-gated decision.
+- **Child processes follow, but only through this hook (L4).** A program that
+  calls `CreateProcessW`/`CreateProcessA` is redirected into the launcher, the
+  virtual tree is carried in a named shared section, and a grandchild follows
+  the same way — verified as a three-level chain. **Not** covered:
+  `CreateProcessAsUserW`, `CreateProcessWithTokenW`, `CreateProcessWithLogonW`
+  and `ShellExecute*`, so a launch that passes its own token leaves the virtual
+  layer. Each spawn keeps one section handle open for the life of the process.
+  A mapped image's `GetCommandLineW` and CRT `argv` still describe the launcher,
+  not the image, because the PEB belongs to the process — PEB fidelity is L6
+  work.
 - **AV behaviour is measured, not assumed.** On the development machine
   (Huorong), the P0 remote-injection experiment was quarantined 11 times as
   `HVM:Trojan/Injector.gen!A`; this in-process runtime, including the manual

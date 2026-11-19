@@ -894,6 +894,9 @@ pub fn lp_virt_reset() -> Unit {
   g_runtime.detach_bases = []
   g_runtime.detach_order_violations = 0
   g_runtime.eh_table = 0L
+  g_runtime.child_redirects = 0
+  g_runtime.child_failures = 0
+  g_runtime.child_last_error = 0
 }
 
 ///|

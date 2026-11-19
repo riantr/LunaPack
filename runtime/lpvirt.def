@@ -61,3 +61,11 @@ EXPORTS
   lp_get_tls_callbacks
   lp_register_eh
   lp_unregister_eh
+  lp_create_process_w
+  lp_create_process_a
+  lp_set_bootstrap_path
+  lp_import_inherited_state
+  lp_proc_stats
+  lp_vfs_export_size
+  lp_vfs_export
+  lp_vfs_import

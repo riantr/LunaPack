@@ -145,6 +145,9 @@ $ordObj = Join-Path $distDir 'pe_ordinal_consumer.obj'
 $ordExe = Join-Path $distDir 'pe_ordinal_consumer.exe'
 $xpSrc = Join-Path $runtimeDir 'tests\pe_export_probe.c'
 $xpExe = Join-Path $distDir 'pe_export_probe.exe'
+$spawnSrc = Join-Path $runtimeDir 'tests\spawn_chain.c'
+$spawnObj = Join-Path $distDir 'spawn_chain.obj'
+$spawnExe = Join-Path $distDir 'spawn_chain.exe'
 Write-Host '==> compile mini_target.exe (no CRT, /ENTRY:mini_main)'
 & $clExe /nologo /c /GS- "/Fo:$miniObj" "$miniSrc"
 Assert-Ok 'cl mini_exe.c'
@@ -181,6 +184,12 @@ Assert-Ok 'link pe_ordinal_consumer.exe'
 Write-Host '==> compile pe_export_probe.exe (L3 forwarded-export probe)'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$xpExe" "$xpSrc" /link kernel32.lib
 Assert-Ok 'cl pe_export_probe.exe'
+Write-Host '==> compile spawn_chain.exe (L4 child-following chain, /ENTRY:spawn_main)'
+& $clExe /nologo /c /GS- "/Fo:$spawnObj" "$spawnSrc"
+Assert-Ok 'cl spawn_chain.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:spawn_main /NODEFAULTLIB `
+  "/OUT:$spawnExe" "$spawnObj" kernel32.lib
+Assert-Ok 'link spawn_chain.exe'
 Write-Host '==> compile crt_target.exe (CRT diagnostic, /SUBSYSTEM:CONSOLE)'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$crtExe" "$crtSrc" /link kernel32.lib
 Assert-Ok 'cl crt_target.exe'

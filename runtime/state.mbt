@@ -30,6 +30,16 @@ struct RuntimeState {
   mut detach_order_violations : Int32
   // L3.4: exception table registered with the kernel for the mapped image.
   mut eh_table : Int64
+  // L4.1: the launcher's own path. When set, a program that starts another
+  // program is redirected to it instead of escaping the virtual tree. Empty
+  // means the redirect is off, which is the case for a plain host.
+  mut bootstrap_path : String
+  mut child_redirects : Int32
+  mut child_failures : Int32
+  mut child_last_error : Int32
+  // L4.2: one handle per published state section, kept open because the child
+  // opens the section by name.
+  sections : Array[Int64]
 }
 
 ///|
@@ -48,6 +58,11 @@ let g_runtime : RuntimeState = {
   detach_bases: [],
   detach_order_violations: 0,
   eh_table: 0L,
+  bootstrap_path: "",
+  child_redirects: 0,
+  child_failures: 0,
+  child_last_error: 0,
+  sections: [],
 }
 
 ///|
@@ -155,6 +170,11 @@ fn hook_table() -> Array[(String, String)] {
     ("NtOpenFile", "lp_nt_open_file"),
     ("NtReadFile", "lp_nt_read_file"),
     ("NtClose", "lp_nt_close"),
+    // L4.1: a program that starts another program is redirected to the
+    // launcher, so the child is virtualized too. Inert unless the launcher has
+    // recorded its own path in LUNAPACK_BOOTSTRAP.
+    ("CreateProcessW", "lp_create_process_w"),
+    ("CreateProcessA", "lp_create_process_a"),
   ]
 }
 

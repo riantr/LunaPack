@@ -26,11 +26,17 @@ pub const MAP_TRUNCATED : Int32 = 4
 
 pub fn install_iat_hooks(Int64) -> Int32
 
+pub fn lp_create_process_a(Int64, Int64, Int64, Int64, Int32, Int32, Int64, Int64, Int64, Int64) -> Int32
+
+pub fn lp_create_process_w(Int64, Int64, Int64, Int64, Int32, Int32, Int64, Int64, Int64, Int64) -> Int32
+
 pub fn lp_get_entry(Int64) -> Int64
 
 pub fn lp_get_export(Int64, Int64) -> Int64
 
 pub fn lp_get_tls_callbacks(Int64) -> Int64
+
+pub fn lp_import_inherited_state() -> Int32
 
 pub fn lp_map_error() -> Int32
 
@@ -48,11 +54,21 @@ pub fn lp_nt_open_file(Int64, Int32, Int64, Int64, Int32, Int32) -> Int32
 
 pub fn lp_nt_read_file(Int64, Int64, Int64, Int64, Int64, Int64, Int32, Int64, Int64) -> Int32
 
+pub fn lp_proc_stats(Int64, Int32) -> Int32
+
 pub fn lp_register_eh(Int64) -> Int32
+
+pub fn lp_set_bootstrap_path(Int64) -> Int32
 
 pub fn lp_unmap_image(Int64) -> Int32
 
 pub fn lp_unregister_eh(Int64) -> Int32
+
+pub fn lp_vfs_export(Int64, Int32) -> Int32
+
+pub fn lp_vfs_export_size() -> Int32
+
+pub fn lp_vfs_import(Int64, Int32) -> Int32
 
 pub fn lp_virt_add_alias(Int64, Int64) -> Int32
 
@@ -224,9 +240,11 @@ pub fn Vfs::close(Self, Int64) -> Bool
 pub fn Vfs::close_find(Self, Int64) -> Bool
 pub fn Vfs::create_file(Self, String, Int32, Int32) -> CreateResult
 pub fn Vfs::delete_file(Self, String) -> Bool
+pub fn Vfs::export_blob(Self, VirtualRegistry) -> Bytes
 pub fn Vfs::file_info(Self, Int64) -> FileInfo?
 pub fn Vfs::find_first(Self, String) -> (Int64, String)?
 pub fn Vfs::find_next(Self, Int64) -> String?
+pub fn Vfs::import_blob(Self, VirtualRegistry, Bytes) -> Bool
 pub fn Vfs::is_find_handle(Self, Int64) -> Bool
 pub fn Vfs::new() -> Self
 pub fn Vfs::note_create(Self) -> Unit

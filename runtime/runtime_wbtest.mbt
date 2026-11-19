@@ -581,3 +581,89 @@ test "L3.4 TLS and exception directory readers detect declared dirs" {
   assert_true(!has_tls_directory(plain))
   assert_true(eh_function_count(plain) == 0)
 }
+
+// --- L4.2: virtual tree serialization round-trip ---
+
+///|
+test "a blob round-trips files, metadata, directories and the registry" {
+  let a = Vfs::new()
+  let ra = VirtualRegistry::new()
+  a.add_file("C:/virt/hello.txt", ascii_bytes("CHILD-VIRTUAL-FS-OK"))
+  a.add_file("C:/virt/sub/note.txt", ascii_bytes("note"))
+  a.set_cwd("C:/virt")
+  a.temp_path = "C:/virt/tmp"
+  a.add_alias("C:/virt/HELLO~1.TXT", "C:/virt/hello.txt")
+  ignore(
+    ra.set_value(
+      0x80000002L,
+      "Software/LunaPack",
+      "Name",
+      1,
+      ascii_bytes("LunaPack"),
+    ),
+  )
+  ignore(ra.set_value(0x80000002L, "Software/LunaPack", "Count", 4, u32le(7L)))
+
+  let blob = a.export_blob(ra)
+  assert_true(blob.length() > 16)
+
+  let b = Vfs::new()
+  let rb = VirtualRegistry::new()
+  assert_true(b.import_blob(rb, blob))
+  // whatever normalization produced, the round trip preserves it exactly
+  assert_true(b.cwd == a.cwd)
+  assert_true(b.temp_path == a.temp_path)
+  match b.open("C:/virt/hello.txt") {
+    Some(h) =>
+      match b.read(h, 64) {
+        Some(d) => assert_true(bytes_to_ascii(d) == "CHILD-VIRTUAL-FS-OK")
+        None => assert_true(false)
+      }
+    None => assert_true(false)
+  }
+  assert_true(b.path_info("C:/virt/sub/note.txt") is Some(_))
+  // metadata survives: same number of entries, and they are still writable
+  let bm = b.meta.to_array()
+  assert_true(bm.length() == a.meta.to_array().length())
+  assert_true(bm[0].1.writable)
+  // every alias survives, key and target
+  let aa = a.aliases.to_array()
+  assert_true(aa.length() > 0)
+  for i = 0; i < aa.length(); i = i + 1 {
+    let (short, long) = aa[i]
+    assert_true(b.aliases.get(short) == Some(long))
+  }
+  // registry values survive with their type
+  match rb.open_key(0x80000002L, "Software/LunaPack") {
+    Some(k) =>
+      match rb.query_value(k, "Name") {
+        Some(v) => {
+          assert_true(v.typ == 1)
+          assert_true(bytes_to_ascii(v.data) == "LunaPack")
+        }
+        None => assert_true(false)
+      }
+    None => assert_true(false)
+  }
+}
+
+///|
+test "a damaged blob is refused and leaves the tree alone" {
+  let a = Vfs::new()
+  a.add_file("C:/virt/keep.txt", ascii_bytes("keep"))
+  let blob = a.export_blob(VirtualRegistry::new())
+  let short = bytes_slice(blob, 0, blob.length() - 5)
+  let b = Vfs::new()
+  b.add_file("C:/other/mine.txt", ascii_bytes("mine"))
+  assert_true(!b.import_blob(VirtualRegistry::new(), short))
+  // the destination was not touched
+  assert_true(b.path_info("C:/other/mine.txt") is Some(_))
+  assert_true(b.path_info("C:/virt/keep.txt") is None)
+  // a blob with the wrong magic is refused too
+  assert_true(
+    !b.import_blob(
+      VirtualRegistry::new(),
+      ascii_bytes("not a lunapack blob at all"),
+    ),
+  )
+}

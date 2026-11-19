@@ -39,6 +39,9 @@ typedef int (*entry_fn)(void);
 typedef int (*exit_query_fn)(int64_t);
 typedef int (*set_temp_fn)(int64_t);
 typedef int (*lifecycle_stats_fn)(int32_t *, int);
+typedef int (*import_state_fn)(void);
+typedef int (*set_bootstrap_fn)(const wchar_t *);
+typedef int (*proc_stats_fn)(int32_t *, int);
 
 #define GET(h, name, type) (type)(void *)GetProcAddress(h, name)
 
@@ -58,14 +61,80 @@ static void join(char *out, size_t cap, const char *dir, const char *name) {
   _snprintf_s(out, cap, _TRUNCATE, "%s\\%s", dir, name);
 }
 
+/* The launcher can be started two ways:
+ *   launcher.exe <dir> <target.exe>     - a person, or the CLI
+ *   launcher.exe                        - by a virtualized parent through the
+ *                                         CreateProcess redirect, with the
+ *                                         program and the state in the
+ *                                         environment
+ * The second form has to find <dir> by itself, so it asks Windows where it is. */
+static int own_dir(char *out, size_t cap) {
+  wchar_t w[MAX_PATH];
+  DWORD n = GetModuleFileNameW(NULL, w, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH) return 0;
+  char a[MAX_PATH];
+  int m = WideCharToMultiByte(CP_ACP, 0, w, -1, a, MAX_PATH, NULL, NULL);
+  if (m <= 0) return 0;
+  for (int i = m - 2; i >= 0; i--) {
+    if (a[i] == '\\' || a[i] == '/') {
+      a[i] = 0;
+      strncpy_s(out, cap, a, _TRUNCATE);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* The program a virtualized parent asked for. Quotes are stripped; a command
+ * line with arguments keeps only the first token, because that is the image. */
+static int child_target(char *out, size_t cap) {
+  char cmd[MAX_PATH * 2];
+  DWORD n = GetEnvironmentVariableA("LUNAPACK_CHILD_CMD", cmd, sizeof(cmd));
+  if (n == 0 || n >= sizeof(cmd)) return 0;
+  char *s = cmd;
+  while (*s == ' ' || *s == '\t') s++;
+  char *e;
+  if (*s == '"') {
+    s++;
+    e = strchr(s, '"');
+    if (!e) e = s + strlen(s);
+  } else {
+    e = s;
+    while (*e && *e != ' ' && *e != '\t') e++;
+  }
+  size_t len = (size_t)(e - s);
+  if (len == 0 || len >= cap) return 0;
+  memcpy(out, s, len);
+  out[len] = 0;
+  return 1;
+}
+
 int main(int argc, char **argv) {
-  if (argc < 3) {
+  char dir_buf[MAX_PATH];
+  char target_buf[MAX_PATH];
+  const char *dir = NULL;
+  const char *target = NULL;
+  int consume = 0, use_thread = 0;
+  if (argc >= 3) {
+    dir = argv[1];
+    target = argv[2];
+  } else {
+    if (!own_dir(dir_buf, sizeof(dir_buf))) {
+      printf("usage: launcher.exe <dir> <target.exe> [--consume] [--thread]\n");
+      return 2;
+    }
+    dir = dir_buf;
+  }
+  /* A virtualized parent names the program in the environment; that wins over
+     an argument, because the launcher was started by the redirect. */
+  if (child_target(target_buf, sizeof(target_buf))) {
+    target = target_buf;
+    printf("child mode: parent asked for %s\n", target);
+  }
+  if (target == NULL) {
     printf("usage: launcher.exe <dir> <target.exe> [--consume] [--thread]\n");
     return 2;
   }
-  const char *dir = argv[1];
-  const char *target = argv[2];
-  int consume = 0, use_thread = 0;
   for (int i = 3; i < argc; i++) {
     if (strcmp(argv[i], "--consume") == 0) consume = 1;
     if (strcmp(argv[i], "--thread") == 0) use_thread = 1;
@@ -91,21 +160,42 @@ int main(int argc, char **argv) {
   exit_query_fn exit_query = GET(virt, "lp_virt_exit_query", exit_query_fn);
   set_temp_fn set_temp = GET(virt, "lp_virt_set_temp_path", set_temp_fn);
   lifecycle_stats_fn lifecycle = GET(virt, "lp_virt_lifecycle_stats", lifecycle_stats_fn);
+  import_state_fn import_state = GET(virt, "lp_import_inherited_state", import_state_fn);
+  set_bootstrap_fn set_bootstrap = GET(virt, "lp_set_bootstrap_path", set_bootstrap_fn);
+  proc_stats_fn proc_stats = GET(virt, "lp_proc_stats", proc_stats_fn);
   if (!init || !reset || !add_file || !install || !stats || !map_image ||
       !map_error || !get_entry || !unmap_image || !exit_query || !set_temp ||
-      !lifecycle) {
+      !lifecycle || !import_state || !set_bootstrap || !proc_stats) {
     printf("MISSING EXPORT in lpvirt.dll\n");
     return 1;
   }
 
   init();
   reset();
-  /* Spike seed: in L6 this comes from the signed virtual archive. */
-  add_file(L"C:\\virt\\hello.txt", "VIRTUAL-FS-OK", 13);
-  add_file(L"C:\\virt\\ansi.txt", "ANSI", 4);
-  add_file(L"C:\\cfg\\seed.txt", "SEED", 4);
-  set_temp(L"C:\\virt\\tmp");
-  printf("seeded virtual files: 3 + temp path\n");
+  /* L4.2: a launcher started by a virtualized parent imports the tree that
+     parent published. A launcher started by a person seeds the spike fixture,
+     which in L6 comes from the signed virtual archive. */
+  int inherited = import_state();
+  if (inherited == 0) {
+    printf("inherited virtual tree from parent: YES\n");
+  } else {
+    printf("inherited virtual tree from parent: NO (code=%d)\n", inherited);
+    add_file(L"C:\\virt\\hello.txt", "VIRTUAL-FS-OK", 13);
+    add_file(L"C:\\virt\\ansi.txt", "ANSI", 4);
+    add_file(L"C:\\cfg\\seed.txt", "SEED", 4);
+    set_temp(L"C:\\virt\\tmp");
+    printf("seeded virtual files: 3 + temp path\n");
+  }
+  /* L4.1: record our own path so that a program we run is redirected back
+     into this launcher instead of escaping the virtual tree. */
+  {
+    wchar_t self[MAX_PATH];
+    DWORD sn = GetModuleFileNameW(NULL, self, MAX_PATH);
+    if (sn > 0 && sn < MAX_PATH) {
+      int st = set_bootstrap(self);
+      printf("bootstrap armed: %s\n", st == 0 ? "YES" : "NO");
+    }
+  }
 
   FILE *tf = fopen(target, "rb");
   if (!tf) {
@@ -193,6 +283,13 @@ int main(int argc, char **argv) {
   lifecycle(life, 20);
   printf("hook lifecycle: mapped=%ld loaded=%ld attach=%ld detach=%ld violations=%ld\n",
          (long)life[0], (long)life[1], (long)life[2], (long)life[3], (long)life[4]);
+
+  /* L4.1: how many programs this process redirected back into the launcher.
+     Layout: redirects, failures, sections kept open, last error. */
+  int32_t proc[4] = {0};
+  proc_stats(proc, 16);
+  printf("child follow: redirects=%ld failures=%ld sections=%ld lasterr=%ld\n",
+         (long)proc[0], (long)proc[1], (long)proc[2], (long)proc[3]);
 
   unmap_image(base);
   free(image);
