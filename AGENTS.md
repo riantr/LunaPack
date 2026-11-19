@@ -52,6 +52,22 @@ You can browse and install extra skills here:
   `moon coverage analyze > uncovered.log` to see which parts of your code are
   not covered by tests.
 
+## Toolchain version is pinned in CI
+
+Both workflows read `vars.MOONBIT_VERSION` and pass it to the installer as
+`MOONBIT_INSTALL_VERSION`. The repository variable is set to `0.1.20261102`,
+the toolchain every number in `runtime/README.md` was measured on. Leave it
+empty and CI installs whatever released that morning; that is how the
+`moonbitlang/core/async` API moved under us on 2026-11-19 (`mkdir` lost
+`allow_exist`, `File.write_at` and `File.read_exactly_at` were renamed,
+`MessageBody.close` was dropped) and turned four legs red on a commit that
+only touched `runtime/`.
+
+Bumping the pin is a migration, not a one-line change: run `moon check
+--target native` and `moon test --target native` locally with the new
+toolchain, fix the async API call sites, then update the variable. Do not
+bump it in the same push as a feature.
+
 ## Errors and the published interface
 
 MoonBit tracks the error effect and `fail(...)` raises it. A **synchronous**
