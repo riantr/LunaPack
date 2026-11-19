@@ -30,17 +30,53 @@ pub fn lp_get_entry(Int64) -> Int64
 
 pub fn lp_get_export(Int64, Int64) -> Int64
 
+pub fn lp_get_tls_callbacks(Int64) -> Int64
+
 pub fn lp_map_error() -> Int32
 
 pub fn lp_map_image(Int64, Int32) -> Int64
 
+pub fn lp_mapped_attach(Int64) -> Int32
+
+pub fn lp_mapped_detach(Int64) -> Int32
+
+pub fn lp_nt_close(Int64) -> Int32
+
+pub fn lp_nt_create_file(Int64, Int32, Int64, Int64, Int64, Int32, Int32, Int32, Int32, Int64, Int32) -> Int32
+
+pub fn lp_nt_open_file(Int64, Int32, Int64, Int64, Int32, Int32) -> Int32
+
+pub fn lp_nt_read_file(Int64, Int64, Int64, Int64, Int64, Int64, Int32, Int64, Int64) -> Int32
+
+pub fn lp_register_eh(Int64) -> Int32
+
 pub fn lp_unmap_image(Int64) -> Int32
+
+pub fn lp_unregister_eh(Int64) -> Int32
+
+pub fn lp_virt_add_alias(Int64, Int64) -> Int32
 
 pub fn lp_virt_add_file(Int64, Int64, Int32) -> Int32
 
+pub fn lp_virt_exit_query(Int64) -> Int32
+
+pub fn lp_virt_fallback_audit(Int64, Int32) -> Int32
+
+pub fn lp_virt_lifecycle_stats(Int64, Int32) -> Int32
+
+pub fn lp_virt_ntdll_stats() -> Int32
+
+pub fn lp_virt_post_completion(Int64, Int64, Int64) -> Int32
+
 pub fn lp_virt_reset() -> Unit
 
+pub fn lp_virt_set_cwd(Int64) -> Int32
+
+pub fn lp_virt_set_meta(Int64, Int32, Int64, Int64, Int64) -> Int32
+
 pub fn lp_virt_set_reg(Int64, Int64, Int64, Int32, Int64, Int32) -> Int32
+
+pub fn lp_virt_set_temp_path(Int64) -> Int32
 
 pub fn lp_virt_stats(Int64, Int32) -> Int32
 
@@ -48,17 +84,53 @@ pub fn norm_path(String) -> String
 
 pub fn thunk_close_handle(Int64) -> Int32
 
+pub fn thunk_create_file_a(Int64, Int32, Int32, Int64, Int32, Int32, Int64) -> Int64
+
 pub fn thunk_create_file_w(Int64, Int32, Int32, Int64, Int32, Int32, Int64) -> Int64
+
+pub fn thunk_delete_file_a(Int64) -> Int32
+
+pub fn thunk_delete_file_w(Int64) -> Int32
+
+pub fn thunk_exit_process(Int32) -> Unit
+
+pub fn thunk_find_first_file_a(Int64, Int64) -> Int64
 
 pub fn thunk_find_first_file_w(Int64, Int64) -> Int64
 
+pub fn thunk_find_next_file_a(Int64, Int64) -> Int32
+
 pub fn thunk_find_next_file_w(Int64, Int64) -> Int32
 
+pub fn thunk_get_file_attributes_a(Int64) -> Int32
+
+pub fn thunk_get_file_attributes_ex_a(Int64, Int32, Int64) -> Int32
+
+pub fn thunk_get_file_attributes_ex_w(Int64, Int32, Int64) -> Int32
+
 pub fn thunk_get_file_attributes_w(Int64) -> Int32
+
+pub fn thunk_get_file_information_by_handle(Int64, Int64) -> Int32
 
 pub fn thunk_get_file_size_ex(Int64, Int64) -> Int32
 
 pub fn thunk_get_proc_address(Int64, Int64) -> Int64
+
+pub fn thunk_get_queued_completion_status(Int64, Int64, Int64, Int64, Int32) -> Int32
+
+pub fn thunk_get_temp_path_w(Int32, Int64) -> Int32
+
+pub fn thunk_load_library_a(Int64) -> Int64
+
+pub fn thunk_load_library_ex_a(Int64, Int64, Int32) -> Int64
+
+pub fn thunk_load_library_ex_w(Int64, Int64, Int32) -> Int64
+
+pub fn thunk_load_library_w(Int64) -> Int64
+
+pub fn thunk_move_file_ex_a(Int64, Int64, Int32) -> Int32
+
+pub fn thunk_move_file_ex_w(Int64, Int64, Int32) -> Int32
 
 pub fn thunk_read_file(Int64, Int64, Int32, Int64, Int64) -> Int32
 
@@ -70,9 +142,37 @@ pub fn thunk_reg_query_value_ex_w(Int64, Int64, Int64, Int64, Int64, Int64) -> I
 
 pub fn thunk_reg_set_value_ex_w(Int64, Int64, Int64, Int32, Int64, Int32) -> Int32
 
+pub fn thunk_set_file_pointer_ex(Int64, Int64, Int64, Int32) -> Int32
+
+pub fn thunk_write_file(Int64, Int64, Int32, Int64, Int64) -> Int32
+
 // Errors
 
 // Types and methods
+pub struct Completion {
+  key : Int64
+  bytes : Int64
+  overlapped : Int64
+}
+
+pub enum CreateResult {
+  Opened(Int64)
+  NotVirtual
+  Failed(Int32)
+}
+
+type FallbackProbe
+
+pub struct FileInfo {
+  attrs : Int32
+  size : Int64
+  file_id : Int64
+  created : Int64
+  accessed : Int64
+  written : Int64
+  links : Int32
+}
+
 type ImageLayout
 
 pub struct RegValue {
@@ -82,22 +182,49 @@ pub struct RegValue {
 
 type RuntimeState
 
+pub struct VFileMeta {
+  attrs : Int32
+  file_id : Int64
+  created : Int64
+  accessed : Int64
+  written : Int64
+  writable : Bool
+}
+
 pub struct Vfs {
   files : Map[String, Bytes]
+  meta : Map[String, VFileMeta]
   dirs : Map[String, Unit]
+  roots : Map[String, Unit]
   handles : Map[Int64, String]
+  access : Map[Int64, Int32]
   offsets : Map[Int64, Int64]
   find_names : Map[Int64, Array[String]]
   find_index : Map[Int64, Int32]
+  aliases : Map[String, String]
+  completions : Array[Completion]
+  mut cwd : String
+  mut temp_path : String
+  mut completion_head : Int32
   mut next_handle : Int64
+  mut next_file_id : Int64
   mut calls_create : Int32
   mut calls_read : Int32
+  mut calls_write : Int32
+  mut calls_seek : Int32
+  mut calls_delete : Int32
+  mut calls_rename : Int32
+  mut calls_info : Int32
   mut calls_fallback : Int32
 }
+pub fn Vfs::add_alias(Self, String, String) -> Unit
 pub fn Vfs::add_file(Self, String, Bytes) -> Unit
 pub fn Vfs::attributes(Self, String) -> Int32
 pub fn Vfs::close(Self, Int64) -> Bool
 pub fn Vfs::close_find(Self, Int64) -> Bool
+pub fn Vfs::create_file(Self, String, Int32, Int32) -> CreateResult
+pub fn Vfs::delete_file(Self, String) -> Bool
+pub fn Vfs::file_info(Self, Int64) -> FileInfo?
 pub fn Vfs::find_first(Self, String) -> (Int64, String)?
 pub fn Vfs::find_next(Self, Int64) -> String?
 pub fn Vfs::is_find_handle(Self, Int64) -> Bool
@@ -105,8 +232,18 @@ pub fn Vfs::new() -> Self
 pub fn Vfs::note_create(Self) -> Unit
 pub fn Vfs::note_fallback(Self) -> Unit
 pub fn Vfs::open(Self, String) -> Int64?
+pub fn Vfs::path_info(Self, String) -> FileInfo?
+pub fn Vfs::post_completion(Self, Int64, Int64, Int64) -> Unit
 pub fn Vfs::read(Self, Int64, Int32) -> Bytes?
+pub fn Vfs::read_at(Self, Int64, Int32, Int64) -> Bytes?
+pub fn Vfs::rename_file(Self, String, String) -> Bool
+pub fn Vfs::resolve(Self, String) -> String
+pub fn Vfs::seek(Self, Int64, Int64, Int32) -> Int64?
+pub fn Vfs::set_cwd(Self, String) -> Unit
+pub fn Vfs::set_meta(Self, String, Int32, Int64, Int64, Int64) -> Bool
 pub fn Vfs::size(Self, Int64) -> Int64?
+pub fn Vfs::take_completion(Self) -> Completion?
+pub fn Vfs::write_at(Self, Int64, Bytes, Int64?) -> Int32?
 
 pub struct VirtualRegistry {
   values : Map[String, RegValue]

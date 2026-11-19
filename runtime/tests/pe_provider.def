@@ -1,0 +1,4 @@
+LIBRARY pe_provider
+EXPORTS
+  pe_add      @1
+  pe_forward  = kernel32.GetCurrentProcessId

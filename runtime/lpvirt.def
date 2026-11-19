@@ -8,18 +8,56 @@ EXPORTS
   lp_install_iat_hooks
   lp_create_file_w
   lp_read_file
+  lp_write_file
   lp_close_handle
   lp_get_file_attributes_w
+  lp_get_file_attributes_ex_w
   lp_get_file_size_ex
+  lp_get_file_information_by_handle
+  lp_set_file_pointer_ex
+  lp_delete_file_w
+  lp_move_file_ex_w
   lp_find_first_file_w
   lp_find_next_file_w
+  lp_get_queued_completion_status
   lp_reg_open_key_ex_w
   lp_reg_query_value_ex_w
   lp_reg_set_value_ex_w
   lp_reg_close_key
   lp_get_proc_address
+  lp_exit_process
+  lp_virt_exit_query
+  lp_create_file_a
+  lp_get_file_attributes_a
+  lp_get_file_attributes_ex_a
+  lp_find_first_file_a
+  lp_find_next_file_a
+  lp_delete_file_a
+  lp_move_file_ex_a
+  lp_get_temp_path_w
+  lp_load_library_a
+  lp_load_library_w
+  lp_load_library_ex_a
+  lp_load_library_ex_w
+  lp_nt_create_file
+  lp_nt_open_file
+  lp_nt_read_file
+  lp_nt_close
+  lp_virt_ntdll_stats
+  lp_virt_set_temp_path
+  lp_virt_set_meta
+  lp_virt_set_cwd
+  lp_virt_add_alias
+  lp_virt_post_completion
   lp_map_image
   lp_map_error
   lp_get_export
   lp_get_entry
   lp_unmap_image
+  lp_mapped_attach
+  lp_mapped_detach
+  lp_virt_lifecycle_stats
+  lp_virt_fallback_audit
+  lp_get_tls_callbacks
+  lp_register_eh
+  lp_unregister_eh

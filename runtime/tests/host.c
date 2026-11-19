@@ -27,7 +27,11 @@ typedef int64_t (*get_export_fn)(int64_t, const char *);
 typedef int64_t (*get_entry_fn)(int64_t);
 typedef int32_t (*unmap_fn)(int64_t);
 typedef int (*payload_fn)(char *, int);
+typedef int (*post_completion_fn)(int64_t, int64_t, int64_t);
 typedef BOOL (WINAPI *dll_main_fn)(HINSTANCE, DWORD, LPVOID);
+typedef int (*note_base_fn)(int64_t);
+typedef int (*lifecycle_stats_fn)(int32_t *, int);
+typedef int (*fallback_audit_fn)(int32_t *, int);
 
 #define GET(h, name, type) (type)(void *)GetProcAddress(h, name)
 
@@ -59,8 +63,15 @@ int main(int argc, char **argv) {
   get_export_fn get_export = GET(virt, "lp_get_export", get_export_fn);
   get_entry_fn get_entry = GET(virt, "lp_get_entry", get_entry_fn);
   unmap_fn unmap_image = GET(virt, "lp_unmap_image", unmap_fn);
+  post_completion_fn post_completion = GET(virt, "lp_virt_post_completion", post_completion_fn);
+  note_base_fn note_attach = GET(virt, "lp_mapped_attach", note_base_fn);
+  note_base_fn note_detach = GET(virt, "lp_mapped_detach", note_base_fn);
+  lifecycle_stats_fn lifecycle = GET(virt, "lp_virt_lifecycle_stats", lifecycle_stats_fn);
+  fallback_audit_fn fallback_audit = GET(virt, "lp_virt_fallback_audit", fallback_audit_fn);
   if (!init || !reset || !add_file || !set_reg || !install || !stats ||
-      !map_image || !map_error || !get_export || !get_entry || !unmap_image) {
+      !map_image || !map_error || !get_export || !get_entry || !unmap_image ||
+      !post_completion || !note_attach || !note_detach || !lifecycle ||
+      !fallback_audit) {
     printf("MISSING EXPORT in lpvirt.dll\n");
     return 1;
   }
@@ -75,6 +86,10 @@ int main(int argc, char **argv) {
   add_file(L"C:\\virt\\note.txt", "NOTE", 4);
   const char *dyn_data = "DYNAMIC-HOOK-OK";
   add_file(L"C:\\virt\\dynamic.txt", dyn_data, (int)strlen(dyn_data));
+  /* L1: seed a writable configuration directory so OPEN_ALWAYS creates the
+     file in memory, and queue one completion record for the L1 payload. */
+  add_file(L"C:\\cfg\\seed.txt", "SEED", 4);
+  post_completion(4242L, 7L, 0x1234L);
 
   WCHAR product[] = L"LunaPack Virtual FS";
   int seeded = set_reg((int64_t)(intptr_t)HKEY_LOCAL_MACHINE,
@@ -131,12 +146,13 @@ int main(int argc, char **argv) {
   if (entry) {
     dm = (dll_main_fn)(void *)(intptr_t)entry;
     dllmain_ok = dm((HINSTANCE)(intptr_t)base, DLL_PROCESS_ATTACH, NULL) ? 1 : 0;
+    note_attach(base); /* L2.4: record the manual ATTACH for the unmap guard */
   }
   printf("DllMain(DLL_PROCESS_ATTACH): %s\n",
          dllmain_ok == 1 ? "TRUE" : (dllmain_ok == 0 ? "FALSE" : "skipped"));
 
   int patched = install(base);
-  printf("patched IAT slots          : %d (expected 12)\n", patched);
+  printf("patched IAT slots          : %d (expected 12 base + 7 L1)\n", patched);
   if (patched <= 0) { printf("HOOK INSTALL FAILED\n"); return 1; }
 
   int64_t run_addr = get_export(base, "lp_payload_run");
@@ -146,12 +162,21 @@ int main(int argc, char **argv) {
   run(out, (int)sizeof(out));
   printf("--- consumer output ---\n%s------------------------\n", out);
 
-  int32_t s[6] = {0};
-  stats(s, 24);
-  printf("counters: virtual_creates=%ld virtual_reads=%ld fallthroughs=%ld "
-         "reg_queries=%ld patched=%ld dynamic_hits=%ld\n",
+  /* L1 exercise: writable files, handle semantics, metadata, overlapped IO. */
+  int64_t l1_addr = get_export(base, "lp_payload_run_l1");
+  if (!l1_addr) { printf("EXPORT lp_payload_run_l1 NOT FOUND\n"); return 1; }
+  payload_fn run_l1 = (payload_fn)(void *)(intptr_t)l1_addr;
+  char l1out[4096] = {0};
+  run_l1(l1out, (int)sizeof(l1out));
+  printf("--- L1 consumer output ---\n%s------------------------\n", l1out);
+
+  int32_t s[12] = {0};
+  stats(s, 48);
+  printf("counters: creates=%ld reads=%ld fallthroughs=%ld regq=%ld patched=%ld "
+         "dyn=%ld writes=%ld seeks=%ld deletes=%ld renames=%ld infos=%ld comps=%ld\n",
          (long)s[0], (long)s[1], (long)s[2], (long)s[3], (long)s[4],
-         (long)s[5]);
+         (long)s[5], (long)s[6], (long)s[7], (long)s[8], (long)s[9],
+         (long)s[10], (long)s[11]);
 
   /* Prove the HKLM write never touched the real registry. The host's own
      advapi32 calls are NOT hooked. */
@@ -174,9 +199,25 @@ int main(int argc, char **argv) {
      about to release. */
   if (dm) {
     dm((HINSTANCE)(intptr_t)base, DLL_PROCESS_DETACH, NULL);
+    note_detach(base); /* L2.4: DETACH recorded BEFORE unmap */
     printf("DllMain(DLL_PROCESS_DETACH): done\n");
   }
   unmap_image(base);
+
+  /* L2.4: prove both install paths used the one hook table and that the
+     detach-before-unmap ordering held. Layout: mapped,loaded,att,det,viol. */
+  int32_t life[5] = {0};
+  lifecycle(life, 20);
+  printf("hook lifecycle: mapped=%ld loaded=%ld attach=%ld detach=%ld violations=%ld\n",
+         (long)life[0], (long)life[1], (long)life[2], (long)life[3], (long)life[4]);
+
+  /* L2.5: lpvirt.dll's own IAT must still point at the real OS APIs, never at
+     one of our thunks. Layout: thunk_hits,probes,unresolved,status. */
+  int32_t fb[4] = {0};
+  fallback_audit(fb, 16);
+  printf("fallback audit: self_thunk_hits=%ld probes=%ld unresolved=%ld status=%ld\n",
+         (long)fb[0], (long)fb[1], (long)fb[2], (long)fb[3]);
+
   free(image);
   FreeLibrary(virt);
   return 0;

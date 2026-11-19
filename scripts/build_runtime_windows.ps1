@@ -6,11 +6,12 @@
 # which is its own MoonBit module. Steps:
 #   1. check / test / build the runtime static archive with MoonBit
 #   2. link that archive into lpvirt.dll with the MSVC linker
-#   3. compile the two C test doubles and run the end-to-end demo
+#   3. compile the C test doubles and run the end-to-end demo
+#   4. compile the L2.0 thin launcher + no-CRT target EXE and run it
 #
-# -Consume makes the harness delete payload.dll from disk after reading its
-# bytes, before mapping them. That is the zero-disk proof. No security software
-# is disabled or bypassed by this script.
+# -Consume makes each harness delete its target image from disk after reading
+# its bytes, before mapping them. That is the zero-disk proof. No security
+# software is disabled or bypassed by this script.
 
 param(
   [switch]$SkipDemo,
@@ -118,10 +119,90 @@ Write-Host '==> compile host.exe'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$hostExe" "$hostSrc" /link advapi32.lib kernel32.lib
 Assert-Ok 'cl host.exe'
 
-# --------------------------------------------------------------- 5. run demo
+# ------------------------------------------------ 4b. L2.0 thin launcher pair
+$miniSrc = Join-Path $runtimeDir 'tests\mini_exe.c'
+$launcherSrc = Join-Path $runtimeDir 'tests\launcher.c'
+$targetExe = Join-Path $distDir 'mini_target.exe'
+$crtSrc = Join-Path $runtimeDir 'tests\crt_target.c'
+$crtExe = Join-Path $distDir 'crt_target.exe'
+$launcherExe = Join-Path $distDir 'launcher.exe'
+$miniObj = Join-Path $distDir 'mini_exe.obj'
+$dynSrc = Join-Path $runtimeDir 'tests\dynlib.c'
+$dynDll = Join-Path $distDir 'dynlib.dll'
+$ntdllSrc = Join-Path $runtimeDir 'tests\ntdll_target.c'
+$ntdllObj = Join-Path $distDir 'ntdll_target.obj'
+$ntdllExe = Join-Path $distDir 'ntdll_target.exe'
+$fbSrc = Join-Path $runtimeDir 'tests\fallback_target.c'
+$fbObj = Join-Path $distDir 'fallback_target.obj'
+$fbExe = Join-Path $distDir 'fallback_target.exe'
+$provSrc = Join-Path $runtimeDir 'tests\pe_provider.c'
+$provDef = Join-Path $runtimeDir 'tests\pe_provider.def'
+$provDll = Join-Path $distDir 'pe_provider.dll'
+$ordSrc = Join-Path $runtimeDir 'tests\pe_ordinal_consumer.c'
+$ordImpDef = Join-Path $runtimeDir 'tests\pe_ordinal_import.def'
+$ordImpLib = Join-Path $distDir 'pe_ordinal_import.lib'
+$ordObj = Join-Path $distDir 'pe_ordinal_consumer.obj'
+$ordExe = Join-Path $distDir 'pe_ordinal_consumer.exe'
+$xpSrc = Join-Path $runtimeDir 'tests\pe_export_probe.c'
+$xpExe = Join-Path $distDir 'pe_export_probe.exe'
+Write-Host '==> compile mini_target.exe (no CRT, /ENTRY:mini_main)'
+& $clExe /nologo /c /GS- "/Fo:$miniObj" "$miniSrc"
+Assert-Ok 'cl mini_exe.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:mini_main /NODEFAULTLIB `
+  "/OUT:$targetExe" "$miniObj" kernel32.lib
+Assert-Ok 'link mini_target.exe'
+Write-Host '==> compile dynlib.dll (L2.2 runtime-loaded module with virtualized imports)'
+& $clExe /nologo /LD "/Fo:$objDir" "/Fe:$dynDll" "$dynSrc" /link kernel32.lib
+Assert-Ok 'cl dynlib.dll'
+Write-Host '==> compile ntdll_target.exe (L2.3 native API spike, /ENTRY:ntdll_main)'
+& $clExe /nologo /c /GS- "/Fo:$ntdllObj" "$ntdllSrc"
+Assert-Ok 'cl ntdll_target.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:ntdll_main /NODEFAULTLIB `
+  "/OUT:$ntdllExe" "$ntdllObj" kernel32.lib
+Assert-Ok 'link ntdll_target.exe'
+Write-Host '==> compile fallback_target.exe (L2.5 per-category fallback probe, /ENTRY:fb_main)'
+& $clExe /nologo /c /GS- "/Fo:$fbObj" "$fbSrc"
+Assert-Ok 'cl fallback_target.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:fb_main /NODEFAULTLIB `
+  "/OUT:$fbExe" "$fbObj" kernel32.lib advapi32.lib
+Assert-Ok 'link fallback_target.exe'
+Write-Host '==> compile pe_provider.dll (L3 ordinal + forwarded-export fixture)'
+& $clExe /nologo /LD "/Fo:$objDir" "/Fe:$provDll" "$provSrc" /link /DEF:"$provDef" kernel32.lib
+Assert-Ok 'cl pe_provider.dll'
+Write-Host '==> build ordinal import library (NONAME -> ordinal 1)'
+& (Join-Path $binDir 'lib.exe') /nologo /MACHINE:X64 /DEF:"$ordImpDef" "/OUT:$ordImpLib"
+Assert-Ok 'lib pe_ordinal_import'
+Write-Host '==> compile pe_ordinal_consumer.exe (no CRT, imports by ordinal)'
+& $clExe /nologo /c /GS- "/Fo:$ordObj" "$ordSrc"
+Assert-Ok 'cl pe_ordinal_consumer.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:pe_ordinal_main /NODEFAULTLIB `
+  "/OUT:$ordExe" "$ordObj" "$ordImpLib" kernel32.lib
+Assert-Ok 'link pe_ordinal_consumer.exe'
+Write-Host '==> compile pe_export_probe.exe (L3 forwarded-export probe)'
+& $clExe /nologo "/Fo:$objDir" "/Fe:$xpExe" "$xpSrc" /link kernel32.lib
+Assert-Ok 'cl pe_export_probe.exe'
+Write-Host '==> compile crt_target.exe (CRT diagnostic, /SUBSYSTEM:CONSOLE)'
+& $clExe /nologo "/Fo:$objDir" "/Fe:$crtExe" "$crtSrc" /link kernel32.lib
+Assert-Ok 'cl crt_target.exe'
+Write-Host '==> compile launcher.exe'
+& $clExe /nologo "/Fo:$objDir" "/Fe:$launcherExe" "$launcherSrc" /link kernel32.lib
+Assert-Ok 'cl launcher.exe'
+
+# --------------------------------------------------------------- 5. run demos
 $args = @($distDir)
 if ($Consume) { $args += '--consume' }
 Write-Host '==> run the end-to-end demo'
 & $hostExe @args
 Assert-Ok 'host.exe'
+
+$laArgs = @($distDir, $targetExe)
+if ($Consume) { $laArgs += '--consume' }
+Write-Host '==> run the L2.0 thin launcher (no-CRT target, direct entry)'
+& $launcherExe @laArgs
+Assert-Ok 'launcher.exe'
+$crtArgs = @($distDir, $crtExe, '--thread')
+if ($Consume) { $crtArgs += '--consume' }
+Write-Host '==> run the L2.1 CRT target (worker thread + ExitProcess redirect)'
+& $launcherExe @crtArgs
+Assert-Ok 'launcher.exe crt --thread'
 Write-Host '==> done'

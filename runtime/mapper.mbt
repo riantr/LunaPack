@@ -42,6 +42,15 @@ const IMAGE_DIRECTORY_ENTRY_IMPORT : Int32 = 1
 const IMAGE_DIRECTORY_ENTRY_BASERELOC : Int32 = 5
 
 ///|
+const IMAGE_DIRECTORY_ENTRY_EXCEPTION : Int32 = 3
+
+///|
+const IMAGE_DIRECTORY_ENTRY_TLS : Int32 = 9
+
+///|
+const IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT : Int32 = 13
+
+///|
 const IMAGE_SCN_MEM_EXECUTE : Int64 = 0x20000000L
 
 ///|
@@ -364,17 +373,19 @@ fn resolve_imports(layout : ImageLayout, base : Int64) -> Int32 {
       if entry == 0L {
         break
       }
-      // A negative PE32+ thunk is an ordinal import: its high bit is set.
-      if entry < 0L {
-        return MAP_ORDINAL_IMPORT
+      let address = if entry < 0L {
+        // L3.1: a negative PE32+ thunk is an ordinal import. Resolve it from
+        // the provider module's export table (forwarders included).
+        resolve_import_ordinal(handle, ordinal_from_thunk(entry))
+      } else {
+        let hint_off = match rva_to_file(layout, entry & 0xffffffffL) {
+          Some(o) => o
+          None => return MAP_TRUNCATED
+        }
+        // IMAGE_IMPORT_BY_NAME is a two-byte hint followed by the ASCII name.
+        let api = img_cstr(layout.data, hint_off + 2L, 128L)
+        real_get_proc_address(handle, cstring(api))
       }
-      let hint_off = match rva_to_file(layout, entry & 0xffffffffL) {
-        Some(o) => o
-        None => return MAP_TRUNCATED
-      }
-      // IMAGE_IMPORT_BY_NAME is a two-byte hint followed by the ASCII name.
-      let api = img_cstr(layout.data, hint_off + 2L, 128L)
-      let address = real_get_proc_address(handle, cstring(api))
       if address == 0L {
         return MAP_IMPORT_API
       }
@@ -491,6 +502,10 @@ fn map_image_bytes(data : Bytes) -> Int64 {
     g_runtime.map_error = st
     return 0L
   }
+  // L3.3: delay imports do not go through the OS loader in a mapped image, so
+  // resolve them eagerly into the IAT (virtual-first) before protections are
+  // applied while the image pages are still writable.
+  ignore(resolve_delay_imports(layout, base))
   apply_protections(layout, base)
   // -1 is the pseudo-handle for the current process.
   ignore(flush_instruction_cache(-1L, base, layout.size_of_image))
@@ -550,11 +565,11 @@ pub fn lp_get_export(base : Int64, name : Int64) -> Int64 {
     if ascii_at(base + name_rva, 128) == wanted {
       let ordinal = peek16(base + ordinals + (i * 2).to_int64()).to_int64()
       let function_rva = peek32(base + functions + ordinal * 4L)
-      // A function RVA that lands inside the export directory is a forwarder,
-      // which a manually mapped image cannot resolve on its own.
+      // L3.2: a function RVA inside the export directory is a forwarder string
+      // ("DLL.Export" / "DLL.#ord"). Resolve it against the loaded provider.
       if function_rva >= export_rva &&
         function_rva < export_rva + peek32(dd + 4L) {
-        return 0L
+        return resolve_forwarder(ascii_at(base + function_rva, 256), 1)
       }
       return base + function_rva
     }
@@ -581,12 +596,59 @@ pub fn lp_get_entry(base : Int64) -> Int64 {
 }
 
 ///|
-/// Release the private pages of a mapped image. Imported system DLLs are
-/// deliberately left loaded: they are shared, loader-owned modules.
+/// L2.4: record that the host invoked DLL_PROCESS_ATTACH on a manually mapped
+/// image by hand (the OS loader is not involved, so nothing else can).
+#export_name("lp_mapped_attach")
+pub fn lp_mapped_attach(base : Int64) -> Int32 {
+  note_attach(base)
+  0
+}
+
+///|
+/// L2.4: record DLL_PROCESS_DETACH. The host must call this BEFORE
+/// lp_unmap_image; the unmap guard checks that ordering (see below).
+#export_name("lp_mapped_detach")
+pub fn lp_mapped_detach(base : Int64) -> Int32 {
+  note_detach(base)
+  0
+}
+
+///|
+/// How many images were attached vs detached, and how many detach-before-unmap
+/// violations were recorded. Layout: [mapped_hooks, loaded_hooks, attaches,
+/// detaches, violations]. A clean teardown has attaches == detaches and
+/// violations == 0.
+#export_name("lp_virt_lifecycle_stats")
+pub fn lp_virt_lifecycle_stats(out : Int64, cap : Int32) -> Int32 {
+  if out == 0L || cap < 20 {
+    return -1
+  }
+  let vals : Array[Int64] = [
+    g_runtime.mapped_hook_count.to_int64(),
+    g_runtime.loaded_hook_count.to_int64(),
+    g_runtime.attach_bases.length().to_int64(),
+    g_runtime.detach_bases.length().to_int64(),
+    g_runtime.detach_order_violations.to_int64(),
+  ]
+  let n = if cap < 20 { 0 } else { vals.length() }
+  for i = 0; i < n; i = i + 1 {
+    poke_bytes(out + (i * 4).to_int64(), u32le(vals[i]), 4)
+  }
+  0
+}
+
+///|
+/// Release the private pages of a mapped image. If the host attached DllMain
+/// but forgot DLL_PROCESS_DETACH, we record a violation instead of letting the
+/// process walk freed code at teardown. Imported system DLLs are deliberately
+/// left loaded: they are shared, loader-owned modules.
 #export_name("lp_unmap_image")
 pub fn lp_unmap_image(base : Int64) -> Int32 {
   if base == 0L {
     return 0
+  }
+  if detach_missing(base) {
+    g_runtime.detach_order_violations = g_runtime.detach_order_violations + 1
   }
   virtual_free(base, 0L, MEM_RELEASE)
 }

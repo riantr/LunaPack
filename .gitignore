@@ -5,6 +5,11 @@ target
 .mooncakes/
 .moonagent/
 
+# Static-analysis dumps (MSA / LunaFlow trace files are tens of MB)
+reports_funnel/
+reports_local/
+reports_*/
+
 # Windows runtime build output (scripts/build_runtime_windows.ps1)
 dist/
 *.obj

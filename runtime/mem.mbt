@@ -22,14 +22,115 @@ extern "C" fn memmove_out(dst : Int64, src : Bytes, n : Int64) -> Int64 = "memmo
 extern "C" fn get_module_handle_a(name : Bytes) -> Int64 = "GetModuleHandleA"
 
 ///|
+/// Full path of a loaded module. L2.2 uses this to skip Windows system DLLs:
+/// patching their own LoadLibrary IAT slots makes the OS loader's internal
+/// calls re-enter our thunk and recurse until the stack overflows.
+#borrow(buf)
+extern "C" fn get_module_file_name_a(
+  hmod : Int64,
+  buf : Bytes,
+  cap : Int32,
+) -> Int32 = "GetModuleFileNameA"
+
+///|
 #borrow(name)
 extern "C" fn real_get_proc_address(hmod : Int64, name : Bytes) -> Int64 = "GetProcAddress"
+
+///|
+/// Real wide / extended loader entry points. A LoadLibrary thunk calls the real
+/// loader, then installs our IAT hooks in whatever module it just loaded.
+/// LoadLibraryA reuses mapper.mbt's `load_library_a` binding (a C symbol may
+/// have only one MoonBit extern). L2.2.
+extern "C" fn real_load_library_w(name : Int64) -> Int64 = "LoadLibraryW"
+
+///|
+extern "C" fn real_load_library_ex_a(
+  name : Int64,
+  file : Int64,
+  flags : Int32,
+) -> Int64 = "LoadLibraryExA"
+
+///|
+extern "C" fn real_load_library_ex_w(
+  name : Int64,
+  file : Int64,
+  flags : Int32,
+) -> Int64 = "LoadLibraryExW"
 
 ///|
 extern "C" fn lstrlen_w(s : Int64) -> Int32 = "lstrlenW"
 
 ///|
+/// Length of a NUL-terminated ANSI (single-byte) string. L2.1 ANSI variants
+/// use this so they read exactly the string, not a fixed 260-byte window.
+extern "C" fn lstrlen_a(s : Int64) -> Int32 = "lstrlenA"
+
+///|
+/// Read a NUL-terminated ANSI string. Virtual paths are ASCII-only; a path
+/// with non-ASCII bytes will simply fail to match the virtual tree and fall
+/// through to the real API.
+fn ansi_to_string(addr : Int64) -> String {
+  if addr == 0L {
+    return ""
+  }
+  let n = lstrlen_a(addr)
+  if n <= 0 {
+    return ""
+  }
+  bytes_to_ascii(peek_bytes(addr, n))
+}
+
+///|
 extern "C" fn set_last_error(code : Int32) -> Unit = "SetLastError"
+
+///|
+/// Signal a Win32 event handle. Used to complete an overlapped in-memory I/O.
+extern "C" fn set_event(handle : Int64) -> Int32 = "SetEvent"
+
+///|
+/// Terminate only the calling thread. The ExitProcess thunk redirects here so
+/// a mapped CRT image can finish without ending the whole launcher process.
+extern "C" fn exit_thread(code : Int32) -> Unit = "ExitThread"
+
+///|
+/// Write a Win32 FILETIME (two little-endian DWORDs: low then high) at `addr`.
+fn poke_filetime(addr : Int64, ticks : Int64) -> Unit {
+  let low = ticks & 0xFFFFFFFFL
+  let high = (ticks >> 32) & 0xFFFFFFFFL
+  poke_bytes(addr, u32le(low), 4)
+  poke_bytes(addr + 4L, u32le(high), 4)
+}
+
+///|
+/// OVERLAPPED.Offset (x64 layout: Internal@0, InternalHigh@8, Offset@16,
+/// OffsetHigh@20, hEvent@24). Returns the 64-bit positioned I/O offset.
+fn ov_offset(addr : Int64) -> Int64 {
+  if addr == 0L {
+    return 0L
+  }
+  let lo = peek32(addr + 16L)
+  let hi = peek32(addr + 20L)
+  lo | (hi << 32)
+}
+
+///|
+/// Fill the OVERLAPPED status fields once an in-memory I/O completes.
+fn ov_complete(addr : Int64, status : Int64, bytes : Int64) -> Unit {
+  if addr == 0L {
+    return
+  }
+  poke64(addr, status)
+  poke64(addr + 8L, bytes)
+}
+
+///|
+/// The hEvent field of an OVERLAPPED structure (x64 offset 24).
+fn ov_event(addr : Int64) -> Int64 {
+  if addr == 0L {
+    return 0L
+  }
+  peek64(addr + 24L)
+}
 
 ///|
 #borrow(old)
@@ -159,6 +260,23 @@ fn wide_to_string(addr : Int64) -> String {
   }
   let b = peek_bytes(addr, n * 2)
   @utf16.decode(b) catch {
+    _ => ""
+  }
+}
+
+///|
+/// Read an exact-length UTF-16LE string. UNICODE_STRING.Length (used by the
+/// ntdll thunks) counts bytes and is not NUL-terminated, so wide_to_string
+/// cannot be used for it.
+fn wide_exact(addr : Int64, byte_len : Int32) -> String {
+  if addr == 0L || byte_len <= 0 {
+    return ""
+  }
+  let units = byte_len / 2
+  if units <= 0 {
+    return ""
+  }
+  @utf16.decode(peek_bytes(addr, units * 2)) catch {
     _ => ""
   }
 }
