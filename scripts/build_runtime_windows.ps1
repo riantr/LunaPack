@@ -247,7 +247,13 @@ Assert-Ok 'midl com_server.idl'
 Write-Host '==> rc: attach the type library as resource type 7'
 Push-Location $distDir
 try {
-  & $rcExe '/nologo' "/fo`"$comRes`"" $comRc
+  # Relative names on purpose: quoting the output path inside the /fo argument
+  # reads the same in Windows PowerShell but pwsh 7.3+ escapes the embedded
+  # quotes before handing the argument to a native program, so rc sees a
+  # filename that literally contains quote marks and answers `RC1109: error
+  # creating`. Running from the output directory keeps every name free of
+  # spaces and quotes.
+  & $rcExe '/nologo' '/fo' 'com_server.res' $comRc
   Assert-Ok 'rc com_server.rc'
 } finally {
   Pop-Location
