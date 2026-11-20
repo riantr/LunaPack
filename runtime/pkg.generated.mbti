@@ -24,6 +24,10 @@ pub const MAP_ORDINAL_IMPORT : Int32 = 9
 
 pub const MAP_TRUNCATED : Int32 = 4
 
+pub fn guid_bytes(String) -> Bytes
+
+pub fn guid_text_at(Int64) -> String
+
 pub fn install_iat_hooks(Int64) -> Int32
 
 pub fn lp_api_hits(Int64) -> Int32
@@ -70,6 +74,8 @@ pub fn lp_reg_log_count() -> Int32
 
 pub fn lp_reg_log_get(Int32, Int64, Int32) -> Int32
 
+pub fn lp_reg_log_reset() -> Unit
+
 pub fn lp_reg_stats(Int64, Int32) -> Int32
 
 pub fn lp_register_eh(Int64) -> Int32
@@ -77,6 +83,8 @@ pub fn lp_register_eh(Int64) -> Int32
 pub fn lp_set_bootstrap_path(Int64) -> Int32
 
 pub fn lp_set_module_path(Int64, Int64) -> Int32
+
+pub fn lp_typelib_stats(Int64, Int32) -> Int32
 
 pub fn lp_unmap_image(Int64) -> Int32
 
@@ -95,6 +103,10 @@ pub fn lp_virt_add_file(Int64, Int64, Int32) -> Int32
 pub fn lp_virt_exit_query(Int64) -> Int32
 
 pub fn lp_virt_fallback_audit(Int64, Int32) -> Int32
+
+pub fn lp_virt_get_reg(Int64, Int64, Int64, Int64, Int32, Int64) -> Int32
+
+pub fn lp_virt_has_reg(Int64, Int64) -> Int32
 
 pub fn lp_virt_lifecycle_stats(Int64, Int32) -> Int32
 
@@ -115,6 +127,8 @@ pub fn lp_virt_set_temp_path(Int64) -> Int32
 pub fn lp_virt_stats(Int64, Int32) -> Int32
 
 pub fn norm_path(String) -> String
+
+pub fn parse_msft(Bytes) -> TypeLibInfo?
 
 pub fn thunk_close_handle(Int64) -> Int32
 
@@ -164,6 +178,12 @@ pub fn thunk_load_library_ex_w(Int64, Int64, Int32) -> Int64
 
 pub fn thunk_load_library_w(Int64) -> Int64
 
+pub fn thunk_load_reg_typelib(Int64, Int32, Int32, Int32, Int64) -> Int32
+
+pub fn thunk_load_typelib(Int64, Int64) -> Int32
+
+pub fn thunk_load_typelib_ex(Int64, Int32, Int64) -> Int32
+
 pub fn thunk_move_file_ex_a(Int64, Int64, Int32) -> Int32
 
 pub fn thunk_move_file_ex_w(Int64, Int64, Int32) -> Int32
@@ -198,9 +218,45 @@ pub fn thunk_reg_query_value_ex_w(Int64, Int64, Int64, Int64, Int64, Int64) -> I
 
 pub fn thunk_reg_set_value_ex_w(Int64, Int64, Int64, Int32, Int64, Int32) -> Int32
 
+pub fn thunk_register_typelib(Int64, Int64, Int64) -> Int32
+
+pub fn thunk_register_typelib_for_user(Int64, Int64, Int64) -> Int32
+
 pub fn thunk_set_file_pointer_ex(Int64, Int64, Int64, Int32) -> Int32
 
+pub fn thunk_unregister_typelib(Int64, Int32, Int32, Int32, Int32) -> Int32
+
+pub fn thunk_unregister_typelib_for_user(Int64, Int32, Int32, Int32, Int32) -> Int32
+
 pub fn thunk_write_file(Int64, Int64, Int32, Int64, Int64) -> Int32
+
+pub fn tl_add_ref(Int64) -> Int32
+
+pub fn tl_find_name(Int64, Int64, Int32, Int64, Int64, Int64) -> Int32
+
+pub fn tl_get_documentation(Int64, Int32, Int64, Int64, Int64, Int64) -> Int32
+
+pub fn tl_get_lib_attr(Int64, Int64) -> Int32
+
+pub fn tl_get_type_info(Int64, Int32, Int64) -> Int32
+
+pub fn tl_get_type_info_count(Int64, Int64) -> Int32
+
+pub fn tl_get_type_info_of_guid(Int64, Int64, Int64) -> Int32
+
+pub fn tl_get_type_info_type(Int64, Int32, Int64) -> Int32
+
+pub fn tl_is_name(Int64, Int64, Int32, Int64) -> Int32
+
+pub fn tl_query_interface(Int64, Int64, Int64) -> Int32
+
+pub fn tl_release(Int64) -> Int32
+
+pub fn tl_release_tl_attr(Int64, Int64) -> Int32
+
+pub fn tl_type_comp(Int64, Int64) -> Int32
+
+pub fn typelib_from_image(Bytes) -> TypeLibInfo?
 
 // Errors
 
@@ -237,6 +293,32 @@ pub struct RegValue {
 }
 
 type RuntimeState
+
+pub struct TypeEntry {
+  kind : Int32
+  guid : String
+  name : String
+  doc : String
+  major : Int32
+  minor : Int32
+  c_funcs : Int32
+  c_vft : Int32
+  c_impl : Int32
+  flags : Int32
+}
+
+pub struct TypeLibInfo {
+  libid : String
+  name : String
+  doc : String
+  major : Int32
+  minor : Int32
+  lcid : Int32
+  syskind : Int32
+  varflags : Int32
+  flags : Int32
+  types : Array[TypeEntry]
+}
 
 pub struct VFileMeta {
   attrs : Int32

@@ -1,0 +1,16 @@
+// The type library as a resource of the server.
+//
+// `RT_TYPELIB` is 7, and a component that registers itself expects its own
+// type library to be there under id 1 -- that is the resource
+// `LoadTypeLibEx(module_path)` reads. Building it into the image is what makes
+// "parse the type library out of the archive" the same operation as "parse the
+// type library of a normal server".
+//
+// The type is spelled `7` and not `TYPELIB` on purpose: RC has no `TYPELIB`
+// keyword, so the word would become the *name* of a user-defined type, and
+// `FindResource(h, MAKEINTRESOURCE(7), ...)` would not find it -- nor would
+// `LoadTypeLibEx`, which is the whole point of the resource.
+
+#pragma code_page(1252)
+
+1 7 "com_server.tlb"

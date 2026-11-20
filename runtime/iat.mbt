@@ -60,6 +60,9 @@ fn patch_imports(module_base : Int64) -> Int32 {
     }
     let lookup_base = module_base + (if orig != 0L { orig } else { first })
     let iat_base = module_base + first
+    // The importing DLL's name, needed for the ordinal table: two libraries can
+    // export the same ordinal number for entirely different functions.
+    let dll_name = ascii_at(module_base + peek32(cur + 12L), 64).to_lower()
     let mut i = 0
     while i < 4096 {
       let step = (i * ptr_size).to_int64()
@@ -71,24 +74,28 @@ fn patch_imports(module_base : Int64) -> Int32 {
       if entry == 0L {
         break
       }
-      // A set high bit means an ordinal import, which has no name to match.
+      // A set high bit means an ordinal import.
       let by_name = if ptr_size == 8 {
         entry >= 0L
       } else {
         (entry & 0x80000000L) == 0L
       }
-      if by_name {
-        let name_rva = entry & 0xFFFFFFFFL
-        let api = ascii_at(module_base + name_rva + 2L, 128)
-        match lookup_thunk(api) {
-          Some(thunk_name) => {
-            let target = thunk_address(thunk_name)
-            if target != 0L && patch_slot(iat_base + step, target, ptr_size) {
-              patched = patched + 1
-            }
+      let thunk = if by_name {
+        lookup_thunk(ascii_at(module_base + (entry & 0xFFFFFFFFL) + 2L, 128))
+      } else {
+        // oleaut32 exports its automation entry points by ordinal, so a
+        // component built the ordinary way imports them as numbers and a
+        // name-only hook would never run.
+        ordinal_thunk(dll_name, (entry & 0xFFFFL).to_int())
+      }
+      match thunk {
+        Some(thunk_name) => {
+          let target = thunk_address(thunk_name)
+          if target != 0L && patch_slot(iat_base + step, target, ptr_size) {
+            patched = patched + 1
           }
-          None => ()
         }
+        None => ()
       }
       i = i + 1
     }

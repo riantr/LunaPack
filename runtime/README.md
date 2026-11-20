@@ -138,7 +138,7 @@ inside a DLL is not initialized by the OS loader.
 | `lp_virt_set_cwd` | Set the directory used to resolve relative virtual paths. |
 | `lp_virt_add_alias` | Register a short-name alias (e.g. `progra~1` -> `program files`). |
 | `lp_virt_post_completion` | Post an overlapped completion record to the in-memory queue. |
-| `lp_install_iat_hooks` | Patch the 52 hooked IAT slots of an image base (45 Win32 + 7 ntdll). Works for loaded and manually mapped images. |
+| `lp_install_iat_hooks` | Patch the 59 hooked IAT slots of an image base (52 Win32 + 7 ntdll), plus any oleaut32 slot imported by ordinal. Works for loaded and manually mapped images. |
 | `lp_virt_exit_query` | Did a mapped image call ExitProcess, and with what code? Returns 1/0; writes the code to the given address. |
 | `lp_virt_set_temp_path` | Seed the virtual temp directory returned by GetTempPathW (UTF-16LE). Empty disables the override. |
 | `lp_map_image` | Manually map a PE32+ DLL from a byte array. Returns the image base, or 0. |
@@ -162,10 +162,14 @@ inside a DLL is not initialized by the OS loader.
 | `lp_reg_get_value_w`, `lp_reg_create_key_ex_w/a`, `lp_reg_open_key_ex_a`, `lp_reg_delete_key_w/a`, `lp_reg_delete_value_w`, `lp_reg_enum_key_ex_w`, `lp_reg_enum_value_w`, `lp_reg_query_info_key_w` | L5 registry thunks: the surface a component registers itself with and the class database activates through. |
 | `lp_nt_open_key`, `lp_nt_query_value_key`, `lp_nt_query_key` | L5 native registry entry points. combase reaches the class database through these as well as through Win32, so both layers answer from the hive. `NtQueryKey(KeyNameInformation)` is also how a real key handle is translated back into a hive path. |
 | `lp_reg_stats` | L5: `[open, create, enum, delete, query, write]` request counters. |
-| `lp_reg_log_count` / `lp_reg_log_get` | L5: the last registry requests the thunks saw (`kind detail`), so a failed activation can be read back instead of guessed at. |
+| `lp_reg_log_count` / `lp_reg_log_get` / `lp_reg_log_reset` | L5: the last registry requests the thunks saw (`kind detail`), so a failed activation can be read back instead of guessed at. The log is bounded at 128 entries; `reset` starts a new phase, which is what a host wants after an activation has filled it. |
 | `lp_api_hits` / `lp_api_hits_reset` | L5: how often each thunk was reached, by API name. Tells a registration path apart from an activation path. |
 | `lp_get_module_file_name_w` | L5.5: answer `GetModuleFileNameW` for a mapped image with its virtual path. A component that registers itself writes that path into `InprocServer32`, so this is what makes the class point back into the archive. |
 | `lp_set_module_path` | L5.5: tell the runtime where a host's own manually mapped image lives, before calling into it. |
+| `lp_load_typelib_ex`, `lp_load_typelib`, `lp_load_reg_typelib`, `lp_register_typelib`, `lp_register_typelib_for_user`, `lp_unregister_typelib`, `lp_unregister_typelib_for_user` | L5.6: the seven oleaut32 entry points a self-registering component uses. Each answers from the parsed library for a virtual path and falls through to the real API otherwise. Reached by name *and* by ordinal — see `ordinal_table()` in `state.mbt`. |
+| `lp_typelib_stats` | L5.6: `[loaded, registered, unregistered, live_objects]`. |
+| `lp_tl_query_interface` … `lp_tl_release_tl_attr` | L5.6: the thirteen `ITypeLib` vtable entries handed to a caller. `GetTypeInfo*`, `FindName`, `GetTypeComp` and `GetDocumentation` answer `E_NOTIMPL`; the rest are real. |
+| `lp_virt_get_reg`, `lp_virt_has_reg` | L5.6: read a value, or a key's existence, back out of the hive. The hive is not the real registry, so a check has no other way to see what a registration wrote. |
 
 ## Limits — read these before treating this as production code
 
@@ -230,14 +234,40 @@ inside a DLL is not initialized by the OS loader.
   image's own export directory, and the entry point is run by the runtime (a
   hand-mapped image gets no `DllMain` from the loader). `GetModuleFileNameW` is
   answered with the virtual path, which is what a self-registering component
-  writes into `InprocServer32`. **Not** covered: type-library registration.
-  `scrrun.dll` fails with `TYPE_E_CANTLOADLIBRARY` because `RegisterTypeLib`
-  loads the typelib from a path that does not exist on disk, and `wshom.ocx`
-  fails with `0x80040201` *natively as well*, so that one is the component's
-  limit, not ours. Shipped OCX that self-register through an embedded typelib
-  need typelib virtualization, tracked as L5.6. Only the wide
-  `GetModuleFileNameW` is virtualized, so VB6-era ANSI servers remain out of
-  reach — they need the VB runtime, which manual mapping does not provide.
+  writes into `InprocServer32`. `wshom.ocx` still fails its own
+  `DllRegisterServer` with `0x80040201` *natively as well*, so that one is the
+  component's limit, not ours. Only the wide `GetModuleFileNameW` is
+  virtualized, so VB6-era ANSI servers remain out of reach — they need the VB
+  runtime, which manual mapping does not provide.
+- **A component's type library is virtualized too (L5.6).** An ordinary server
+  registers itself by calling `LoadTypeLibEx` on its own path and handing the
+  result to `RegisterTypeLib`; original oleaut32 can only do that from a file,
+  so under any file-less scheme that call has to be answered from the archive.
+  (`scrrun.dll` is *not* an example of that gap: it stores its library under the
+  resource type name `'TYPELIB'` instead of the number 7, so `FindResource(h, 7,
+  1)` misses it natively too and `LoadTypeLibEx` fails with
+  `TYPE_E_CANTLOADLIBRARY` with or without a runtime in the way.) The runtime
+  therefore reads the library itself: it walks the
+  `TYPELIB` resource (`RT_TYPELIB`, id 1) out of the module bytes and parses the
+  `MSFT` layout MIDL writes — library identity, version, LCID and platform, and
+  for each interface and coclass its GUID, name, documentation and vtable size.
+  `LoadTypeLibEx`/`LoadTypeLib` answer with a real `ITypeLib` object of ours,
+  `RegisterTypeLib` writes the library into the hive the same way it writes
+  classes (`TypeLib\{LIBID}\<ver>\<lcid>\win64|win32`, `Interface\{IID}` with
+  `TypeLib`/`ProxyStubClsid32`/`NumMethods`, `CLSID\{CLSID}\TypeLib`),
+  `LoadRegTypeLib` gives a client back the library it registered, and
+  `UnRegisterTypeLib` removes it. Both `oleaut32.dll` import shapes are hooked:
+  by name and by ordinal, because a component built the ordinary way imports
+  these entry points by number (163, 183, 186, 442, 443) and a name-only hook
+  would never fire. **Not** covered: no `ITypeInfo` per type, so
+  `GetTypeInfo`, `GetTypeInfoOfGuid`, `GetTypeInfoType`'s follow-ups,
+  `FindName`, `GetTypeComp` and `GetDocumentation` answer `E_NOTIMPL` (a BSTR
+  would have to come from the real allocator); libraries in other formats
+  (`SLTG`, the VB6-era layout) are refused rather than half-read, and the caller
+  then falls through to the real API; `LoadTypeLibEx(REGKIND_REGISTER)` also
+  registers, as it does natively, while `REGKIND_DEFAULT` and `REGKIND_NONE`
+  differ from each other only in whether oleaut32 would consult the registry
+  for a path, which a virtual file never has.
 - **A mapped image runs its entry point only when the runtime maps it.** For an
   image the runtime loads out of the VFS it calls `DllMain(base,
   DLL_PROCESS_ATTACH, NULL)` itself, through a small stub the runtime writes
@@ -323,18 +353,68 @@ L3.5-3.7 (32-bit) is a documented NO-GO — see `tests/corpus/X86_DECISION.md`.
 
 Analyzer version notes, kept so the numbers are reproducible:
 
-- `moonx ... @latest` (MSA 0.4.52, LunaFlow 0.1.27) currently **fails to start**
-  on this toolchain: `LinkError: Import "moonbitlang/async" "thread_pool/make_openat_job"
-  requires a callable`. The pinned versions above are the ones that actually ran.
+- `moonx ... @latest` (MSA 0.4.52, LunaFlow 0.1.27) used to **fail to start** on
+  this toolchain: `LinkError: Import "moonbitlang/async"
+  "thread_pool/make_openat_job" requires a callable`. After the `async`/`fs`/
+  `http` migration it runs again, and it is what the L5.6 numbers below were
+  taken with; the pinned runs above and `@latest` now agree
+  (`actionable=0`; LunaFlow `dead_code=1 taint_sinks=15`).
 - MSA 0.4.46 agrees with 0.4.45 (`actionable=0`). MSA 0.4.50 reports
   `actionable=1`: a `DeadStore` on `let mut h : UInt32 = 0` at `lz4.mbt:69`,
-  inside `xxhash32`. The initial zero is the accumulator seed and is read on
-  the loop path; the detector does not follow it. Not a real defect. Recorded
-  here so the jump is not mistaken for a regression when a newer pin is used.
+  inside `xxhash32`. This note originally called it a false positive — it is
+  not. Both branches of the `if` assign `h` before anything reads it, so the
+  initial `0` was dead, and under `@latest` it was the only remaining
+  actionable finding. `xxhash32` now computes the seed accumulator in the `if`
+  expression itself, and `actionable` is back to 0 with the same checksums
+  (`lz4_test.mbt` and the 209 root tests pin them).
 
 AV quarantine path on this machine: `C:\ProgramData\Huorong\Sysdiag\Quarantine`.
 The 16 files include 11 from the P0 remote-injection experiment (2026-11-13)
 and 5 older entries; none are from this runtime.
+
+### L5.6 re-measure (2026-11-19)
+
+Root tests 209/209; runtime tests **41/41** (four new white-box tests: the
+`MSFT` reader against a library assembled field by field in the test, refusal of
+buffers that are not type libraries, the GUID binary/text round trip with the
+field order pinned, and the oleaut32 ordinal table including the
+same-number-different-library case; plus `read_file` returning a whole 9 KB file
+rather than a prefix, which was the bug that started this loop).
+
+`verify_com_activation.ps1` now runs **33 assertions per run** over the same
+three runs (no-CRT server, ordinary CRT server, `--consume`): the previous set,
+the type-library keys read back out of the hive (`TypeLib\{LIBID}` name and
+version, the `win64` path pointing at `C:\virt\…`, `Interface\{IID}\TypeLib`
+with the whole GUID, `NumMethods=4` from the vtable size, `CLSID\{CLSID}\TypeLib`),
+the `LoadRegTypeLib` round trip (`REG count=2`), and the removal
+(`UnRegisterTypeLib=1`, key gone, `delete=3`). The other five scripts are
+unchanged and still pass: `verify_zero_disk` 18 (22 IAT slots),
+`verify_thin_launcher` 27, `verify_ntdll_spike` 13, `verify_fallback_chain` 18,
+`verify_pe_features` 11, `verify_child_follow` 23.
+
+MSA @latest (0.4.52): `files=79 parsed=79 actionable=0 defects=0 notices=742`
+(notices are structural only; +28 from the two new files and the new tests).
+LunaFlow @latest (0.1.27): `dead_code=1 taint_sinks=15 unreachable=0
+infinite_loop=0`, funnel L2 `abstract_findings=23`, L3 `vcs=0` — unchanged from
+the L2.4/L2.5/L3 re-measure. `moon fmt --check` clean in root and `runtime`;
+`pkg.generated.mbti` grew by 82 additive public signatures. Huorong quarantine
+**16 → 16** for the M6 retest (Huorong only, second engine pending).
+
+Two things are worth recording because they cost the most time:
+
+- **oleaut32 is imported by ordinal.** `LoadTypeLibEx`/`RegisterTypeLib`/
+  `UnRegisterTypeLib` arrive as `Ordinal 183/163/186`, so a hook table keyed on
+  names patches nothing and every symptom looks like "the type library did not
+  parse". `patch_imports` now reads the importing DLL's name and resolves
+  ordinals through `ordinal_table()`; `verify_com_activation.ps1` asserts the
+  thunk counters so this cannot silently regress.
+- **`rc.exe` has no `TYPELIB` keyword.** `1 TYPELIB "x.tlb"` produces a
+  *named* resource type (`'TYPELIB'`), which `FindResource(h, 7, 1)` — and
+  therefore `LoadTypeLibEx` — cannot find; the resource type has to be written
+  as `1 7 "x.tlb"`. The same defect exists in shipped Microsoft binaries:
+  `scrrun.dll` stores its type library under the string type `'TYPELIB'`, which
+  is why it fails with `TYPE_E_CANTLOADLIBRARY` natively and under any file-less
+  scheme alike. That is a component bug, not a gap in this runtime.
 
 ## Source map
 
@@ -345,10 +425,12 @@ and 5 older entries; none are from this runtime.
 | `registry.mbt` | In-memory registry hive, HKLM/HKCU/HKCR redirection, handle translation for real keys. |
 | `registry_api.mbt` | L5: the Win32 registry thunks (`RegCreateKeyEx*`, `RegOpenKeyExA`, `RegDelete*`, `RegEnum*`, `RegQueryInfoKeyW`, `RegGetValueW`), the request log and the hive counters. |
 | `registry_nt.mbt` | L5: the native registry entry points (`NtOpenKey`, `NtQueryValueKey`, `NtQueryKey`) that combase uses alongside Win32. |
-| `state.mbt` | Lazy process-wide state and the 52-entry hook table. |
+| `typelib.mbt` | L5.6: reads a type library out of module bytes — the `TYPELIB` resource walk and the `MSFT` layout (segment directory, type-info records, GUID/name/string tables) — reduced to what a registration writes. |
+| `oleaut.mbt` | L5.6: the seven oleaut32 thunks, the `ITypeLib` object and its vtable, and the hive writes a registration produces. |
+| `state.mbt` | Lazy process-wide state and the 59-entry hook table, plus the ordinal table for libraries that export by number. |
 | `entry.mbt` | L5.3: emits a `DllMain(base, DLL_PROCESS_ATTACH, NULL)` stub and has the system call it, for images the runtime maps itself. |
 | `iat.mbt` | In-process import address table patcher; also patches runtime-loaded modules, skipping Windows system DLLs. |
 | `thunks.mbt` | The Win32-compatible C ABI thunks and management exports. |
 | `mapper.mbt` | Manual PE mapping, relocations, imports, protections, export lookup. |
-| `runtime_wbtest.mbt` | Unit tests for the data model, L1/L2.1 VFS semantics, the PE layout reader, the hive and the entry stub (36 tests). |
+| `runtime_wbtest.mbt` | Unit tests for the data model, L1/L2.1 VFS semantics, the PE layout reader, the hive, the entry stub and the type-library reader (41 tests). |
 | `tests/dynlib.c` | L2.2 runtime-loaded DLL whose static virtualized imports prove LoadLibrary IAT patching. |

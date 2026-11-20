@@ -66,8 +66,9 @@ pub fn xxhash32(
   seed : UInt32,
 ) -> UInt32 {
   let mut p = start
-  let mut h : UInt32 = 0
-  if end - start >= 16 {
+  // Both branches produce the first accumulator value, so there is no
+  // placeholder initialiser for the reader to trip over.
+  let mut h : UInt32 = if end - start >= 16 {
     let mut v1 = seed + XH_P1 + XH_P2
     let mut v2 = seed + XH_P2
     let mut v3 = seed
@@ -82,9 +83,9 @@ pub fn xxhash32(
       v4 = xxh_round(v4, read_le32(data, p))
       p = p + 4
     }
-    h = xxh_rotl(v1, 1) + xxh_rotl(v2, 7) + xxh_rotl(v3, 12) + xxh_rotl(v4, 18)
+    xxh_rotl(v1, 1) + xxh_rotl(v2, 7) + xxh_rotl(v3, 12) + xxh_rotl(v4, 18)
   } else {
-    h = seed + XH_P5
+    seed + XH_P5
   }
   h = h + (end - start).to_double().to_uint()
   while p + 4 <= end {

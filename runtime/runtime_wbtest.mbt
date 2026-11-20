@@ -797,3 +797,238 @@ test "the entry stub encodes the DllMain call it documents" {
   // An image with no entry point is skipped rather than called.
   assert_true(run_entry_point(0x1000L, 0L) == 0)
 }
+
+///|
+test "read_file returns the whole file, not a prefix" {
+  let v = Vfs::new()
+  let data = Bytes::make(9216, b'A')
+  v.add_file("c:/virt/big.dll", data)
+  let back = v.read_file("c:/virt/big.dll")
+  match back {
+    Some(b) => assert_true(b.length() == 9216)
+    None => fail("virtual file was not readable")
+  }
+  // The same through a handle, which is the path an application takes.
+  let h = v.open("c:/virt/big.dll").unwrap()
+  assert_true(v.size(h) == Some(9216L))
+  let chunk = v.read(h, 9216).unwrap()
+  assert_true(chunk.length() == 9216)
+}
+
+// --- L5.6: the MSFT type-library reader ---
+//
+// The reader is checked against a library assembled field by field in the test.
+// A real one comes out of MIDL as two kilobytes of opaque bytes; a synthetic
+// one states where every field is, so a wrong offset fails here rather than
+// registering a class under a GUID that does not exist.
+
+///|
+fn tlw_8(a : FixedArray[Byte], off : Int32, v : Int32) -> Unit {
+  a[off] = (v & 0xFF).to_byte()
+}
+
+///|
+fn tlw_16(a : FixedArray[Byte], off : Int32, v : Int32) -> Unit {
+  tlw_8(a, off, v & 0xFF)
+  tlw_8(a, off + 1, v >> 8)
+}
+
+///|
+fn tlw_32(a : FixedArray[Byte], off : Int32, v : Int32) -> Unit {
+  tlw_16(a, off, v & 0xFFFF)
+  tlw_16(a, off + 2, v >> 16)
+}
+
+///|
+fn tlw_ascii(a : FixedArray[Byte], off : Int32, s : String) -> Unit {
+  let mut i = 0
+  while i < s.length() {
+    tlw_8(a, off + i, s[i].to_int())
+    i = i + 1
+  }
+}
+
+///|
+/// Store a GUID in the packed COM form: three little-endian fields, then eight
+/// bytes in order. Written out by hand because that is exactly the property the
+/// text form has to undo.
+fn tlw_guid(
+  a : FixedArray[Byte],
+  off : Int32,
+  d1 : Int32,
+  d2 : Int32,
+  d3 : Int32,
+  tail : Int64,
+) -> Unit {
+  tlw_32(a, off, d1)
+  tlw_16(a, off + 4, d2)
+  tlw_16(a, off + 6, d3)
+  let mut i = 0
+  while i < 8 {
+    tlw_8(a, off + 8 + i, ((tail >> ((7 - i) * 8)) & 0xFFL).to_int())
+    i = i + 1
+  }
+}
+
+///|
+/// A library with one interface (three methods, four vtable slots) and one
+/// coclass, laid out where MIDL puts everything.
+fn tlw_library() -> Bytes {
+  let segdir = 0x54 + 2 * 4
+  let ti = segdir + 15 * 16
+  let guid = ti + 2 * 100
+  let name = guid + 3 * 16
+  let str = name + 8 + 3 * 20
+  let size = str + 28
+  let a = FixedArray::make(size, b'\x00')
+  // Header: magic, LIBID position, LCID, varflags, version, type count, name
+  // and doc-string offsets.
+  tlw_ascii(a, 0, "MSFT")
+  tlw_32(a, 0x08, 0)
+  tlw_32(a, 0x0C, 1033)
+  tlw_32(a, 0x14, 3)
+  tlw_32(a, 0x18, 2 + (1 << 16))
+  tlw_32(a, 0x1C, 0x02)
+  tlw_32(a, 0x20, 2)
+  tlw_32(a, 0x24, 0)
+  tlw_32(a, 0x38, 40)
+  // Segment directory: type infos, GUID table, name table, string table.
+  tlw_32(a, segdir, ti)
+  tlw_32(a, segdir + 5 * 16, guid)
+  tlw_32(a, segdir + 7 * 16, name)
+  tlw_32(a, segdir + 8 * 16, str)
+  tlw_guid(a, guid, 0x11112222, 0x3333, 0x4444, 0x5555666677778888L)
+  tlw_guid(a, guid + 16, 0x9B1F0A4D, 0x2D3E, 0x4A55, 0x8F01112233445566L)
+  tlw_guid(a, guid + 32, 0x9B1F0A4C, 0x2D3E, 0x4A55, 0x8F01112233445566L)
+  // The interface: kind, method count, IID, name, version, doc, vtable size.
+  tlw_32(a, ti, 3)
+  tlw_32(a, ti + 0x18, 3)
+  tlw_32(a, ti + 0x2C, 16)
+  tlw_32(a, ti + 0x30, 1)
+  tlw_32(a, ti + 0x34, 0)
+  tlw_32(a, ti + 0x38, 1)
+  tlw_32(a, ti + 0x3C, 16)
+  tlw_16(a, ti + 0x4C, 1)
+  tlw_16(a, ti + 0x4E, 32)
+  tlw_32(a, ti + 0x50, 32)
+  // The coclass: no methods, no vtable, no doc string.
+  let co = ti + 100
+  tlw_32(a, co, 5)
+  tlw_32(a, co + 0x2C, 32)
+  tlw_32(a, co + 0x30, 2)
+  tlw_32(a, co + 0x34, 20)
+  tlw_32(a, co + 0x38, 1)
+  tlw_32(a, co + 0x3C, -1)
+  // Name records: one byte of length, three reserved, the characters, padding.
+  tlw_8(a, name + 8, 7)
+  tlw_ascii(a, name + 12, "ILpFace")
+  tlw_8(a, name + 28, 6)
+  tlw_ascii(a, name + 32, "TestCo")
+  tlw_8(a, name + 48, 7)
+  tlw_ascii(a, name + 52, "TestLib")
+  // Doc strings: a two-byte character count then the characters.
+  tlw_16(a, str, 12)
+  tlw_ascii(a, str + 2, "Test library")
+  tlw_16(a, str + 16, 9)
+  tlw_ascii(a, str + 18, "IFace doc")
+  Bytes::from_array(a[:])
+}
+
+///|
+test "the MSFT reader walks the segment directory the header declares" {
+  let info = parse_msft(tlw_library()).unwrap()
+  assert_true(info.libid == "{11112222-3333-4444-5555-666677778888}")
+  assert_true(info.name == "TestLib")
+  assert_true(info.doc == "Test library")
+  assert_true(info.major == 2 && info.minor == 1)
+  assert_true(info.lcid == 1033)
+  // varflags carries the platform; three is SYS_WIN64, which decides whether a
+  // registration writes its path under `win64` or `win32`.
+  assert_true(info.syskind == 3)
+  assert_true(info.flags == 0x02)
+  assert_true(info.types.length() == 2)
+  let face = info.types[0]
+  assert_true(face.kind == 3)
+  assert_true(face.name == "ILpFace")
+  assert_true(face.guid == "{9B1F0A4D-2D3E-4A55-8F01-112233445566}")
+  assert_true(face.doc == "IFace doc")
+  assert_true(face.c_funcs == 3)
+  // 32 bytes of vtable is four pointers, which is the NumMethods a
+  // registration stores.
+  assert_true(face.c_vft == 32)
+  assert_true(face.c_impl == 1)
+  assert_true(face.major == 1 && face.minor == 0)
+  let co = info.types[1]
+  assert_true(co.kind == 5)
+  assert_true(co.name == "TestCo")
+  assert_true(co.guid == "{9B1F0A4C-2D3E-4A55-8F01-112233445566}")
+  // A field the reader must not invent: this coclass has no doc string.
+  assert_true(co.doc == "")
+}
+
+///|
+test "a blob that is not a type library is refused, not half-read" {
+  match parse_msft(Bytes::make(0, b'\x00')) {
+    None => ()
+    Some(_) => fail("an empty buffer was accepted as a type library")
+  }
+  match parse_msft(Bytes::make(0x100, b'\x00')) {
+    None => ()
+    Some(_) => fail("a zeroed buffer was accepted as a type library")
+  }
+  match parse_msft(Bytes::make(0x100, b'M')) {
+    None => ()
+    Some(_) => fail("a buffer that is not an MSFT image was accepted")
+  }
+  // Truncated mid-directory: the segments are past the end of the bytes.
+  let full = tlw_library()
+  match parse_msft(img_slice(full, 0L, 0x60L)) {
+    None => ()
+    Some(_) =>
+      fail("a type library cut off before its segment directory was accepted")
+  }
+}
+
+///|
+test "a GUID survives the trip to binary and back" {
+  let text = "{9B1F0A4D-2D3E-4A55-8F01-112233445566}"
+  let bin = guid_bytes(text)
+  assert_true(bin.length() == 16)
+  // The three fields are little-endian; the last eight bytes are in order.
+  assert_true(
+    bin[0] == b'\x4d' &&
+    bin[1] == b'\x0a' &&
+    bin[2] == b'\x1f' &&
+    bin[3] == b'\x9b',
+  )
+  assert_true(bin[4] == b'\x3e' && bin[5] == b'\x2d')
+  assert_true(bin[6] == b'\x55' && bin[7] == b'\x4a')
+  assert_true(bin[8] == b'\x8f' && bin[9] == b'\x01' && bin[15] == b'\x66')
+  // Only the canonical shape is parsed; anything else is refused rather than
+  // guessed at, because a wrong GUID registers a key nobody will look up.
+  assert_true(guid_bytes("").length() == 0)
+  assert_true(guid_bytes("{short}").length() == 0)
+  assert_true(
+    guid_bytes("x9B1F0A4D-2D3E-4A55-8F01-112233445566}").length() == 0,
+  )
+  assert_true(guid_bytes("{9B1F0A4D-2D3E-4A55-8F01-11223344556}").length() == 0)
+}
+
+///|
+test "the ordinal table resolves oleaut32's automation entry points" {
+  // A component built the ordinary way imports these by number, so the number
+  // is the only thing an IAT hook has to go on.
+  assert_true(ordinal_thunk("oleaut32.dll", 161) == Some("lp_load_typelib"))
+  assert_true(ordinal_thunk("oleaut32.dll", 163) == Some("lp_register_typelib"))
+  assert_true(ordinal_thunk("oleaut32.dll", 183) == Some("lp_load_typelib_ex"))
+  assert_true(
+    ordinal_thunk("oleaut32.dll", 186) == Some("lp_unregister_typelib"),
+  )
+  assert_true(
+    ordinal_thunk("oleaut32.dll", 443) == Some("lp_unregister_typelib_for_user"),
+  )
+  // The library name is part of the key: the same number elsewhere is a
+  // different function, and guessing would patch an unrelated import.
+  assert_true(ordinal_thunk("kernel32.dll", 183) == None)
+  assert_true(ordinal_thunk("oleaut32.dll", 999) == None)
+}

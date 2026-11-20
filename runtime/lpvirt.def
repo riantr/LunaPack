@@ -4,6 +4,8 @@ EXPORTS
   lp_virt_reset
   lp_virt_add_file
   lp_virt_set_reg
+  lp_virt_get_reg
+  lp_virt_has_reg
   lp_virt_stats
   lp_install_iat_hooks
   lp_create_file_w
@@ -39,6 +41,7 @@ EXPORTS
   lp_api_hits_reset
   lp_reg_log_count
   lp_reg_log_get
+  lp_reg_log_reset
   lp_get_proc_address
   lp_exit_process
   lp_virt_exit_query
@@ -89,3 +92,24 @@ EXPORTS
   lp_vfs_export_size
   lp_vfs_export
   lp_vfs_import
+  lp_load_typelib_ex
+  lp_load_typelib
+  lp_register_typelib
+  lp_register_typelib_for_user
+  lp_unregister_typelib
+  lp_unregister_typelib_for_user
+  lp_load_reg_typelib
+  lp_typelib_stats
+  lp_tl_query_interface
+  lp_tl_add_ref
+  lp_tl_release
+  lp_tl_type_info_count
+  lp_tl_type_info
+  lp_tl_type_info_type
+  lp_tl_type_info_of_guid
+  lp_tl_get_lib_attr
+  lp_tl_get_documentation
+  lp_tl_find_name
+  lp_tl_is_name
+  lp_tl_type_comp
+  lp_tl_release_tl_attr

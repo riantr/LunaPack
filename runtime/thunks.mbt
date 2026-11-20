@@ -1026,6 +1026,13 @@ pub fn lp_virt_reset() -> Unit {
   g_runtime.reg_log.clear()
   g_runtime.mapped_images.clear()
   g_runtime.mapped_paths.clear()
+  // The parsed libraries go with the state they were registered from. The
+  // vtable is process-wide and survives: objects already handed out keep
+  // working, and only the store they index into is replaced.
+  g_runtime.typelibs.clear()
+  g_runtime.typelibs_loaded = 0
+  g_runtime.typelibs_registered = 0
+  g_runtime.typelibs_unregistered = 0
 }
 
 ///|
@@ -1033,7 +1040,8 @@ pub fn lp_virt_reset() -> Unit {
 #export_name("lp_virt_add_file")
 pub fn lp_virt_add_file(path : Int64, data : Int64, len : Int32) -> Int32 {
   let v = state_vfs()
-  v.add_file(wide_to_string(path), peek_bytes(data, len))
+  let bytes = peek_bytes(data, len)
+  v.add_file(wide_to_string(path), bytes)
   0
 }
 
@@ -1060,6 +1068,51 @@ pub fn lp_virt_set_reg(
     0
   } else {
     5
+  }
+}
+
+///|
+/// Read a value back out of the hive. The counterpart of `lp_virt_set_reg`, and
+/// the only way a check can see what a registration actually wrote: the hive is
+/// not the real registry, so advapi32 cannot answer for it.
+#export_name("lp_virt_get_reg")
+pub fn lp_virt_get_reg(
+  root : Int64,
+  subkey : Int64,
+  name : Int64,
+  out : Int64,
+  cap : Int32,
+  typ_out : Int64,
+) -> Int32 {
+  let r = state_reg()
+  let key = match r.resolve_existing(root, wide_to_string(subkey)) {
+    Some(k) => k
+    None => return -1
+  }
+  let value = match r.values.get(value_key(key, wide_to_string(name))) {
+    Some(v) => v
+    None => return -1
+  }
+  put32(typ_out, value.typ)
+  let n = value.data.length()
+  if out == 0L || cap <= 0 {
+    return n
+  }
+  let m = if n < cap { n } else { cap }
+  poke_bytes(out, value.data, m)
+  m
+}
+
+///|
+/// Does the hive hold this key? A registration that wrote nothing and a
+/// registration that wrote the whole tree are different outcomes, and a count
+/// alone cannot tell them apart.
+#export_name("lp_virt_has_reg")
+pub fn lp_virt_has_reg(root : Int64, subkey : Int64) -> Int32 {
+  let r = state_reg()
+  match r.resolve_existing(root, wide_to_string(subkey)) {
+    Some(_) => 1
+    None => 0
   }
 }
 

@@ -61,6 +61,16 @@ struct RuntimeState {
   // question asked from two sides; this is how the checks see which key was
   // actually requested when the hive does not answer.
   reg_log : Array[String]
+  // L5.6: type libraries parsed out of the archive. A component registers its
+  // own type library before it registers its classes, and oleaut32 can only
+  // read one from a file, so the runtime parses the TYPELIB resource itself and
+  // hands back an object of its own. The array is the store; an object carries
+  // its index. `typelib_vtable` is the one shared vtable.
+  typelibs : Array[TypeLibInfo]
+  mut typelib_vtable : Int64
+  mut typelibs_loaded : Int32
+  mut typelibs_registered : Int32
+  mut typelibs_unregistered : Int32
 }
 
 ///|
@@ -89,6 +99,11 @@ let g_runtime : RuntimeState = {
   mapped_paths: {},
   nt_scratch: 0L,
   reg_log: [],
+  typelibs: [],
+  typelib_vtable: 0L,
+  typelibs_loaded: 0,
+  typelibs_registered: 0,
+  typelibs_unregistered: 0,
 }
 
 ///|
@@ -293,6 +308,18 @@ fn hook_table() -> Array[(String, String)] {
     // recorded its own path in LUNAPACK_BOOTSTRAP.
     ("CreateProcessW", "lp_create_process_w"),
     ("CreateProcessA", "lp_create_process_a"),
+    // L5.6: type libraries. A self-registering component calls LoadTypeLibEx on
+    // its own path and hands the result to RegisterTypeLib, which is where a
+    // file-less image used to stop: oleaut32 can only read a type library from
+    // a file. These answer from the TYPELIB resource instead, and keep the
+    // registration in the hive.
+    ("LoadTypeLibEx", "lp_load_typelib_ex"),
+    ("LoadTypeLib", "lp_load_typelib"),
+    ("RegisterTypeLib", "lp_register_typelib"),
+    ("RegisterTypeLibForUser", "lp_register_typelib_for_user"),
+    ("UnRegisterTypeLib", "lp_unregister_typelib"),
+    ("UnRegisterTypeLibForUser", "lp_unregister_typelib_for_user"),
+    ("LoadRegTypeLib", "lp_load_reg_typelib"),
   ]
 }
 
@@ -315,4 +342,43 @@ fn lookup_thunk(api : String) -> String? {
 fn thunk_address(export_name : String) -> Int64 {
   let self_mod = get_module_handle_a(cstring("lpvirt.dll"))
   real_get_proc_address(self_mod, cstring(export_name))
+}
+
+///|
+/// Imports that are not by name.
+///
+/// oleaut32's import library exports most of the automation API by ordinal, so
+/// a component built with it imports `LoadTypeLibEx` as "ordinal 183". That is
+/// not a corner case: it is what every ATL/MFC server, and every VB6 server,
+/// looks like. An IAT hook that only matches names silently never runs for
+/// them, and the failure looks like "the component cannot load its own type
+/// library" rather than "the hook was not installed".
+///
+/// The ordinals are the ones in the system oleaut32's export table; a name
+/// import still works through the hook table above, so both spellings of the
+/// same function are covered.
+fn ordinal_table() -> Array[(String, Int32, String)] {
+  [
+    ("oleaut32.dll", 161, "lp_load_typelib"),
+    ("oleaut32.dll", 162, "lp_load_reg_typelib"),
+    ("oleaut32.dll", 163, "lp_register_typelib"),
+    ("oleaut32.dll", 183, "lp_load_typelib_ex"),
+    ("oleaut32.dll", 186, "lp_unregister_typelib"),
+    ("oleaut32.dll", 442, "lp_register_typelib_for_user"),
+    ("oleaut32.dll", 443, "lp_unregister_typelib_for_user"),
+  ]
+}
+
+///|
+fn ordinal_thunk(dll : String, ordinal : Int32) -> String? {
+  let table = ordinal_table()
+  let mut i = 0
+  while i < table.length() {
+    let (name, ord, thunk) = table[i]
+    if ord == ordinal && name == dll {
+      return Some(thunk)
+    }
+    i = i + 1
+  }
+  None
 }

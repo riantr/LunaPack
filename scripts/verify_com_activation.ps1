@@ -13,12 +13,15 @@
 #
 # For each, what is proved, in order:
 #   1. a component can register itself            (writes land in the hive)
+#   1b. it registers the type library embedded in its own image (L5.6): the
+#       library is parsed out of the archive, its keys go into the hive, and a
+#       client can load it back by LIBID although no .tlb file exists
 #   2. the class database then reads that hive    (combase/ole32 patched)
 #   3. real COM activates the class               (CoCreateInstance returns S_OK)
 #   4. the server came out of the archive         (LoadLibrary served by the VFS)
 #   5. the server's DllMain ran                   (it refuses to serve otherwise)
 #   6. none of it touched the real registry, and no administrator was involved
-#   7. unregistering removes the class again
+#   7. unregistering removes the class and the library again
 # plus one run with --consume, where the file is deleted from disk before it is
 # ever mapped, and a final AV check.
 #
@@ -90,7 +93,8 @@ function Run-Host([string]$serverName, [bool]$consume, [string]$label) {
   Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
   Write-Host "--- $label ---"
   $text -split "`r?`n" | Where-Object {
-    $_ -match 'COM |DllRegister|DllUnregister|DllMain|load-map|hive after|slots patched|thunks used'
+    $_ -match 'COM |DllRegister|DllUnregister|DllMain|load-map|hive after|slots patched|thunks used|' +
+              'typelib|hive TypeLib|hive Interface|hive CLSID|REG '
   } | ForEach-Object { Write-Host "  $_" }
   return @{ Code = $code; Text = $text }
 }
@@ -100,7 +104,11 @@ function Assert-Run([hashtable]$run, [string]$serverName, [bool]$consume, [bool]
   Check ($run.Text -match 'DllMain\(DLL_PROCESS_ATTACH\): TRUE') 'the entry point ran'
   Check ($run.Text -match 'DllRegisterServer returned 0x00000000') 'the component registered itself'
   Check ($run.Text -match 'register thunks: RegCreateKeyExW=4 RegSetValueExW=5') 'registration went through the registry thunks'
-  Check ($run.Text -match 'hive after register: open=0 create=4 enum=0 delete=0 query=0 write=5') 'the class landed in the hive'
+  # 5 writes are the component's own keys, 13 are the type library's: the
+  # library, its version, its language and platform, one interface with its
+  # proxy and method count, and one coclass. An exact number is the check that
+  # the library is registered once and not twice.
+  Check ($run.Text -match 'hive after register: open=0 create=4 enum=0 delete=0 query=0 write=18 ') 'the class and the type library landed in the hive'
   Check ($run.Text -match 'combase\.dll: ([1-9]\d*) slots patched') 'combase.dll is patched, so the class database reads the hive'
   Check ($run.Text -match 'ole32\.dll: ([1-9]\d*) slots patched') 'ole32.dll is patched as well'
   Check ($run.Text -match 'COM init=0x00000000') 'CoInitializeEx succeeded'
@@ -108,6 +116,24 @@ function Assert-Run([hashtable]$run, [string]$serverName, [bool]$consume, [bool]
   Check ($run.Text -match 'COM call=0x00000000') 'the method call succeeded'
   Check ($run.Text -match 'COM answer=4242') 'the object created by COM answered 4242'
   Check ($run.Text -match 'consumer exit=0') 'the client exited cleanly'
+  # L5.6: the component's registration goes through a type library that exists
+  # only inside the archive. Without it `LoadTypeLibEx` on a path with no file
+  # fails, `DllRegisterServer` aborts, and nothing above would have run.
+  Check ($run.Text -match 'typelib thunks: LoadTypeLibEx=1 RegisterTypeLib=1') 'the component loaded and registered its type library through the runtime'
+  Check ($run.Text -match 'typelib after register: loaded=1 registered=1 unregistered=0 objects=1') 'one library parsed, registered, with one live ITypeLib object'
+  Check ($run.Text -match 'hive TypeLib key: present') 'the library landed under TypeLib\{LIBID}'
+  Check ($run.Text -match 'hive TypeLib name: LunaPack answer typelib') 'the library name came from the parsed typelib'
+  Check ($run.Text -match 'hive TypeLib 1.0 key: present') 'the library was registered under its version'
+  $virtLibPath = 'hive TypeLib path: C:\\virt\\' + [regex]::Escape($serverName)
+  Check ($run.Text -match $virtLibPath) 'the platform entry names the virtual path, not a file on disk'
+  Check ($run.Text -match 'hive Interface name: ILpAnswer') 'the interface came from the typelib, with its name'
+  Check ($run.Text -match 'hive Interface TypeLib: \{A1B2C3D4-0001-4000-9000-000000000001\}') 'Interface\{IID}\TypeLib names the library, whole GUID and all'
+  Check ($run.Text -match 'hive Interface NumMethods: 4 \(type=4\)') 'NumMethods came from the typelib vtable size'
+  Check ($run.Text -match 'hive CLSID TypeLib: \{A1B2C3D4-0001-4000-9000-000000000001\}') 'the coclass points back at the library'
+  # And the round trip: a client asks the registry for the library it
+  # registered and gets the same object back, though no .tlb file exists.
+  Check ($run.Text -match 'REG load=0x00000000') 'LoadRegTypeLib found the registered library in the hive'
+  Check ($run.Text -match 'REG count=2 hr=0x00000000') 'the library it got back reports its two types'
   # The activation path itself: combase resolved the class through a cached root
   # handle, the runtime translated it back to hkcr, and LoadLibrary was answered
   # from the archive under the path the component registered.
@@ -116,7 +142,13 @@ function Assert-Run([hashtable]$run, [string]$serverName, [bool]$consume, [bool]
   Check ($run.Text -match $loadLine) 'the server was mapped out of the virtual filesystem'
   Check ($run.Text -match ($loadLine + ' base=\d+ dllmain=1')) 'the mapped server ran its DllMain'
   Check ($run.Text -match 'DllUnregisterServer returned 0x00000000') 'the component unregistered itself'
-  Check ($run.Text -match 'hive after unregister: .* delete=2 ') 'unregistering removed the class keys from the hive'
+  # The other half of L5.6: taking the library out again. The version halves
+  # arrive as WORD arguments, so this also proves they are read as words.
+  Check ($run.Text -match 'typelib thunks total: .*UnRegisterTypeLib=1') 'unregistration called the runtime, not the real registry'
+  Check ($run.Text -match ('typelib-unregister TypeLib\\\{A1B2C3D4-0001-4000-9000-000000000001\}\\1\.0')) 'the library key was removed by its own name and version'
+  Check ($run.Text -match 'hive TypeLib after unregister: gone') 'nothing of the library is left in the hive'
+  Check ($run.Text -match 'typelib after unregister: .*unregistered=1') 'the runtime counted the removal'
+  Check ($run.Text -match 'hive after unregister: .* delete=3 ') 'unregistering removed the class keys and the library from the hive'
   if ($ordinaryBuild) {
     # A CRT build registers the path GetModuleFileNameW reported. The loader
     # cannot name a hand-mapped image, so a nonzero count here means the runtime
@@ -154,7 +186,7 @@ Write-Host "  process elevated: $elevated (not required either way)"
 # The point is not that the process is unelevated but that the write path never
 # needed HKLM: the hive answered it, and the machine half of the registry is
 # untouched.
-Check ($runConsume.Text -match 'hive after activate: open=[1-9]\d* .* query=\d+ write=5') 'the hive answered the activation reads, not HKLM'
+Check ($runConsume.Text -match 'hive after activate: open=[1-9]\d* .* query=\d+ write=18') 'the hive answered the activation reads, not HKLM'
 
 # ------------------------------------------------------------------- AV gate
 Write-Host '==> AV retest (separate mechanism)'

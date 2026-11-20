@@ -80,6 +80,22 @@ $env:PATH = "$binDir;$env:PATH"
 Write-Host "==> link.exe: $linkExe"
 Write-Host "==> cl.exe  : $clExe"
 
+# MIDL and RC come from the SDK, not from MSVC. They are only needed for the
+# L5.6 fixture, whose type library has to be compiled from an IDL and attached
+# to the server as a resource.
+$sdkBinRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+$sdkBinVersion = $sdkVersion
+if (-not (Test-Path (Join-Path $sdkBinRoot "$sdkBinVersion\x64\midl.exe"))) {
+  $sdkBinVersion = (Get-ChildItem $sdkBinRoot -Directory |
+                    Where-Object { Test-Path (Join-Path $_.FullName 'x64\midl.exe') } |
+                    Sort-Object Name -Descending | Select-Object -First 1).Name
+}
+$sdkBinDir = Join-Path $sdkBinRoot "$sdkBinVersion\x64"
+$midlExe = Join-Path $sdkBinDir 'midl.exe'
+$rcExe = Join-Path $sdkBinDir 'rc.exe'
+$env:PATH = "$sdkBinDir;$env:PATH"
+Write-Host "==> midl.exe: $midlExe"
+
 # --------------------------------------------------------------- 3. lpvirt.dll
 $rsp = Join-Path $distDir 'lpvirt.rsp'
 $def = (Join-Path $runtimeDir 'lpvirt.def').Replace('\', '/')
@@ -97,7 +113,10 @@ $ucrtArg = $ucrtLib.Replace('\', '/')
   "/LIBPATH:`"$ucrtArg`"",
   "`"$archiveArg`"",
   'kernel32.lib', 'user32.lib', 'advapi32.lib', 'bcrypt.lib', 'ntdll.lib',
-  'shell32.lib', 'dbghelp.lib', 'ws2_32.lib'
+  'shell32.lib', 'dbghelp.lib', 'ws2_32.lib',
+  # L5.6: the type-library thunks fall through to the real LoadTypeLibEx and
+  # RegisterTypeLib for a path that is not in the archive.
+  'oleaut32.lib'
 ) | Set-Content -Path $rsp -Encoding ascii
 Write-Host '==> link lpvirt.dll'
 & $linkExe "@$rsp"
@@ -211,24 +230,47 @@ $comConsumerExe = Join-Path $distDir 'com_consumer.exe'
 $comConsumerObj = Join-Path $distDir 'com_consumer.obj'
 $comHostSrc = Join-Path $runtimeDir 'tests\com_host.c'
 $comHostExe = Join-Path $distDir 'com_host.exe'
+
+# L5.6: the component's type library. MIDL compiles the IDL, RC turns the .tlb
+# into resource type TYPELIB (7), and the resource goes into both server
+# builds. That resource is the only copy of the type library that exists at
+# run time, which is the whole point: oleaut32 wants a file, and there is none.
+Write-Host '==> midl: com_server.idl -> com_server.tlb (L5.6 fixture type library)'
+$comIdl = Join-Path $runtimeDir 'tests\com_server.idl'
+$comTlb = Join-Path $distDir 'com_server.tlb'
+$comRc = Join-Path $runtimeDir 'tests\com_server.rc'
+$comRes = Join-Path $distDir 'com_server.res'
+if (-not (Test-Path $midlExe)) { throw "midl.exe not found: $midlExe" }
+& $midlExe '/nologo' '/x64' '/h' (Join-Path $distDir 'com_server_tlb.h') `
+  '/iid' (Join-Path $distDir 'com_server_iid.c') '/tlb' $comTlb $comIdl
+Assert-Ok 'midl com_server.idl'
+Write-Host '==> rc: attach the type library as resource type 7'
+Push-Location $distDir
+try {
+  & $rcExe '/nologo' "/fo`"$comRes`"" $comRc
+  Assert-Ok 'rc com_server.rc'
+} finally {
+  Pop-Location
+}
+
 Write-Host '==> compile com_server.dll (in-proc server, no CRT, /ENTRY:DllMain)'
 & $clExe /nologo /c /GS- "/Fo:$comServerObj" "$comServerSrc"
 Assert-Ok 'cl com_server.c'
 & $linkExe /nologo /DLL /ENTRY:DllMain /NODEFAULTLIB /MACHINE:X64 "/DEF:$comServerDef" `
-  "/OUT:$comServerDll" "$comServerObj" kernel32.lib advapi32.lib
+  "/OUT:$comServerDll" "$comServerObj" "$comRes" kernel32.lib advapi32.lib oleaut32.lib
 Assert-Ok 'link com_server.dll'
 # The same component built the ordinary way: CRT start-up, real DllMain, and it
 # registers itself through GetModuleFileNameW instead of a hard-coded path.
 $comCrtSrc = Join-Path $runtimeDir 'tests\com_server_crt.c'
 $comCrtDll = Join-Path $distDir 'com_server_crt.dll'
 Write-Host '==> compile com_server_crt.dll (ordinary build: CRT + real DllMain)'
-& $clExe /nologo /LD "/Fo:$objDir" "/Fe:$comCrtDll" "$comCrtSrc" /link /DEF:"$comServerDef" advapi32.lib kernel32.lib
+& $clExe /nologo /LD "/Fo:$objDir" "/Fe:$comCrtDll" "$comCrtSrc" "$comRes" /link /DEF:"$comServerDef" advapi32.lib kernel32.lib oleaut32.lib
 Assert-Ok 'cl com_server_crt.dll'
 Write-Host '==> compile com_consumer.exe (no CRT, /ENTRY:com_main)'
 & $clExe /nologo /c /GS- "/Fo:$comConsumerObj" "$comConsumerSrc"
 Assert-Ok 'cl com_consumer.c'
 & $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:com_main /NODEFAULTLIB `
-  "/OUT:$comConsumerExe" "$comConsumerObj" kernel32.lib ole32.lib advapi32.lib
+  "/OUT:$comConsumerExe" "$comConsumerObj" kernel32.lib ole32.lib advapi32.lib oleaut32.lib
 Assert-Ok 'link com_consumer.exe'
 Write-Host '==> compile com_host.exe (L5 host: register, activate, unregister)'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$comHostExe" "$comHostSrc" /link kernel32.lib ole32.lib advapi32.lib

@@ -505,6 +505,16 @@ fn log_reg(kind : String, detail : String) -> Unit {
 }
 
 ///|
+/// Start a new phase of the log. A long run fills the bound quickly -- COM
+/// activation alone asks about dozens of keys -- and what a caller wants after
+/// that is what happened *in the phase it just entered*, not the tail of the
+/// one before it.
+#export_name("lp_reg_log_reset")
+pub fn lp_reg_log_reset() -> Unit {
+  g_runtime.reg_log.clear()
+}
+
+///|
 #export_name("lp_reg_log_count")
 pub fn lp_reg_log_count() -> Int32 {
   g_runtime.reg_log.length()

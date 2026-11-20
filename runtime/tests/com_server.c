@@ -22,6 +22,7 @@
  * needed: HKCR looks like a normal writable key.
  */
 #include <windows.h>
+#include <oleauto.h>
 
 /* Set by DllMain(DLL_PROCESS_ATTACH). See the note above. */
 static int g_attached = 0;
@@ -214,9 +215,37 @@ static LSTATUS set_sz(HKEY key, const wchar_t *name, const wchar_t *value) {
                         (DWORD)((wlen(value) + 1) * sizeof(wchar_t)));
 }
 
+/* {A1B2C3D4-0001-4000-9000-000000000001} -- the LIBID in com_server.idl. */
+static const GUID LIBID_LunaPackAnswer = {
+    0xa1b2c3d4, 0x0001, 0x4000, {0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
+
+/* Register the type library, the way an ATL or MFC server does before it
+ * registers its classes: load the library out of this module, hand it to
+ * RegisterTypeLib, release it.
+ *
+ * Under the runtime `module_path()` is the virtual path -- there is no file
+ * behind it -- so this is exactly the call that used to fail with
+ * TYPE_E_CANTLOADLIBRARY. It succeeds only because the runtime parsed the
+ * TYPELIB resource out of the image and kept the registration in its hive. */
+static HRESULT register_type_library(void) {
+  ITypeLib *tl = NULL;
+  const wchar_t *path = module_path();
+  HRESULT hr = LoadTypeLibEx(path, REGKIND_NONE, &tl);
+  if (FAILED(hr) || !tl) return FAILED(hr) ? hr : E_FAIL;
+  hr = RegisterTypeLib(tl, (LPOLESTR)path, NULL);
+  tl->lpVtbl->Release(tl);
+  return hr;
+}
+
 HRESULT __stdcall DllRegisterServer(void) {
   HKEY cls = NULL, inproc = NULL, prog = NULL, prog_clsid = NULL;
   LSTATUS st;
+  HRESULT hr;
+
+  /* A server without a registered type library is only half registered, so a
+   * failure here is fatal for the registration, as it is in a real server. */
+  hr = register_type_library();
+  if (FAILED(hr)) return hr;
 
   st = RegCreateKeyExW(HKEY_CLASSES_ROOT, CLSID_KEY, 0, NULL, 0, KEY_WRITE, NULL, &cls, NULL);
   if (st != ERROR_SUCCESS) return HRESULT_FROM_WIN32(st) & 0xFFFFFFFF;
@@ -247,6 +276,10 @@ HRESULT __stdcall DllRegisterServer(void) {
 }
 
 HRESULT __stdcall DllUnregisterServer(void) {
+  /* Unregister the type library first, in the same order the registration
+   * wrote it. Under the runtime the hive answers for the key, so this removes
+   * the library without touching the real registry. */
+  UnRegisterTypeLib(&LIBID_LunaPackAnswer, 1, 0, 1033, SYS_WIN64);
   RegDeleteKeyW(HKEY_CLASSES_ROOT, CLSID_KEY);
   RegDeleteKeyW(HKEY_CLASSES_ROOT, L"CLSID\\{9B1F0A4C-2D3E-4A55-8F01-112233445566}\\InprocServer32");
   RegDeleteKeyW(HKEY_CLASSES_ROOT, PROGID_KEY);

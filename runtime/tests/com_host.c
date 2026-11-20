@@ -33,6 +33,7 @@ typedef int (*api_hits_fn)(const char *);
 typedef void (*api_reset_fn)(void);
 typedef int (*log_count_fn)(void);
 typedef int (*log_get_fn)(int, char *, int);
+typedef void (*log_reset_fn)(void);
 typedef int64_t (*map_fn)(const void *, int32_t);
 typedef int32_t (*map_error_fn)(void);
 typedef int64_t (*get_entry_fn)(int64_t);
@@ -42,6 +43,17 @@ typedef int (*dllmain_fn)(void *, unsigned long, void *);
 typedef int (*set_path_fn)(int64_t, const wchar_t *);
 typedef int (*note_base_fn)(int64_t);
 typedef HRESULT(__stdcall *dll_reg_fn)(void);
+typedef int (*typelib_stats_fn)(int32_t *, int);
+typedef int (*hive_get_fn)(int64_t, const wchar_t *, const wchar_t *, void *, int, int32_t *);
+typedef int (*hive_has_fn)(int64_t, const wchar_t *);
+
+#define HKEY_CLASSES_ROOT ((int64_t)0x80000000L)
+
+/* The identifiers in com_server.idl. The library is the interesting one: it is
+ * the key a registration creates and the name a program loads back. */
+#define LIBID_TEXT L"{A1B2C3D4-0001-4000-9000-000000000001}"
+#define ILPANSWER_TEXT L"{9B1F0A4D-2D3E-4A55-8F01-112233445566}"
+#define CLSID_TEXT L"{9B1F0A4C-2D3E-4A55-8F01-112233445566}"
 
 #define GET(h, name, type) (type)(void *)GetProcAddress(h, name)
 
@@ -54,6 +66,44 @@ static void dump_log(log_count_fn count, log_get_fn get, const char *label) {
     get(i, line, sizeof(line));
     printf("  [%d] %s\n", i, line);
   }
+}
+
+/* What a registration actually wrote. The values are read back out of the hive
+ * through the runtime's own seam, because the hive is not the real registry and
+ * advapi32 has never heard of it. */
+static void dump_typelib(hive_get_fn get, hive_has_fn has) {
+  int32_t dword = 0;
+  wchar_t buf[512];
+  int32_t typ = 0;
+  int len;
+
+  printf("hive TypeLib key: %s\n", has(HKEY_CLASSES_ROOT, L"TypeLib\\" LIBID_TEXT) ? "present" : "MISSING");
+  len = get(HKEY_CLASSES_ROOT, L"TypeLib\\" LIBID_TEXT, L"", buf, sizeof(buf), &typ);
+  printf("hive TypeLib name: %ls (type=%ld)\n", len > 0 ? buf : L"(none)", (long)typ);
+
+  printf("hive TypeLib 1.0 key: %s\n",
+         has(HKEY_CLASSES_ROOT, L"TypeLib\\" LIBID_TEXT L"\\1.0") ? "present" : "MISSING");
+  len = get(HKEY_CLASSES_ROOT, L"TypeLib\\" LIBID_TEXT L"\\1.0\\1033", L"win64", buf, sizeof(buf), &typ);
+  printf("hive TypeLib path: %ls\n", len > 0 ? buf : L"(none)");
+
+  printf("hive Interface key: %s\n",
+         has(HKEY_CLASSES_ROOT, L"Interface\\" ILPANSWER_TEXT) ? "present" : "MISSING");
+  len = get(HKEY_CLASSES_ROOT, L"Interface\\" ILPANSWER_TEXT, L"", buf, sizeof(buf), &typ);
+  printf("hive Interface name: %ls\n", len > 0 ? buf : L"(none)");
+  len = get(HKEY_CLASSES_ROOT, L"Interface\\" ILPANSWER_TEXT L"\\1.0", L"TypeLib", buf, sizeof(buf), &typ);
+  printf("hive Interface TypeLib: %ls\n", len > 0 ? buf : L"(none)");
+  len = get(HKEY_CLASSES_ROOT, L"Interface\\" ILPANSWER_TEXT L"\\1.0", L"NumMethods", &dword, 4, &typ);
+  printf("hive Interface NumMethods: %ld (type=%ld)\n", len == 4 ? (long)dword : -1L, (long)typ);
+
+  len = get(HKEY_CLASSES_ROOT, L"CLSID\\" CLSID_TEXT L"\\TypeLib", L"", buf, sizeof(buf), &typ);
+  printf("hive CLSID TypeLib: %ls\n", len > 0 ? buf : L"(none)");
+}
+
+static void print_typelib_stats(typelib_stats_fn tlb_stats, const char *label) {
+  int32_t ts[8] = {0};
+  int n = tlb_stats(ts, 32);
+  printf("%s: loaded=%ld registered=%ld unregistered=%ld objects=%ld (n=%d)\n", label,
+         (long)ts[0], (long)ts[1], (long)ts[2], (long)ts[3], n);
 }
 
 static void print_reg_stats(reg_stats_fn reg_stats, const char *label) {
@@ -95,15 +145,20 @@ int main(int argc, char **argv) {
   api_reset_fn hits_reset = GET(virt, "lp_api_hits_reset", api_reset_fn);
   log_count_fn log_count = GET(virt, "lp_reg_log_count", log_count_fn);
   log_get_fn log_get = GET(virt, "lp_reg_log_get", log_get_fn);
+  log_reset_fn log_reset = GET(virt, "lp_reg_log_reset", log_reset_fn);
   map_fn map_image = GET(virt, "lp_map_image", map_fn);
   map_error_fn map_error = GET(virt, "lp_map_error", map_error_fn);
   get_entry_fn get_entry = GET(virt, "lp_get_entry", get_entry_fn);
   get_export_fn get_export = GET(virt, "lp_get_export", get_export_fn);
   set_path_fn set_path = GET(virt, "lp_set_module_path", set_path_fn);
   note_base_fn note_attach = GET(virt, "lp_mapped_attach", note_base_fn);
+  typelib_stats_fn tlb_stats = GET(virt, "lp_typelib_stats", typelib_stats_fn);
+  hive_get_fn hive_get = GET(virt, "lp_virt_get_reg", hive_get_fn);
+  hive_has_fn hive_has = GET(virt, "lp_virt_has_reg", hive_has_fn);
   if (!init || !reset || !add_file || !install || !stats || !reg_stats || !hits ||
-      !hits_reset || !log_count || !log_get || !map_image || !map_error || !get_entry ||
-      !get_export || !set_path || !note_attach) {
+      !hits_reset || !log_count || !log_get || !log_reset || !map_image || !map_error ||
+      !get_entry || !get_export || !set_path || !note_attach || !tlb_stats || !hive_get ||
+      !hive_has) {
     printf("MISSING EXPORT in lpvirt.dll\n");
     return 1;
   }
@@ -177,6 +232,11 @@ int main(int argc, char **argv) {
   printf("register thunks: RegCreateKeyExW=%d RegSetValueExW=%d RegCloseKey=%d RegDeleteKeyW=%d\n",
          hits("RegCreateKeyExW"), hits("RegSetValueExW"), hits("RegCloseKey"),
          hits("RegDeleteKeyW"));
+  printf("typelib thunks: LoadTypeLibEx=%d RegisterTypeLib=%d UnRegisterTypeLib=%d LoadRegTypeLib=%d\n",
+         hits("LoadTypeLibEx"), hits("RegisterTypeLib"), hits("UnRegisterTypeLib"),
+         hits("LoadRegTypeLib"));
+  print_typelib_stats(tlb_stats, "typelib after register");
+  dump_typelib(hive_get, hive_has);
   print_reg_stats(reg_stats, "hive after register");
   dump_log(log_count, log_get, "registration requests");
 
@@ -244,9 +304,20 @@ int main(int argc, char **argv) {
   dump_log(log_count, log_get, "registry requests");
 
   /* 5. unregister */
+  /* Activation filled the log, so start a new phase: what matters next is what
+   * the unregistration did, not the tail of the activation. */
+  log_reset();
   HRESULT hr_unreg = unreg();
   printf("DllUnregisterServer returned 0x%08lx\n", (unsigned long)hr_unreg);
+  /* The counters are cumulative since the reset before DllRegisterServer, so
+   * this is the whole exchange: one library registered, one removed. */
+  printf("typelib thunks total: LoadTypeLibEx=%d RegisterTypeLib=%d UnRegisterTypeLib=%d\n",
+         hits("LoadTypeLibEx"), hits("RegisterTypeLib"), hits("UnRegisterTypeLib"));
+  printf("hive TypeLib after unregister: %s\n",
+         hive_has(HKEY_CLASSES_ROOT, L"TypeLib\\" LIBID_TEXT L"\\1.0") ? "still present" : "gone");
+  print_typelib_stats(tlb_stats, "typelib after unregister");
   print_reg_stats(reg_stats, "hive after unregister");
+  dump_log(log_count, log_get, "unregister requests");
 
   int32_t s[16] = {0};
   stats(s, 64);

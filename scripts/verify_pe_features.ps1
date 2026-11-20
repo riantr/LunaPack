@@ -72,8 +72,15 @@ Write-Host "==> L3.3 / L3.4 white-box (delay/TLS/EH directory readers)"
 $mtFile = Join-Path $env:TEMP 'lp_l3_moon_test.txt'
 if (-not (Test-Path -LiteralPath $mtFile)) { Set-Content -LiteralPath $mtFile -Value '' -Encoding ascii }
 Push-Location (Join-Path $root 'runtime')
+# Under `Stop`, PowerShell 5.1 turns any stderr output of a native command into a
+# terminating error, and moon writes its compile progress there. The exit code
+# and the captured output are what this gate reads, so stderr is allowed through
+# rather than treated as a failure.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 & moon test --target native > $mtFile 2>&1
 $mtExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
 Pop-Location
 $mt = (Get-Content -LiteralPath $mtFile -Raw) -join "`n"
 Check ($mtExit -eq 0) "runtime moon test exit 0 (got $mtExit)"

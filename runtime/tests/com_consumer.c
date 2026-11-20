@@ -7,6 +7,7 @@
  * called its DllGetClassObject.
  */
 #include <windows.h>
+#include <oleauto.h>
 
 static void put(const char *s, int n) {
   DWORD wrote = 0;
@@ -67,11 +68,51 @@ struct ILpAnswer {
   const ILpAnswerVtbl *lpVtbl;
 };
 
+/* {A1B2C3D4-0001-4000-9000-000000000001} -- the LIBID in com_server.idl. */
+static const GUID LIBID_LunaPackAnswer = {
+    0xa1b2c3d4, 0x0001, 0x4000, {0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
+
+/* The first four slots of ITypeLib, spelled out. The SDK header declares
+ * GetTypeInfoCount without its out-parameter (a midl quirk for this
+ * interface), so calling it through that declaration would leave the argument
+ * register holding whatever was there before. The real ABI takes the pointer. */
+typedef struct LpTypeLib LpTypeLib;
+typedef struct LpTypeLibVtbl {
+  HRESULT(STDMETHODCALLTYPE *QueryInterface)(LpTypeLib *, const IID *, void **);
+  ULONG(STDMETHODCALLTYPE *AddRef)(LpTypeLib *);
+  ULONG(STDMETHODCALLTYPE *Release)(LpTypeLib *);
+  HRESULT(STDMETHODCALLTYPE *GetTypeInfoCount)(LpTypeLib *, UINT *);
+} LpTypeLibVtbl;
+
+struct LpTypeLib {
+  const LpTypeLibVtbl *lpVtbl;
+};
+
 int com_main(void) {
   HRESULT hr_init = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
   say("COM init=0x");
   say_hex((unsigned long)hr_init);
   say("\n");
+
+  /* The type library the server registered is loadable by identifier. The
+   * registry entry points at a path with no file behind it, so this only works
+   * because the runtime kept the parsed library and answers for it. */
+  ITypeLib *tl = NULL;
+  HRESULT hr_tlb = LoadRegTypeLib(&LIBID_LunaPackAnswer, 1, 0, 1033, &tl);
+  say("REG load=0x");
+  say_hex((unsigned long)hr_tlb);
+  say("\n");
+  if (SUCCEEDED(hr_tlb) && tl) {
+    LpTypeLib *lib = (LpTypeLib *)tl;
+    UINT count = 0;
+    HRESULT hr_count = lib->lpVtbl->GetTypeInfoCount(lib, &count);
+    say("REG count=");
+    say_int((long)count);
+    say(" hr=0x");
+    say_hex((unsigned long)hr_count);
+    say("\n");
+    lib->lpVtbl->Release(lib);
+  }
 
   ILpAnswer *obj = NULL;
   HRESULT hr = CoCreateInstance(&CLSID_LpAnswer, NULL, CLSCTX_INPROC_SERVER, &IID_ILpAnswer,

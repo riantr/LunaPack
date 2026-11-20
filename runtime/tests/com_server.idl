@@ -1,0 +1,47 @@
+// Type library for the L5 test component.
+//
+// The identifiers have to match the ones the C source uses, because the point
+// of the fixture is that COM resolves the *same* CLSID the component registered
+// through the registry into the *same* interface the type library describes.
+//
+//   LIBID   {A1B2C3D4-0001-4000-9000-000000000001}
+//   IID     {9B1F0A4D-2D3E-4A55-8F01-112233445566}  ILpAnswer
+//   CLSID   {9B1F0A4C-2D3E-4A55-8F01-112233445566}  LpAnswer
+//
+// MIDL compiles this to a .tlb, which becomes resource type TYPELIB (7) in the
+// server. That resource is the only copy of the type library that exists: the
+// runtime reads it out of the image, because there is no file for oleaut32 to
+// read.
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+[
+  uuid(A1B2C3D4-0001-4000-9000-000000000001),
+  version(1.0),
+  helpstring("LunaPack answer typelib")
+]
+library LunaPackAnswer
+{
+  importlib("stdole32.tlb");
+
+  [
+    uuid(9B1F0A4D-2D3E-4A55-8F01-112233445566),
+    version(1.0),
+    helpstring("Answer interface")
+  ]
+  interface ILpAnswer : IUnknown
+  {
+    HRESULT GetAnswer([out, retval] long *value);
+  };
+
+  [
+    uuid(9B1F0A4C-2D3E-4A55-8F01-112233445566),
+    version(1.0),
+    helpstring("Answer object")
+  ]
+  coclass LpAnswer
+  {
+    [default] interface ILpAnswer;
+  };
+};
