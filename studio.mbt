@@ -320,7 +320,12 @@ fn proxy_bypassed(url : String) -> Bool {
 ///|
 /// A proxy, when the machine has one. GitHub is reached over TLS through a
 /// CONNECT tunnel; a proxy that cannot be used simply means a direct try.
-async fn download_proxy(url : String) -> @http.ClientConnection? {
+///
+/// The proxy is handed to `@http` as a description, not as a connection we
+/// dial ourselves: `get_stream(..., proxy? : Proxy)` opens the tunnel. A value
+/// with no `scheme://` is not a proxy we can use, and returning `None` keeps the
+/// old behaviour of falling through to a direct request.
+fn download_proxy(url : String) -> @http.Proxy? {
   if proxy_bypassed(url) {
     return None
   }
@@ -331,9 +336,14 @@ async fn download_proxy(url : String) -> @http.ClientConnection? {
   if proxy == "" {
     return None
   }
-  Some(@http.ClientConnection::ClientConnection(proxy)) catch {
-    _ => None
+  let usable = match proxy.find("://") {
+    Some(_) => true
+    None => false
   }
+  if !usable {
+    return None
+  }
+  Some(@http.Proxy::Proxy(proxy))
 }
 
 ///|
