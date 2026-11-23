@@ -7,24 +7,55 @@ injector builds were quarantined as `HVM:Trojan/Injector.gen!A`, and the reason
 the remote-injection product form was dropped. "It worked in the demo" is not
 evidence about AV.
 
-## Engines available on this machine (measured 2026-11-18)
+## Engines available on this machine (re-measured 2026-11-23)
 
 | Engine | State | Use |
 | --- | --- | --- |
-| Huorong Sysdiag (`HipsTray.exe`, `wsctrlsvc`) | **active** | Primary gate. Quarantine directory: `C:\ProgramData\Huorong\Sysdiag\Quarantine`. Baseline count: **16 files** (11 from the P0 injector experiment on 2026-11-13, 5 older). |
-| Windows Defender | installed but **disabled** (`AntivirusEnabled=False`, `RealTimeProtectionEnabled=False`) | Cannot serve as a second live gate here. Listed so the gap is explicit, not hidden. |
+| Huorong Sysdiag (`HipsTray.exe`, `wsctrlsvc`) | **active** | Primary gate. Quarantine directory: `C:\ProgramData\Huorong\Sysdiag\Quarantine`; entries are named by the file's SHA-1. Baseline count: **17 files** — 11 from the P0 injector experiment on 2026-11-13, 5 older, and as of 2026-11-23 one from the sensor calibration below (`3395856CE81F2B7382DEE72602F798B642F14140`, 84 B, the EICAR test file). |
+| 360 Total Security Pro (`360sd.exe`, `360tray.exe`, service `360rp` running) | **active** | Second gate. It has no quarantine directory until it quarantines something, so the countable signal is its real-time record: `C:\Program Files\360\360sd\Log\RealtimeProtectLog\<date>.log`, UTF-16LE, one entry per action, each entry naming the file and the verdict. No entries at baseline that name this repository. |
+| Windows Defender | installed but **disabled** (`AntivirusEnabled=False`, `RealTimeProtectionEnabled=False`) | Not used. Listed so a reader can see it was considered and why it is not a gate here. |
 
-Requirement from the roadmap is "Huorong + at least one other engine". That is
-**not currently satisfiable on this machine**. Two honest options, to be chosen
-before L4 ships:
+The roadmap requires "Huorong + at least one other engine", and that is now
+satisfied on this machine: two independent engines, both live, both measured in
+the same run. What each engine covers is recorded below rather than averaged
+into a single "AV passed".
 
-1. Enable Defender real-time protection for the duration of each test and
-   record its detection log. This changes machine state and needs an explicit
-   decision — it is not done automatically by any script here.
-2. Use a second engine on another machine (or a VM) and attach its report.
+## Calibration: is the sensor actually firing?
 
-Until one of those is in place, any "AV passed" statement in a loop note must
-say "Huorong only, second engine pending". Never write a bare "AV passed".
+A pass that only records "the count did not move" proves nothing if the engine
+was not looking. Before any result was recorded, both engines were shown the
+standard EICAR test string (68 bytes, written to `%TEMP%`):
+
+| Engine | Result |
+| --- | --- |
+| Huorong | quarantined it: its quarantine grew 16 → 17, entry `3395856CE81F2B7382DEE72602F798B642F14140` (SHA-1 of the EICAR string), 84 B, 2026-11-23 16:09:27 |
+| 360 | deleted the file within 6 seconds of it being written |
+
+Both sensors fire on a known-bad file, so "unchanged" in a later run means
+"this engine looked at it and did not act", not "nothing looked".
+
+## The matrix as measured (2026-11-23)
+
+Each row is a copy placed in `%TEMP%` and watched for 8–10 seconds; the file
+itself was then compared byte for byte, because an engine that quarantines a
+file can also leave a blocked placeholder behind.
+
+| Artifact | Huorong | 360 Total Security |
+| --- | --- | --- |
+| `lpvhost.exe` (the launcher, 369 KB) | untouched | untouched |
+| `lpvirt.dll` (the runtime, 521 KB) | untouched | untouched |
+| a produced `--virtual` bundle (898 KB SFX, runtime embedded) | untouched, still runs | untouched, still runs, SHA-256 unchanged |
+| `mini_target.exe` (C fixture) | untouched | untouched |
+| `ntdll_target.exe` (C fixture, M2b) | untouched | **blocked**, `HEUR/QVM202.0.992D.Malware.Gen` |
+| `com_consumer.exe` (C fixture, M5/M6) | untouched | **blocked**, `HEUR/QVM202.0.992D.Malware.Gen` |
+
+The two blocked fixtures are built by the same script as `mini_target.exe` and
+are not shipped. The difference matters in both directions: the shipping
+artifacts — the runtime, the launcher, and a bundle that embeds the runtime —
+are clean under both engines, and a copy of a fixture can be quarantined by one
+engine while the other ignores it. `verify_virtual_bundle.ps1` asserts the first
+half (no new detection naming this repository, bundle byte-identical); the
+second half is this table.
 
 ## Signed vs unsigned
 
@@ -33,15 +64,46 @@ standalone asset and every `--virtual` bundle embeds a checksummed copy of it;
 neither is code-signed. Signing changes how some engines treat a binary, so
 both states must be recorded:
 
-- [ ] unsigned `lpvirt.dll` + unsigned host (current state) — Huorong count before/after
-- [ ] signed build, if a certificate becomes available — same test, same harness
-- [ ] note whether the engine's verdict differed; a signed pass does not
-      retroactively clear the unsigned build
+- [x] unsigned `lpvirt.dll` + unsigned host — measured 2026-11-23 on both
+      engines (table above): no action from either
+- [ ] signed build — **blocked twice over, both measured, neither guessed**
+
+The signed leg cannot be produced on this machine, and the reason is worth
+writing down because it is not "we forgot":
+
+1. **No usable certificate.** `Cert:\CurrentUser\My` holds two code-signing
+   certificates for `CN=Riantr` (expiring 2026-06-25 and 2026-06-27) with
+   private keys, but they are self-signed, so no chain to a trusted root exists.
+   `signtool sign /sha1 …` answers *"No certificates were found that met all the
+   given criteria"*, and `Set-AuthenticodeSignature` aborts with *"cannot build a
+   certificate chain to a trusted root"* and leaves the file unsigned. Both were
+   run; neither produced a signature.
+2. **The container cannot hold one anyway.** An Authenticode signature is
+   appended after the last section, at the end of the file — and the archive
+   footer of a `--virtual` bundle already lives there. Appending 4096 zero bytes
+   to a working bundle is enough to make `lpvhost.exe` report *"this file
+   carries no LunaPack virtual bundle"*. So even with a real certificate the
+   signer would produce a bundle that no longer runs, until the launcher
+   searches backwards for the footer instead of reading it from EOF.
+
+A signed pass would not retroactively clear the unsigned build, so the matrix
+stays "unsigned, two engines" until both of those are addressed.
 
 ## Per-mechanism retest list
 
 Each row is a separate run. Do not batch them into one "everything" test: a
 single quarantine event must be attributable to the mechanism that caused it.
+
+**Second engine, applied to this table.** The rows below were recorded with
+Huorong only. On 2026-11-23 the same artifacts were shown to 360 as well, and
+the result is not uniform: the runtime, the launcher and a produced bundle are
+clean under both, but the C fixtures used by **M2b** (`ntdll_target.exe`) and
+**M5/M6** (`com_consumer.exe`) are blocked by 360's QVM heuristic as
+`HEUR/QVM202.0.992D.Malware.Gen` when copied out of `dist\`, while Huorong
+leaves them alone. That is a property of those two fixture binaries, not of the
+mechanism they exercise — but a second-engine retest of M2b, M5 or M6 must
+record "fixture detected" rather than "pass", and the qualifier "Huorong only,
+second engine pending" is now out of date for every row.
 
 | # | Mechanism | First loop that adds it | Baseline result | Retest date / count | Verdict |
 | --- | --- | --- | --- | --- | --- |
@@ -59,15 +121,19 @@ single quarantine event must be attributable to the mechanism that caused it.
 
 ## Run procedure (all mechanisms)
 
-1. Record the quarantine file count before the run (PowerShell, read-only).
+1. Record both signals before the run, read-only: Huorong's quarantine count and
+   360's real-time record (`RealtimeProtectLog\<date>.log`, decoded as UTF-16LE).
+   `scripts/verify_virtual_bundle.ps1` does this itself and prints both.
 2. Run **only** the new mechanism, with the smallest reproducible harness.
 3. Wait long enough for on-access and behavioural scanning to finish, then
-   record the count again.
-4. If the count increased: identify the quarantined file, do not delete the
-   evidence, and mark the mechanism NO-GO. Revert it. Do not proceed to the
-   next loop with a known-detected mechanism in the tree.
-5. If unchanged: record the exact count, engine state, binary hash and date in
-   the table above, with the "Huorong only" qualifier if no second engine ran.
+   record both signals again.
+4. If either signal moved: identify the file, do not delete the evidence, and
+   mark the mechanism NO-GO. Revert it. Do not proceed to the next loop with a
+   known-detected mechanism in the tree.
+5. If both are unchanged: record the exact counts, engine state, binary hash and
+   date in the table above. Say which engines were live — "two engines" is now
+   the normal statement, and an "engine not installed" exception has to be
+   named per engine rather than averaged away.
 
 Nothing in this checklist disables, excludes, or works around security
 software. That was an explicit project constraint from the P0 decision.

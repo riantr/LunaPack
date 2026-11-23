@@ -1926,6 +1926,13 @@ Two limits are measured rather than assumed, and both are asserted by
   starting it asks the real filesystem; Windows 11's own `cmd.exe` does exactly
   that, which is why it cannot find a virtual program even though
   `GetFileAttributesW` on the same literal path is answered from the layer.
+- **A `--virtual` bundle cannot be signed, in this layout.** The archive footer
+  sits at the end of the file and the launcher requires it there, so appended
+  bytes break the lookup: adding 4096 zero bytes — which is what an Authenticode
+  certificate table amounts to — makes `lpvhost.exe` answer *"this file carries
+  no LunaPack virtual bundle"*. Making a signed bundle possible means searching
+  backwards for the footer instead of reading it from EOF. That is a change to
+  the reader, not to the signer, and it has not been made.
 
 Anything the runtime does not own falls through to the real Win32 API through
 the runtime DLL's own unpatched import, so ordinary files and registry keys
@@ -1942,11 +1949,22 @@ powershell -File scripts\build_runtime_windows.ps1 -Consume
 The script builds `lpvirt.dll` and `lpvhost.exe`, compiles the C fixtures and
 runs the demos. `-Consume` deletes the consumer DLL from disk *after* its bytes
 are read but *before* they are mapped; the demo still runs and
-`GetModuleHandle("payload.dll")` returns NULL. On the development machine
-(Huorong) this produced no new quarantine entries, while the earlier remote
-injection experiment was isolated eleven times. That is a measurement on one
-engine, not a guarantee: see [the runtime's limits](runtime/README.md#limits)
-before treating any of it as production code.
+`GetModuleHandle("payload.dll")` returns NULL. On the development machine this
+produced no new quarantine entries in either installed engine — Huorong stayed
+at 17, and 360's real-time record did not mention the runtime, the launcher or a
+bundle produced from them.
+
+Two of the C fixtures are a different matter, and the difference is recorded
+rather than smoothed over: when `ntdll_target.exe` or `com_consumer.exe` is
+copied out of `dist\`, 360's QVM heuristic blocks the copy as
+`HEUR/QVM202.0.992D.Malware.Gen`, while Huorong leaves both alone and
+`mini_target.exe` (built the same way, by the same script) passes both engines.
+They are test fixtures and are not shipped, but any copy of them — a backup, an
+archive, an upload — can be quarantined on a machine that runs that engine.
+
+Two engines on one machine is still not a guarantee: see
+[the runtime's limits](runtime/README.md#limits) before treating any of it as
+production code.
 
 The shipping path is asserted by:
 
@@ -2257,9 +2275,10 @@ path, not a research demo.
 | `moon build --release --target native` / `--target wasm` | that the binary and the WebAssembly module are produced |
 | `moon info` + `git diff --exit-code -- '*.mbti'` | that the published interface is not stale |
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
-| `powershell -File scripts\verify_virtual_bundle.ps1` | the CLI-produced v7 bundle: virtual layer, embedded runtime, mapped program, checksum refusal, `--no-virtual`, zero disk and a separate AV retest |
+| `powershell -File scripts\verify_virtual_bundle.ps1` | the CLI-produced v7 bundle: virtual layer, embedded runtime, mapped program, checksum refusal, `--no-virtual`, zero disk, and no new detection by either AV engine installed |
+| `powershell -File scripts\verify_static_analysis.ps1` | that `moonbit_static_analysis` still reports zero actionable findings and that neither analyzer's counts rose past the recorded baseline |
 
-Measured on this machine (Windows, `moon 0.1.20261104`): `moon test --target
+Measured on this machine (Windows, `moon 0.1.20261119`): `moon test --target
 native` reports **211 tests, 211 passed, 0 failed**, and `--target wasm`
 reports the same. The runtime module adds **41 tests, 41 passed, 0 failed**.
 
@@ -2548,7 +2567,8 @@ drift, because a green suite says nothing about a claim written in prose:
 | `moon test --target native` | a change in the format, the compression, the encryption or one of the primitives — every one of them is checked against a vector or against the reference implementation |
 | `moon info` + `git diff --exit-code -- '*.mbti'` | a published interface that is stale: a symbol changed and the `.mbti` was not regenerated |
 | `bash scripts/test_linux.sh` | a round trip the unit tests do not cover — the install scripts, the permission bits, the corruption detection, the bundle as a byte-identical round trip |
-| `powershell -File scripts\verify_virtual_bundle.ps1` | a virtual bundle that silently starts unpacking, loses its runtime entry, accepts damaged bytes, or writes a payload to disk |
+| `powershell -File scripts\verify_virtual_bundle.ps1` | a virtual bundle that silently starts unpacking, loses its runtime entry, accepts damaged bytes, or writes a payload to disk — and, where an engine is installed, a bundle that starts getting detected |
+| `powershell -File scripts\verify_static_analysis.ps1` | a new actionable finding, or any count that grew past `scripts/static_analysis_baseline.json`; the baseline records which analyzer build produced it, because the same module reports different numbers under different analyzer builds |
 | the tag check of the release workflow | a tag that disagrees with the version in `moon.mod`, which would publish a module that is not the tree it was cut from |
 
 The Windows runtime scripts are separate drift detectors, each named for the
@@ -2566,11 +2586,14 @@ and `virtual-bundle` builds the release CLI plus the runtime and runs
 `scripts/verify_virtual_bundle.ps1`, which is the leg that asserts the
 shipping path — a v7 bundle made by the CLI, the embedded runtime entry, a
 mapped program reading its virtual files, checksum refusal, `--no-virtual` and
-zero payload on disk. The verifier's Huorong comparison reports **skipped** on
-a runner, because there is no engine to compare against; that retest stays
-manual. The `moon check --target wasm` and the `moon test` on the Wasm backend
-are **not** in CI: they are listed here because they were run by hand, not
-because CI depends on them.
+zero payload on disk. The verifier's AV comparisons report **skipped** on a
+runner, because there is no engine to compare against; that retest stays
+manual, and on a machine with both engines installed it compares two of them
+independently. The `moon check --target wasm` and the `moon test` on the Wasm
+backend are **not** in CI: they are listed here because they were run by hand,
+not because CI depends on them. `verify_static_analysis.ps1` is not in CI
+either: it needs the registry and an analyzer build, and its counts are only
+meaningful against the pinned coordinates in the baseline file.
 
 ## Used By
 

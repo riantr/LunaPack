@@ -16,6 +16,7 @@
 #   5. a checksum-damaged copy of the bundle is refused
 #   6. no payload file is extracted into the working directory or %TEMP%
 #   7. Huorong quarantine count is unchanged (separate AV retest for L6)
+#   8. 360 Total Security records no new detection, and the bundle is unchanged
 
 param([string]$DistDir = "", [switch]$KeepScratch)
 
@@ -74,6 +75,43 @@ function QuarantineCount() {
   $q = "C:\ProgramData\Huorong\Sysdiag\Quarantine"
   if (-not (Test-Path -LiteralPath $q)) { return -1 }
   return @(Get-ChildItem -LiteralPath $q -File -Force -ErrorAction SilentlyContinue).Count
+}
+
+# 360 Total Security has no quarantine directory to count while it has never
+# quarantined anything, so the countable signal is its real-time record: the
+# engine appends one entry per action to
+#   Log\RealtimeProtectLog\<date>.log
+# as UTF-16LE, and each entry names the file it acted on. That is the closest
+# thing to Huorong's quarantine listing and it moves for the same reason.
+function Av360LogDir() { return 'C:\Program Files\360\360sd\Log\RealtimeProtectLog' }
+
+function Av360Live() {
+  $service = Get-Service -Name '360rp' -ErrorAction SilentlyContinue
+  if ($null -eq $service -or $service.Status -ne 'Running') { return $false }
+  $process = Get-Process -Name '360sd', '360tray' -ErrorAction SilentlyContinue
+  return ($null -ne $process)
+}
+
+function Av360Records() {
+  $dir = Av360LogDir
+  if (-not (Test-Path -LiteralPath $dir)) { return @() }
+  $records = New-Object System.Collections.Generic.List[string]
+  $files = @(Get-ChildItem -LiteralPath $dir -Filter *.log -File -Force -ErrorAction SilentlyContinue)
+  foreach ($file in $files) {
+    try {
+      # The engine keeps the current day's file open for writing; read with a
+      # share mode instead of failing on the lock.
+      $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'ReadWrite')
+      $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::Unicode)
+      $text = $reader.ReadToEnd()
+      $reader.Close()
+      $stream.Close()
+    } catch { continue }
+    foreach ($match in [regex]::Matches($text, '(?i)[a-z]:\\[^\r\n"]{4,220}\.(?:exe|dll|com|bin|txt)')) {
+      $records.Add($match.Value)
+    }
+  }
+  return @($records)
 }
 function WriteAscii([string]$path, [string]$text) {
   [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.ASCIIEncoding))
@@ -213,6 +251,9 @@ try {
   Write-Host "==> remove the source fixture and run the bundle"
   Remove-Path $fixture
   $avBefore = QuarantineCount
+  $av360Live = Av360Live
+  $av360Before = if ($av360Live) { @(Av360Records) } else { @() }
+  $bundleHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
   $tempDir = $env:TEMP
   if (-not $tempDir) { $tempDir = [System.IO.Path]::GetTempPath() }
   $tempPattern = 'lunapack|lpvirt|lpvhost|mini_target|dynlib|hello\.txt|ansi\.txt|seed\.txt|fromansi\.txt'
@@ -298,6 +339,27 @@ try {
     Write-Host "  SKIP  no Huorong installation here (the AV retest is manual, see runtime/tests/corpus/AV_RETEST.md)"
   } else {
     Check ($avAfter -eq $avBefore) "Huorong quarantine unchanged ($avBefore -> $avAfter)"
+  }
+
+  # The second engine, same rule: report it on its own, and only count what can
+  # be attributed to this run. A detection of somebody else's file during the
+  # run is noise; a detection of anything under this repository is not.
+  if (-not $av360Live) {
+    Write-Host "  SKIP  no 360 engine running here (second gate is manual, see runtime/tests/corpus/AV_RETEST.md)"
+  } else {
+    Check (Test-Path -LiteralPath (Av360LogDir)) 'the 360 real-time log is readable'
+    $av360After = @(Av360Records)
+    $oursBefore = @($av360Before | Where-Object { $_ -match [regex]::Escape($root) })
+    $oursAfter = @($av360After | Where-Object { $_ -match [regex]::Escape($root) })
+    $newOurs = @($oursAfter | Where-Object { $oursBefore -notcontains $_ })
+    Check ($newOurs.Count -eq 0) "360 recorded no new detection under the repository ($($oursBefore.Count) -> $($oursAfter.Count))"
+    if ($newOurs.Count -gt 0) { $newOurs | ForEach-Object { Write-Host "        detected: $_" } }
+    Write-Host "        (360 recorded $($av360Before.Count) -> $($av360After.Count) detections in total, others included)"
+    Check (Test-Path -LiteralPath $bundle) 'the bundle is still on disk after the run'
+    if (Test-Path -LiteralPath $bundle) {
+      $hashAfter = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
+      Check ($hashAfter -eq $bundleHash) 'the bundle is byte-identical after the run'
+    }
   }
 
   Write-Host "==> verdict"
