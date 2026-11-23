@@ -1177,7 +1177,7 @@ The binaries of a release are attached to its
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 | `lpvirt.dll` | the in-process runtime image for Windows; embedded in virtual bundles and also shipped loose for hosts |
 | `lpvhost.exe` | the virtual launcher for Windows; maps a `--virtual` bundle without unpacking it |
-| `lunapack-studio-windows-x86_64.zip` | LunaPack Studio for Windows (v0.1.27 onward) |
+| `lunapack-studio-windows-x86_64.zip` | LunaPack Studio for Windows (v0.1.27 onward; **not in v0.1.28**) |
 
 The **source of LunaPack Studio lives in [`studio/`](studio/)** in this
 repository: a separate MoonBit workspace with a Rabbita frontend, a Proton
@@ -2038,9 +2038,11 @@ any URL (or a `file` served over loopback in a test); a bad archive is refused
 with a message naming the reason.
 
 The Windows Studio zip is attached to releases from 0.1.27 onward, with its
-size and SHA-256 recorded in the release notes. An older release, a mirror
-without the asset, or a version mismatch still makes `--GUI` say that it cannot
-find one instead of pretending to have downloaded it.
+size and SHA-256 recorded in the release notes. **0.1.28 is the exception**: its
+packaging step fails on the machine that builds it, so no zip was produced and
+the release notes say so. An older release, a mirror without the asset, or a
+version mismatch still makes `--GUI` say that it cannot find one instead of
+pretending to have downloaded it.
 
 `HTTPS_PROXY`, `HTTP_PROXY` and their lowercase forms are honoured through a
 CONNECT tunnel. `NO_PROXY` (including its `*` wildcard) and all loopback hosts
