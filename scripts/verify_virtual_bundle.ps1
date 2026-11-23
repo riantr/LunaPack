@@ -79,8 +79,21 @@ function WriteAscii([string]$path, [string]$text) {
   [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.ASCIIEncoding))
 }
 
+# A step that runs after a fixture is deleted only means something if the
+# fixture is really gone, so what this asserts is the absence and not the exit
+# code of a delete helper. Windows may route a deletion through the recycle
+# bin; a helper that reports an error for a path that is already removed would
+# otherwise stop a run that is, in fact, correct.
+function Remove-Path([string]$path) {
+  if (-not (Test-Path -LiteralPath $path)) { return }
+  try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop } catch { }
+  if (Test-Path -LiteralPath $path) {
+    throw "cannot remove $path - the assertion that follows would read a stale fixture"
+  }
+}
+
 $scratch = Join-Path $root 'build\verify_virtual_bundle'
-if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
+Remove-Path $scratch
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 try {
   $fixture = Join-Path $scratch 'fixture'
@@ -156,7 +169,7 @@ try {
   # The source of the child program goes away before it runs: the only copy
   # left is the one inside the package, so a second process reading it proves
   # both the redirect and the state handover.
-  Remove-Item -LiteralPath $chainFixture -Recurse -Force
+  Remove-Path $chainFixture
 
   Write-Host "==> build and refuse a plain bundle"
   $plainExit = RunCapture $cli @(
@@ -198,7 +211,7 @@ try {
   }
 
   Write-Host "==> remove the source fixture and run the bundle"
-  Remove-Item -LiteralPath $fixture -Recurse -Force
+  Remove-Path $fixture
   $avBefore = QuarantineCount
   $tempDir = $env:TEMP
   if (-not $tempDir) { $tempDir = [System.IO.Path]::GetTempPath() }
@@ -297,7 +310,7 @@ try {
   exit 0
 }
 finally {
-  if (-not $KeepScratch -and (Test-Path -LiteralPath $scratch)) {
-    Remove-Item -LiteralPath $scratch -Recurse -Force
+  if (-not $KeepScratch) {
+    try { Remove-Path $scratch } catch { Write-Host "  note  $($_.Exception.Message)" }
   }
 }
