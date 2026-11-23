@@ -64,20 +64,84 @@ fn block_part(block : Bytes, start : Int32, end : Int32) -> Bytes {
 }
 
 ///|
-/// Do the first eight bytes of `data` hold the marker of a package?
-fn has_marker(data : Bytes) -> Bool {
-  if data.length() < 8 {
+/// Do the eight bytes of `data` at `at` hold the marker of a package?
+fn has_marker_at(data : Bytes, at : Int32, mb : Bytes) -> Bool {
+  if at < 0 || at + 8 > data.length() {
     return false
   }
-  let mb = magic_bytes()
   let mut i = 0
   while i < 8 {
-    if data.at(i) != mb.at(i) {
+    if data.at(at + i) != mb.at(i) {
       return false
     }
     i = i + 1
   }
   true
+}
+
+///|
+/// Do the first eight bytes of `data` hold the marker of a package?
+fn has_marker(data : Bytes) -> Bool {
+  has_marker_at(data, 0, magic_bytes())
+}
+
+///|
+/// How much of the end of a file the footer search reads at a time.
+const FOOTER_SCAN_WINDOW : Int64 = 65536
+
+///|
+/// The offset of the footer that closes the archive in `file`, or None.
+///
+/// The footer used to be the last 24 bytes of the file, and it no longer is:
+/// a file is signed by appending the signature after its last byte, so a
+/// signed bundle ends with the signature and its footer sits in front of it.
+/// What is still true is that the archive ends where its footer says it ends,
+/// so the search goes backwards and takes the last footer whose two numbers
+/// place an archive that starts with the marker and finishes exactly at the
+/// footer. Bytes after the footer are not part of the archive, and it is the
+/// signature that lives there.
+///
+/// A file that carries no footer is read to the beginning before the answer
+/// is None. The windows overlap by the size of a footer, so a footer that
+/// straddles two of them is still seen whole.
+async fn find_footer(file : @fs.File, total : Int64) -> Int64? {
+  if total < FOOTER_BYTES {
+    return None
+  }
+  let mb = magic_bytes()
+  let mut window_end = total
+  while true {
+    let start = if window_end > FOOTER_SCAN_WINDOW {
+      window_end - FOOTER_SCAN_WINDOW
+    } else {
+      0L
+    }
+    let window = file.at(start).read_exactly((window_end - start).to_int())
+    let mut p = window_end - FOOTER_BYTES
+    while p >= start {
+      let rel = (p - start).to_int()
+      if has_marker_at(window, rel, mb) {
+        let moff = le8_to_i64(window, rel + 8)
+        let mlen = le8_to_i64(window, rel + 16)
+        // The manifest sits after the marker and inside the archive, and the
+        // archive starts before the footer: the two numbers have to add up to
+        // something that is there. Written as subtractions so that a number
+        // near the top of the range cannot wrap around and pass.
+        if moff >= 8L && mlen > 0L && moff <= p && mlen <= p - moff {
+          let base = p - moff - mlen
+          if has_marker(file.at(base).read_exactly(8)) {
+            return Some(p)
+          }
+        }
+      }
+      p = p - 1
+    }
+    if start == 0L {
+      return None
+    }
+    window_end = start + FOOTER_BYTES
+  }
+  None
 }
 
 ///|
@@ -139,24 +203,30 @@ async fn read_archive(file : @fs.File) -> Archive {
     }
     fail("not a LunaPack file (too small)")
   }
-  let footer = file.at(total - 24L).read_exactly(24)
-  if !has_marker(footer) {
-    if carries_marker(file) {
-      fail(
-        "the file carries the marker of a LunaPack file, but its footer is damaged: it is damaged",
-      )
+  let footer_at = match find_footer(file, total) {
+    Some(p) => p
+    None => {
+      // No footer at all: either the file is not a package, or it is one that
+      // was cut short. The marker at the head tells the two apart.
+      if carries_marker(file) {
+        fail(
+          "the file carries the marker of a LunaPack file, but its footer is damaged: it is damaged",
+        )
+      }
+      fail("not a LunaPack file (bad magic)")
     }
-    fail("not a LunaPack file (bad magic)")
   }
+  let footer = file.at(footer_at).read_exactly(24)
   let moff = le8_to_i64(footer, 8)
   let mlen = le8_to_i64(footer, 16)
   if moff < 0L || mlen < 0L {
     fail("not a LunaPack file (bad footer)")
   }
   // The archive is [magic][payload][manifest][footer], so its total length is
-  // manifest_offset + manifest_length + footer_size.
+  // manifest_offset + manifest_length + footer_size, and it ends at the
+  // footer rather than at the end of the file.
   let archive_len = moff + mlen + FOOTER_BYTES
-  let base = total - archive_len
+  let base = footer_at + FOOTER_BYTES - archive_len
   if base < 0L {
     fail("not a LunaPack file (bad footer)")
   }
@@ -358,14 +428,16 @@ pub async fn probe_archive(path : String) -> (Int64, Manifest)? {
     }
     return None
   }
-  let footer = file.at(total - 24L).read_exactly(24)
-  if !has_marker(footer) {
-    if carries_marker(file) {
-      fail(
-        "the file carries the marker of a LunaPack file, but its footer is damaged: it is damaged",
-      )
+  match find_footer(file, total) {
+    Some(_) => ()
+    None => {
+      if carries_marker(file) {
+        fail(
+          "the file carries the marker of a LunaPack file, but its footer is damaged: it is damaged",
+        )
+      }
+      return None
     }
-    return None
   }
   let archive = read_archive(file)
   Some((archive.base, archive.manifest))

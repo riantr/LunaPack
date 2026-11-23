@@ -409,28 +409,58 @@ fn json_arr(obj : @json.Json, key : String) -> Array[@json.Json] {
 }
 
 ///|
-/// Where the manifest sits: the last 24 bytes are the magic, the offset of the
-/// manifest and its length. A file that does not end that way has no archive in
-/// it, and that is a different problem from a damaged archive.
+/// The offset of the last footer in `b`, or -1 when there is none.
+///
+/// The footer used to be the last 24 bytes of the file and it no longer is: a
+/// file is signed by appending the signature after its last byte, so a signed
+/// bundle ends with the signature and the footer sits in front of it. What is
+/// still true is that the archive ends where its footer says it does, so the
+/// search goes backwards and takes the last footer whose two numbers place an
+/// archive that starts with the marker and finishes exactly at the footer.
+/// Bytes after the footer are not part of the archive.
+fn find_footer(b : Bytes) -> Int32 {
+  let mut p = b.length() - 24
+  while p >= 0 {
+    if is_magic(b, p) {
+      let moff = u64_at(b, p + 8).to_int()
+      let mlen = u64_at(b, p + 16).to_int()
+      // The manifest sits after the marker and inside the archive, and the
+      // archive starts before the footer. Written as subtractions so that a
+      // number near the top of the range cannot wrap around and pass.
+      if moff >= 8 && mlen > 0 && moff <= p && mlen <= p - moff {
+        let base = p - moff - mlen
+        if is_magic(b, base) {
+          return p
+        }
+      }
+    }
+    p = p - 1
+  }
+  -1
+}
+
+///|
+/// Where the manifest sits: a footer is the magic, the offset of the manifest
+/// and its length, and it closes the archive rather than the file — a signed
+/// bundle carries the signature after it. A file with no such footer anywhere
+/// has no archive in it, and that is a different problem from a damaged
+/// archive.
 fn manifest_text(bytes : Bytes) -> (Int32, String)? {
   let n = bytes.length()
   if n < 32 {
     return None
   }
-  let footer = n - 24
-  if !is_magic(bytes, footer) {
+  let footer = find_footer(bytes)
+  if footer < 0 {
     return None
   }
   let moff = u64_at(bytes, footer + 8).to_int()
   let mlen = u64_at(bytes, footer + 16).to_int()
-  if moff < 8 || mlen < 0 {
-    return None
-  }
   // The archive is [magic][payload][manifest][footer] and it was appended to
   // the launcher, so every offset in the footer counts from the start of the
   // archive. The start is therefore known from the end: the archive is
   // exactly the part that ends with this footer.
-  let base = n - (moff + mlen + 24)
+  let base = footer - (moff + mlen)
   if base < 0 || !is_magic(bytes, base) {
     return None
   }

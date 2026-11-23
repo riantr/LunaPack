@@ -17,6 +17,10 @@
 #   6. no payload file is extracted into the working directory or %TEMP%
 #   7. Huorong quarantine count is unchanged (separate AV retest for L6)
 #   8. 360 Total Security records no new detection, and the bundle is unchanged
+#   9. a bundle with an Authenticode signature appended still runs: the archive
+#      ends where its footer says, not where the file ends (L7.2a)
+#  10. a bundle that was cut short is refused, and a footer-looking tail after
+#      the real one is skipped rather than believed
 
 param([string]$DistDir = "", [switch]$KeepScratch)
 
@@ -54,11 +58,36 @@ function RunCapture([string]$exe, [string[]]$arguments, [string]$outFile) {
   # Windows PowerShell 5.1 turns native stderr into an error record even when
   # 2>&1 is present. cmd.exe performs the redirection before PowerShell sees
   # the output, so the verifier gets the text and the real exit code.
+  #
+  # The text lands in a file nothing else knows about first. A log that was
+  # created up front can be held open by whatever is scanning the folder, and
+  # cmd.exe then fails to redirect and reports that failure as the exit code of
+  # the program - which would be read here as the program refusing something.
   $parts = @((Quote $exe))
   foreach ($argument in $arguments) { $parts += Quote $argument }
-  $command = ($parts -join ' ') + ' > ' + (Quote $outFile) + ' 2>&1'
-  & cmd.exe /c $command | Out-Null
-  return $LASTEXITCODE
+  # A program that was written a moment ago is still being scanned, and the
+  # engine holds it without sharing: starting it then fails with "the process
+  # cannot access the file", which would be read here as the program refusing
+  # to run. Wait until the file can be opened with sharing instead.
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    try {
+      $handle = [System.IO.File]::Open($exe, 'Open', 'Read', 'ReadWrite')
+      $handle.Close()
+      break
+    } catch {
+      Start-Sleep -Milliseconds 200
+    }
+  }
+  $tmp = [System.IO.Path]::GetTempFileName()
+  try {
+    $command = ($parts -join ' ') + ' > ' + (Quote $tmp) + ' 2>&1'
+    & cmd.exe /c $command | Out-Null
+    $code = $LASTEXITCODE
+    WriteAllBytes $outFile (ReadAllBytes $tmp)
+    return $code
+  } finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  }
 }
 function ReadOut([string]$path) {
   return ((Get-Content -LiteralPath $path -Raw) -join "`n")
@@ -117,6 +146,54 @@ function WriteAscii([string]$path, [string]$text) {
   [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.ASCIIEncoding))
 }
 
+# A file that was just written is held for a moment by whichever engine is
+# scanning it, and a read that opens without sharing fails while it is. The
+# last attempt is not wrapped, so a file that is really unreadable still fails
+# the run with the reason Windows gives.
+function ReadAllBytes([string]$path) {
+  for ($attempt = 0; $attempt -lt 25; $attempt++) {
+    try { return [System.IO.File]::ReadAllBytes($path) } catch { Start-Sleep -Milliseconds 200 }
+  }
+  return [System.IO.File]::ReadAllBytes($path)
+}
+
+function WriteAllBytes([string]$path, [byte[]]$bytes) {
+  for ($attempt = 0; $attempt -lt 25; $attempt++) {
+    try { [System.IO.File]::WriteAllBytes($path, $bytes); return } catch { Start-Sleep -Milliseconds 200 }
+  }
+  [System.IO.File]::WriteAllBytes($path, $bytes)
+}
+
+# Signing a file is how a user gets past the "unknown publisher" prompt, and it
+# is also the reason the reader cannot assume the footer is the last 24 bytes:
+# Authenticode appends the signature after the last byte of the file. A
+# self-signed certificate is enough to test that: the chain is not trusted, and
+# nothing here checks it - what is checked is that a signature was appended and
+# that the bundle still runs.
+function Find-SignTool() {
+  $command = Get-Command signtool.exe -ErrorAction SilentlyContinue
+  if ($null -ne $command) { return $command.Source }
+  $kits = 'C:\Program Files (x86)\Windows Kits\10\bin'
+  if (-not (Test-Path -LiteralPath $kits)) { return '' }
+  $candidates = @(Get-ChildItem -LiteralPath $kits -Directory -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending |
+    ForEach-Object { Join-Path $_.FullName 'x64\signtool.exe' } |
+    Where-Object { Test-Path -LiteralPath $_ })
+  if ($candidates.Count -eq 0) { return '' }
+  return $candidates[0]
+}
+
+# A certificate is only worth something here if a signature can be read back out
+# of the file, so that is what is asserted rather than the size of the tail.
+function HasSignature([string]$path) {
+  try {
+    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile($path)
+    return ($null -ne $cert)
+  } catch {
+    return $false
+  }
+}
+
 # A step that runs after a fixture is deleted only means something if the
 # fixture is really gone, so what this asserts is the absence and not the exit
 # code of a delete helper. Windows may route a deletion through the recycle
@@ -124,7 +201,15 @@ function WriteAscii([string]$path, [string]$text) {
 # otherwise stop a run that is, in fact, correct.
 function Remove-Path([string]$path) {
   if (-not (Test-Path -LiteralPath $path)) { return }
-  try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop } catch { }
+  # An anti-virus engine that is scanning a file it has just seen holds it open
+  # for a moment, and Windows refuses the delete until it lets go. Retrying a
+  # few times is not the same as ignoring the failure: the throw below still
+  # fires when the path is really still there.
+  for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop } catch { }
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    Start-Sleep -Milliseconds 200
+  }
   if (Test-Path -LiteralPath $path) {
     throw "cannot remove $path - the assertion that follows would read a stale fixture"
   }
@@ -133,12 +218,22 @@ function Remove-Path([string]$path) {
 $scratch = Join-Path $root 'build\verify_virtual_bundle'
 Remove-Path $scratch
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+# Set when this run creates a signing certificate of its own, so that the store
+# is left the way it was found.
+$createdCert = ''
 try {
   $fixture = Join-Path $scratch 'fixture'
   $registry = Join-Path $scratch 'registry.json'
   $bundle = Join-Path $scratch 'vdemo.exe'
   $plain = Join-Path $scratch 'plain.exe'
   $corrupt = Join-Path $scratch 'damaged.exe'
+  $signed = Join-Path $scratch 'signed.exe'
+  $bogus = Join-Path $scratch 'bogus_tail.exe'
+  $cut = Join-Path $scratch 'cut_short.exe'
+  $signedOut = Join-Path $scratch 'signed.txt'
+  $bogusOut = Join-Path $scratch 'bogus.txt'
+  $cutOut = Join-Path $scratch 'cut.txt'
+  $signtoolOut = Join-Path $scratch 'signtool.txt'
   $bundleOut = Join-Path $scratch 'bundle.txt'
   $infoOut = Join-Path $scratch 'info.txt'
   $plainBundleOut = Join-Path $scratch 'plain_bundle.txt'
@@ -165,7 +260,7 @@ try {
   WriteAscii $registry '{"values":[{"root":"hklm","key":"Software\\LunaPackVerify","name":"Port","kind":"REG_DWORD","number":8080}]}'
   # Every log exists, empty, before the no-payload snapshot is taken: otherwise
   # the verifier's own output looks like a file the run left behind.
-  foreach ($log in @($bundleOut, $infoOut, $plainBundleOut, $plainInfoOut, $runOut, $plainOut, $damagedOut, $chainOut, $chainDiskOut, $chainBundleOut, $chainInfoOut, $crtOut)) {
+  foreach ($log in @($bundleOut, $infoOut, $plainBundleOut, $plainInfoOut, $runOut, $plainOut, $damagedOut, $chainOut, $chainDiskOut, $chainBundleOut, $chainInfoOut, $crtOut, $signedOut, $bogusOut, $cutOut, $signtoolOut)) {
     WriteAscii $log ''
   }
 
@@ -227,7 +322,7 @@ try {
   Check ($refuseLog -match 'carries no LunaPack virtual bundle') 'refusal names the missing virtual layer'
 
   Write-Host "==> damage one virtual file inside a copy of the bundle"
-  $bytes = [System.IO.File]::ReadAllBytes($bundle)
+  $bytes = ReadAllBytes $bundle
   $needle = [System.Text.Encoding]::ASCII.GetBytes('VIRTUAL-FS-OK')
   $found = -1
   for ($i = 0; $i -le $bytes.Length - $needle.Length; $i++) {
@@ -240,12 +335,84 @@ try {
   Check ($found -ge 0) 'virtual payload bytes are present in the bundle'
   if ($found -ge 0) {
     $bytes[$found + $needle.Length - 1] = [byte][char]'X'
-    [System.IO.File]::WriteAllBytes($corrupt, $bytes)
+    WriteAllBytes $corrupt $bytes
     $damagedExit = RunCapture $corrupt @() $damagedOut
     $damagedLog = ReadOut $damagedOut
     Write-Host $damagedLog
     Check ($damagedExit -ne 0) "corrupted bundle is refused (got $damagedExit)"
     Check ($damagedLog -match 'checksum|damaged|does not decompress|manifest is not JSON') 'refusal names integrity damage'
+  }
+
+  Write-Host "==> sign a copy, and make the copies a reader has to refuse"
+  # Authenticode puts the signature after the last byte of the file, so a
+  # signed bundle is the launcher, the archive, and then the signature. The
+  # archive therefore no longer ends where the file ends, and the reader has to
+  # find the footer instead of assuming it is the last 24 bytes. That is the
+  # whole of L7.2a, and this is where it is measured.
+  # A certificate this run creates: the store of a real machine holds
+  # certificates whose keys signtool will not touch, and a verifier that picks
+  # whichever one it finds first reports a signing failure that is really a
+  # choice of certificate. One made here is one that works, and it is removed
+  # again at the end.
+  $signtool = Find-SignTool
+  $thumb = ''
+  if ($signtool) {
+    try {
+      $made = New-SelfSignedCertificate -Type CodeSigningCert `
+        -Subject 'CN=LunaPack Verify Signer' `
+        -CertStoreLocation Cert:\CurrentUser\My `
+        -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(2) -ErrorAction Stop
+      $thumb = $made.Thumbprint
+      $createdCert = $thumb
+    } catch { $thumb = '' }
+  }
+  $signReady = ($thumb -ne '')
+  $plainBytes = ReadAllBytes $bundle
+  $ascii = New-Object System.Text.ASCIIEncoding
+  $magic = $ascii.GetBytes('APPKGD02')
+  # A footer after the real one that cannot close an archive: the numbers point
+  # far outside the file. A reader that believes the last marker it sees breaks
+  # here; one that checks the numbers skips it and finds the real footer.
+  $bogusBytes = New-Object byte[] ($plainBytes.Length + 24)
+  [Array]::Copy($plainBytes, $bogusBytes, $plainBytes.Length)
+  [Array]::Copy($magic, 0, $bogusBytes, $plainBytes.Length, 8)
+  [Array]::Copy([BitConverter]::GetBytes([int64]0x7fffff0), 0, $bogusBytes, $plainBytes.Length + 8, 8)
+  [Array]::Copy([BitConverter]::GetBytes([int64]4096), 0, $bogusBytes, $plainBytes.Length + 16, 8)
+  WriteAllBytes $bogus $bogusBytes
+  # And a bundle that was cut short: no footer anywhere, so it is not a bundle.
+  $cutBytes = New-Object byte[] ($plainBytes.Length - 100)
+  [Array]::Copy($plainBytes, $cutBytes, $cutBytes.Length)
+  WriteAllBytes $cut $cutBytes
+  if ($signReady) {
+    # The copy was written a moment ago and the engine that scans it still holds
+    # it, so the signer can be refused a handle. The copy is written again from
+    # the same bytes before every attempt, so a half-signed file is never the
+    # file that is checked.
+    $signExit = 1
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+      WriteAllBytes $signed $plainBytes
+      $signExit = RunCapture $signtool @('sign', '/sha1', $thumb, '/fd', 'sha256', $signed) $signtoolOut
+      if ($signExit -eq 0) { break }
+      Start-Sleep -Milliseconds 500
+    }
+    if ($signExit -ne 0) { Write-Host (ReadOut $signtoolOut) }
+    $signedBytes = ReadAllBytes $signed
+    Check ($signExit -eq 0) "signtool signed the copy (got $signExit)"
+    if ($signExit -eq 0) {
+      Check ($signedBytes.Length -gt $plainBytes.Length) "the signature was appended after the file ($($plainBytes.Length) -> $($signedBytes.Length) bytes)"
+      Check (HasSignature $signed) 'an Authenticode signature can be read back out of the copy'
+      # Signing writes the hash into the certificate table of the PE headers and
+      # updates the checksum there, so the first bytes do change. Everything
+      # from the headers to the end of the archive has to be untouched: that is
+      # the part the signature covers and the part the reader reads.
+      $lastDiff = -1
+      for ($i = 0; $i -lt $plainBytes.Length; $i++) {
+        if ($signedBytes[$i] -ne $plainBytes[$i]) { $lastDiff = $i }
+      }
+      Check ($lastDiff -lt 4096) "signing changed the PE headers only, not the archive (last changed byte at $lastDiff)"
+    }
+  } else {
+    Write-Host "  SKIP  no Authenticode signer here (signtool plus a code-signing certificate are needed)"
   }
 
   Write-Host "==> remove the source fixture and run the bundle"
@@ -272,6 +439,25 @@ try {
   Check ($runLog -match 'THIN-EXE temp=OK') 'GetTempPathW returned the seeded virtual temp directory'
   Check ($runLog -match 'THIN-EXE dyn gpa attrs=0x80') 'dynamic API resolution reached a virtualized thunk'
   Check ($runLog -match 'THIN-EXE dyn lib probe=OK') 'runtime-loaded DLL saw the virtual file'
+
+  Write-Host "==> a signed bundle, a bad tail, a cut bundle"
+  if ($signReady) {
+    $signedExit = RunCapture $signed @() $signedOut
+    $signedLog = ReadOut $signedOut
+    Write-Host $signedLog
+    Check ($signedExit -eq 0) "signed bundle exit code 0 (got $signedExit)"
+    Check ($signedLog -match 'THIN-EXE file="VIRTUAL-FS-OK" size=\x00?13\s+attrs=0x80 result=OK') 'the signed bundle found its archive in front of the signature'
+  }
+  $bogusExit = RunCapture $bogus @() $bogusOut
+  $bogusLog = ReadOut $bogusOut
+  Write-Host $bogusLog
+  Check ($bogusExit -eq 0) "a footer that closes nothing is skipped (got $bogusExit)"
+  Check ($bogusLog -match 'THIN-EXE file="VIRTUAL-FS-OK" size=\x00?13\s+attrs=0x80 result=OK') 'the real footer was still found behind the bogus one'
+  $cutExit = RunCapture $cut @() $cutOut
+  $cutLog = ReadOut $cutOut
+  Write-Host $cutLog
+  Check ($cutExit -ne 0) "a bundle cut short is refused (got $cutExit)"
+  Check ($cutLog -match 'carries no LunaPack virtual bundle') 'the refusal names the archive that is not there'
 
   Write-Host "==> a child process follows the virtual layer"
   # spawn_chain.exe reads C:\virt\hello.txt, starts another copy of itself and
@@ -374,5 +560,10 @@ try {
 finally {
   if (-not $KeepScratch) {
     try { Remove-Path $scratch } catch { Write-Host "  note  $($_.Exception.Message)" }
+  }
+  # A certificate this run created is not left behind: a verifier that changes
+  # the machine it verifies on is a verifier nobody can run twice.
+  if ($createdCert) {
+    try { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$createdCert" -Force -ErrorAction Stop } catch { }
   }
 }

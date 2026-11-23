@@ -66,28 +66,39 @@ both states must be recorded:
 
 - [x] unsigned `lpvirt.dll` + unsigned host — measured 2026-11-23 on both
       engines (table above): no action from either
-- [ ] signed build — **blocked twice over, both measured, neither guessed**
+- [x] signed bundle — measured 2026-11-23 on both engines: no action from either
+      (Huorong 17 → 17, 360 8 → 8, nothing naming this repository)
 
-The signed leg cannot be produced on this machine, and the reason is worth
-writing down because it is not "we forgot":
+Producing the signed leg needed two things, and the first attempt had neither:
 
-1. **No usable certificate.** `Cert:\CurrentUser\My` holds two code-signing
-   certificates for `CN=Riantr` (expiring 2026-06-25 and 2026-06-27) with
-   private keys, but they are self-signed, so no chain to a trusted root exists.
-   `signtool sign /sha1 …` answers *"No certificates were found that met all the
-   given criteria"*, and `Set-AuthenticodeSignature` aborts with *"cannot build a
-   certificate chain to a trusted root"* and leaves the file unsigned. Both were
-   run; neither produced a signature.
-2. **The container cannot hold one anyway.** An Authenticode signature is
-   appended after the last section, at the end of the file — and the archive
-   footer of a `--virtual` bundle already lives there. Appending 4096 zero bytes
-   to a working bundle is enough to make `lpvhost.exe` report *"this file
-   carries no LunaPack virtual bundle"*. So even with a real certificate the
-   signer would produce a bundle that no longer runs, until the launcher
-   searches backwards for the footer instead of reading it from EOF.
+1. **A certificate signtool will use.** `Cert:\CurrentUser\My` holds several
+   certificates with the code-signing EKU and a private key (`CN=Riantr`,
+   `CN=ZKHONGTUO`, …) and `signtool sign /sha1 …` answers *"No certificates
+   were found that met all the given criteria"* for every one of them.
+   `Set-AuthenticodeSignature` aborts with *"cannot build a certificate chain to
+   a trusted root"* and leaves the file unsigned. What does work is a
+   certificate this machine makes for itself:
+   `New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=LunaPack Verify
+   Signer' …`, then `signtool sign /sha1 <thumb> /fd sha256 <bundle>` exits 0 and
+   the signature reads back out of the file with
+   `X509Certificate::CreateFromSignedFile`. `signtool verify /pa` still reports
+   an untrusted root, which is the correct answer for a certificate nobody has
+   installed: what is signed here is the file, not a chain.
+2. **A reader that expects the signature.** Authenticode appends the signature
+   after the last byte of the file, and the archive footer used to live exactly
+   there: 4096 bytes of anything appended were enough to make `lpvhost.exe`
+   report *"this file carries no LunaPack virtual bundle"*. **L7.2a** makes every
+   reader walk backwards from the end to the last footer whose two numbers place
+   an archive that begins with the marker and finishes at that footer. Measured
+   on 2026-11-23: a signed bundle (1002091 → 1003520 bytes, 1429 bytes of
+   signature, the last byte signing changed is at 437 — the PE headers) runs and
+   prints every `THIN-EXE` line; the same bundle with 4096 zero bytes appended
+   runs; the same bundle with 100 bytes cut off is refused;
+   `verify_virtual_bundle.ps1` asserts all four, and they failed against the
+   pre-change runtime before it did.
 
-A signed pass would not retroactively clear the unsigned build, so the matrix
-stays "unsigned, two engines" until both of those are addressed.
+A signed pass does not retroactively clear the unsigned build, so both rows are
+recorded: the matrix is "signed and unsigned, two engines".
 
 ## Per-mechanism retest list
 
@@ -117,7 +128,22 @@ second engine pending" is now out of date for every row.
 | M4 | Child-process following: `CreateProcessW/A` redirected into the launcher, virtual tree carried in a named shared section; three-level chain (parent → child → grandchild) | L4.1-L4.3 | 16 → 16, `scripts/verify_child_follow.ps1` (21 invariants incl. import-table check: no CreateRemoteThread / WriteProcessMemory / VirtualAllocEx / VirtualProtectEx / OpenProcess / SetThreadContext / QueueUserAPC / NtCreateThreadEx) | 2026-11-19 / 16 | pass (Huorong only, second engine pending). Explicit-token launches (`CreateProcessAsUserW` and friends) are not hooked — documented boundary, not a pass. |
 | M5 | COM registration + activation without administrator rights: `RegCreate/Set/Enum/QueryInfo/Delete` and `NtOpenKey/NtQueryValueKey/NtQueryKey` answered from the hive, `LoadLibrary*` served from the VFS, entry-point stub for hand-mapped images | L5.1-L5.5 | 16 → 16, `scripts/verify_com_activation.ps1` (59 assertions over three runs: no-CRT server, ordinary CRT server, and a run where the file is deleted before mapping) | 2026-11-19 / 16 | pass (Huorong only, second engine pending). The entry-point call is an in-process stub invoked through `InitOnceExecuteOnce`, not an injection. |
 | M6 | Type-library virtualization: the `TYPELIB` resource parsed out of the archive, seven oleaut32 entry points hooked (by name **and** by ordinal), `ITypeLib` object handed back, registration written to the hive | L5.6 | 16 → 16, `scripts/verify_com_activation.ps1` (now 33 assertions per run over the same three runs, including the library keys, `LoadRegTypeLib` round trip and removal) | 2026-11-19 / 16 | pass (Huorong only, second engine pending). Reads the image's own resource directory; no new memory-write primitive beyond the IAT `VirtualProtect` already covered by M0/M2a. |
-| M7 | CLI-shipped virtual launcher: `lpvhost.exe` maps the embedded runtime and main image from a v7 bundle, seeds the virtual layer and runs the program with no extracted files | L6 | 16 → 16, `scripts/verify_virtual_bundle.ps1` (CLI-produced bundle, fixture deleted after packing, checksum refusal, `--no-virtual`, zero disk) | 2026-11-23 / 16 | pass (Huorong only, second engine pending) |
+| M7 | CLI-shipped virtual launcher: `lpvhost.exe` maps the embedded runtime and main image from a v7 bundle, seeds the virtual layer and runs the program with no extracted files | L6 | 17 → 17 (the calibration above moved the baseline), `scripts/verify_virtual_bundle.ps1` (CLI-produced bundle, fixture deleted after packing, checksum refusal, `--no-virtual`, zero disk, signed copy) | 2026-11-23 / 17 | pass (Huorong 17 → 17, 360 8 → 8; 55 invariants) |
+
+**A detection can take a fixture away from the check that needs it.** On
+2026-11-23 `scripts/verify_ntdll_spike.ps1` reports two failures that are not
+about the mechanism: `native target deleted before mapping` and `ntdll_target.exe
+absent after --consume`. The `--consume` step deletes `dist\ntdll_target.exe`
+before mapping it, and 360 now refuses that delete — `DeleteFileW` returns
+`ERROR_ACCESS_DENIED` (`gle=5`) and the file is still there afterwards. It is the
+engine, not the code: an exclusive open of the same file succeeds, its attributes
+are plain `Archive`, and two byte-identical copies in the same directory
+(`ntdll_ctrl.exe`, `host_ctrl.exe`) delete without complaint, while
+`[System.IO.File]::Delete` from PowerShell on that exact path is denied too. So
+M2b's zero-disk leg cannot be measured on this machine while 360 has that path
+flagged; the rest of the M2b run (virtual hit, fall-through, counters, hook
+lifecycle) still passes. Record it as "fixture blocked by the engine", not as a
+regression, and re-run it on a machine where the fixture is not flagged.
 
 ## Run procedure (all mechanisms)
 

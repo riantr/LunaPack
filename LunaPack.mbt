@@ -6,7 +6,12 @@
 //   [0..8)      magic "APPKGD02"
 //   [8..)       entry payloads, stored back to back
 //   [moff..)    manifest, UTF-8 JSON
-//   last 24 B   footer: magic(8) + manifest_offset(8 LE) + manifest_length(8 LE)
+//   footer      24 B: magic(8) + manifest_offset(8 LE) + manifest_length(8 LE)
+//
+// The footer closes the archive, not the file. A bundle that was signed with
+// Authenticode carries the signature after its last byte, so the reader starts
+// at the end and walks backwards to the last footer that places an archive
+// starting with the marker and ending where the footer does.
 //
 // From v6 on there is an integrity block between the last entry and the
 // manifest. It holds a digest of the manifest and, for an encrypted

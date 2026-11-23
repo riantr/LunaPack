@@ -85,26 +85,71 @@ function Parse-Flow([string]$text) {
   return $row
 }
 
+# Both tools walk a directory, and a tree that has been built holds a copy of
+# every source under `_build`, plus every vendored package under `.mooncakes`.
+# Analysing those measures somebody else's code twice, and it makes the counts a
+# function of whether anybody has run a build: on 2026-11-23 this tree measured
+# 83 files with `studio/.mooncakes` moved aside and 270 with it in place, and
+# every one of the 21 actionable findings came from the vendored copy. So the
+# analysis runs on a staging directory that holds only this repository's
+# sources, and a number from it means the same thing on every machine.
+$stage = Join-Path $env:TEMP 'lunapack-static-src'
+if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+New-Item -ItemType Directory -Path $stage -Force | Out-Null
+$staged = 0
+$candidates = @(Get-ChildItem -LiteralPath $root -Filter *.mbt -File -Recurse -ErrorAction SilentlyContinue |
+  Where-Object {
+    # `-Filter *.mbt` also matches `*.mbti` on NTFS, and a generated interface
+    # file is not source. The extension is compared instead of trusted.
+    $_.Extension -eq '.mbt' -and
+    $_.FullName -notmatch '\\_build\\' -and $_.FullName -notmatch '\\\.mooncakes\\' -and
+    $_.FullName -notmatch '\\\.git\\'
+  })
+foreach ($file in $candidates) {
+  $rel = $file.FullName.Substring($root.Length).TrimStart('\')
+  $target = Join-Path $stage $rel
+  $parent = [System.IO.Path]::GetDirectoryName($target)
+  if (-not (Test-Path -LiteralPath $parent)) {
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  }
+  Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+  $staged = $staged + 1
+}
+Write-Host "==> source staging: $staged files, no build output and no vendored packages"
+# The set is pinned to what git tracks: if a run stages more than that, something
+# outside the repository's sources got in, and every count below is suspect.
+$trackedCount = @(& git -C $root ls-files '*.mbt').Count
+Check ($staged -eq $trackedCount) "the staging holds exactly the tracked sources ($staged staged, $trackedCount tracked)"
+
 $baseline = $null
 if (Test-Path -LiteralPath $BaselineFile) {
   $baseline = Get-Content -LiteralPath $BaselineFile -Raw | ConvertFrom-Json
 }
 
-Write-Host "==> moonbit_static_analysis ($msaCoordinate)"
-$msaText = Invoke-Tool $msaCoordinate @('.')
-$msa = Parse-Msa $msaText
-$msaFiles = Parse-MsaFiles $msaText
-Write-Host ("    files={0} parsed={1} actionable={2} notices={3} unchecked={4}" -f `
-    $msa['files'], $msa['parsed'], $msa['actionable'], $msa['notices'], $msa['unchecked'])
+Push-Location $stage
+try {
+  Write-Host "==> moonbit_static_analysis ($msaCoordinate)"
+  $msaText = Invoke-Tool $msaCoordinate @('.')
+  $msa = Parse-Msa $msaText
+  $msaFiles = Parse-MsaFiles $msaText
+  Write-Host ("    files={0} parsed={1} actionable={2} notices={3} unchecked={4}" -f `
+      $msa['files'], $msa['parsed'], $msa['actionable'], $msa['notices'], $msa['unchecked'])
+  # The staging is the thing that keeps these numbers honest, so it is asserted
+  # rather than assumed: a run that somehow saw a built tree again would report
+  # a number this one never produced.
+  Check ($msa['files'] -eq $staged) "the analyzer saw the staged sources and nothing else ($($msa['files']) of $staged)"
 
-Write-Host "==> LunaFlow ($flowCoordinate, --funnel, --max-functions $flowMaxFunctions)"
-# The `--flag=value` form is accepted without complaint and then ignored: the
-# run silently falls back to the 150-function cap and reports 9 taint sinks
-# instead of 83. That is how the tracker ended up with a number nobody could
-# reproduce, so the arguments are space-separated here and the cap is checked
-# below.
-$flowText = Invoke-Tool $flowCoordinate @('.', '--funnel', '--max-functions', "$flowMaxFunctions", '--out', (Join-Path $env:TEMP 'lunapack-static-analysis'))
-$flow = Parse-Flow $flowText
+  Write-Host "==> LunaFlow ($flowCoordinate, --funnel, --max-functions $flowMaxFunctions)"
+  # The `--flag=value` form is accepted without complaint and then ignored: the
+  # run silently falls back to the 150-function cap and reports 9 taint sinks
+  # instead of 83. That is how the tracker ended up with a number nobody could
+  # reproduce, so the arguments are space-separated here and the cap is checked
+  # below.
+  $flowText = Invoke-Tool $flowCoordinate @('.', '--funnel', '--max-functions', "$flowMaxFunctions", '--out', (Join-Path $env:TEMP 'lunapack-static-analysis'))
+  $flow = Parse-Flow $flowText
+} finally {
+  Pop-Location
+}
 Write-Host ("    files={0} functions={1} dead_code={2} taint_sinks={3} abstract_findings={4} vcs={5}/{6}/{7}" -f `
     $flow['files'], $flow['functions'], $flow['dead_code'], $flow['taint_sinks'],
     $flow['abstract_findings'], $flow['vcs_proved'], $flow['vcs_failed'], $flow['vcs_unknown'])

@@ -1032,3 +1032,92 @@ test "the ordinal table resolves oleaut32's automation entry points" {
   assert_true(ordinal_thunk("kernel32.dll", 183) == None)
   assert_true(ordinal_thunk("oleaut32.dll", 999) == None)
 }
+
+///|
+/// A little-endian 8-byte number, for the archives these tests build by hand.
+fn le8_for_test(v : Int64) -> Bytes {
+  let out = FixedArray::make(8, b'\x00')
+  let mut x = v
+  let mut i = 0
+  while i < 8 {
+    out[i] = (x & 0xFFL).to_byte()
+    x = x >> 8
+    i = i + 1
+  }
+  Bytes::from_array(out[:])
+}
+
+///|
+fn put_for_test(out : FixedArray[Byte], at : Int32, src : Bytes) -> Int32 {
+  let mut i = 0
+  while i < src.length() {
+    out[at + i] = src[i]
+    i = i + 1
+  }
+  at + src.length()
+}
+
+///|
+/// A whole archive: [magic][manifest][magic][offset][length], followed by
+/// `tail` bytes that are not part of it.
+fn archive_for_test(manifest : String, tail : Int32) -> Bytes {
+  let magic = b"APPKGD02"
+  let m = @utf8.encode(manifest)
+  let out = FixedArray::make(8 + m.length() + 24 + tail, b'\x00')
+  let mut at = put_for_test(out, 0, magic)
+  at = put_for_test(out, at, m)
+  at = put_for_test(out, at, magic)
+  at = put_for_test(out, at, le8_for_test(8L))
+  ignore(put_for_test(out, at, le8_for_test(m.length().to_int64())))
+  Bytes::from_array(out[:])
+}
+
+///|
+test "the banner of an archive is found in front of what was appended to it" {
+  // A bundle is signed by appending the signature after the last byte of the
+  // file, so the archive no longer ends where the file ends. The reader has to
+  // find the archive anyway: the footer says where the archive ends, and the
+  // bytes after it are somebody else's.
+  let manifest = "{\"name\":\"demo\"}"
+  match manifest_text(archive_for_test(manifest, 0)) {
+    Some((base, text)) => {
+      assert_true(base == 0)
+      assert_true(text == manifest)
+    }
+    None => fail("an archive with nothing appended was not found")
+  }
+  match manifest_text(archive_for_test(manifest, 4096)) {
+    Some((base, text)) => {
+      assert_true(base == 0)
+      assert_true(text == manifest)
+    }
+    None => fail("an archive with a signature appended was not found")
+  }
+  // A signature that is longer than the window the file is read in must not
+  // change that either: the search walks the whole file, not a fixed tail.
+  match manifest_text(archive_for_test(manifest, 200000)) {
+    Some((_, text)) => assert_true(text == manifest)
+    None => fail("an archive under a long signature was not found")
+  }
+}
+
+///|
+test "a footer that does not close an archive is not taken for one" {
+  let manifest = "{}"
+  // The marker in the middle is not a footer when the two numbers do not add
+  // up to an archive that is there.
+  let m = @utf8.encode(manifest)
+  let out = FixedArray::make(8 + m.length() + 24, b'\x00')
+  let mut at = put_for_test(out, 0, b"APPKGD02")
+  at = put_for_test(out, at, m)
+  at = put_for_test(out, at, b"APPKGD02")
+  at = put_for_test(out, at, le8_for_test(9999L))
+  at = put_for_test(out, at, le8_for_test(m.length().to_int64()))
+  let wrong = Bytes::from_array(out[:])
+  assert_true(manifest_text(wrong) is None)
+  // And a file that carries no footer at all carries no archive.
+  let head = FixedArray::make(8 + m.length(), b'\x00')
+  let at2 = put_for_test(head, 0, b"APPKGD02")
+  ignore(put_for_test(head, at2, m))
+  assert_true(manifest_text(Bytes::from_array(head[:])) is None)
+}

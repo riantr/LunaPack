@@ -1481,12 +1481,20 @@ all optional.
 | magic "APPKGD02"   |  8 bytes
 | manifest offset    |  8 bytes, little-endian int64
 | manifest length    |  8 bytes, little-endian int64
++--------------------+  end of the archive
+| signature          |  optional, appended by a signing tool
 +--------------------+  end of file
 ```
 
 A bundle is the same archive appended to an executable. The archive length is
-`manifest_offset + manifest_length + 24`, so the archive can be located from
-the tail of the file without scanning it.
+`manifest_offset + manifest_length + 24`, and the footer says where the archive
+ends — not where the file ends. A file with a signature carries the signature
+after its last byte, so a reader starts at the end and walks backwards to the
+last footer whose two numbers place an archive that begins with the marker and
+finishes exactly there. Anything after that footer is not part of the archive,
+which is what makes it possible to sign a bundle at all: the signature is not
+covered by the archive's own checksums, and the archive is not disturbed by
+the signature being written.
 
 The integrity block sits between the last entry and the manifest, which keeps
 the layout above unchanged: a package that carries one is still a package that

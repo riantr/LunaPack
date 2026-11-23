@@ -431,6 +431,110 @@ async test "bundle appends an archive to the executable" {
 }
 
 ///|
+async test "something appended to a package does not hide its archive" {
+  // A signature is appended after the last byte of a file, so a signed bundle
+  // ends with the signature and its archive ends earlier. Every read of a
+  // package therefore looks for the footer instead of assuming the last 24
+  // bytes hold it, and this is the test that says so: the same package, with
+  // bytes appended, has to read, unpack and verify exactly as it did before.
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
+  @fs.write_text(src + "/hello.txt", "hello")
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
+  let pkg = outdir + "/test.appkg"
+  let signed = outdir + "/signed.appkg"
+  let opts = @LunaPack.new_pack_options(
+    "demo",
+    "1.0.0",
+    "linux",
+    "x86_64",
+    None,
+    None,
+    "auto",
+  )
+  @LunaPack.pack(src, pkg, opts)
+  let original = @fs.read_binary(pkg)
+  @fs.write_binary(
+    signed,
+    @LunaPack.bytes_concat(original, Bytes::make(2048, b'\x00')),
+  )
+  let before = @LunaPack.read_package_manifest(pkg)
+  let after = @LunaPack.read_package_manifest(signed)
+  assert_true(after.entries.length() == before.entries.length())
+  assert_true(after.entries[0].checksum == before.entries[0].checksum)
+  assert_true(@LunaPack.verify(signed, None))
+  let dest = outdir + "/unpacked"
+  @LunaPack.unpack(signed, dest, false, None)
+  let back = @fs.read_binary(dest + "/hello.txt")
+  assert_true(@LunaPack.utf8_bytes_to_string(back) == "hello")
+  // The unsigned package still reads from the last 24 bytes, and both name the
+  // same archive start: what was appended is not part of the archive.
+  let base_before = match @LunaPack.probe_archive(pkg) {
+    Some((b, _)) => b
+    None => fail("the unsigned package was not found")
+  }
+  let base_after = match @LunaPack.probe_archive(signed) {
+    Some((b, _)) => b
+    None => fail("the package with a signature appended was not found")
+  }
+  assert_true(base_before == 0L)
+  assert_true(base_after == 0L)
+}
+
+///|
+async test "a bundle with a signature appended is still a bundle" {
+  // This is the shape a signed bundle has: the launcher, then the archive,
+  // then the signature. The archive start is not 0 any more, so the footer is
+  // the only thing that says where the archive is, and it is no longer the
+  // last 24 bytes of the file.
+  let src = scratch_dir("lunapack_src")
+  defer drop_scratch(src)
+  let app = src + "/app.exe"
+  @fs.write_text(app, "pretend this is an executable")
+  let res = scratch_dir("lunapack_res")
+  defer drop_scratch(res)
+  @fs.write_text(res + "/data.txt", "resource")
+  let outdir = scratch_dir("lunapack_out")
+  defer drop_scratch(outdir)
+  let bundle_path = outdir + "/app.exe"
+  let signed = outdir + "/app_signed.exe"
+  let opts = @LunaPack.new_pack_options(
+    "demo",
+    "1.0.0",
+    "windows",
+    "x86_64",
+    None,
+    None,
+    "auto",
+  )
+  @LunaPack.bundle(app, bundle_path, [res], opts, "")
+  let original = @fs.read_binary(bundle_path)
+  @fs.write_binary(
+    signed,
+    @LunaPack.bytes_concat(original, Bytes::make(4096, b'\x78')),
+  )
+  let plain_base = match @LunaPack.probe_archive(bundle_path) {
+    Some((b, _)) => b
+    None => fail("the bundle was not found")
+  }
+  let signed_base = match @LunaPack.probe_archive(signed) {
+    Some((b, _)) => b
+    None => fail("the bundle with a signature appended was not found")
+  }
+  assert_true(plain_base > 0L)
+  assert_true(signed_base == plain_base)
+  let dest = outdir + "/extracted"
+  @LunaPack.unpack(signed, dest, false, None)
+  let a = @fs.read_binary(dest + "/app.exe")
+  assert_true(
+    @LunaPack.utf8_bytes_to_string(a) == "pretend this is an executable",
+  )
+  let b = @fs.read_binary(dest + "/data.txt")
+  assert_true(@LunaPack.utf8_bytes_to_string(b) == "resource")
+}
+
+///|
 async test "with_defaults and with_main_program copy the options" {
   let opts = @LunaPack.new_pack_options(
     "n",
