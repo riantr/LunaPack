@@ -8,6 +8,8 @@ import {
 // Values
 pub fn bundle_arguments(@LunaPackGUI_shared.ProcessRequest) -> Array[String]
 
+pub fn bundle_arguments_with_registry(@LunaPackGUI_shared.ProcessRequest, String) -> Array[String]
+
 pub fn cli_candidates() -> Array[String]
 
 pub fn default_cli() -> String

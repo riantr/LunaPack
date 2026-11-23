@@ -27,6 +27,24 @@ Tier B run is meaningful.
 
 ## Tier B — real programs (at least five, one per required capability)
 
+**Two blockers found on 2026-11-23 must be closed or accepted before a Tier B
+run means anything.** Both were measured, not inferred:
+
+1. **CRT stdio does not reach the layer.** `fopen` is in `msvcrt`/`ucrtbase`,
+   which the runtime does not patch. `runtime/tests/crt_open.c` opens one
+   virtual file through stdio and through Win32 in the same process and prints
+   `C-open result=FAILED` / `win32 result=OK`. Any sample that reads its data
+   with `FILE*` or `std::ifstream` cannot pass a virtual-file probe until this
+   changes, so a run today would measure the gap, not the program.
+2. **`SearchPathW` is not hooked.** Samples that resolve a name before opening
+   or starting it ask the real filesystem. `cmd.exe` on Windows 11 imports it,
+   which is why `cmd /c C:\virt\app.exe` reports "path not found" while
+   `CreateFileW` on the same path is answered from the layer.
+
+A probe that only needs Win32 calls (`CreateFileW`, `FindFirstFileW`) or a
+mapped child is unaffected: `scripts/verify_virtual_bundle.ps1` covers both,
+including a three-level child chain from a v7 bundle.
+
 Captured on this machine 2026-11-18. All paths are absolute so a run is
 reproducible; replace with an equivalent local install on another machine and
 record the change.

@@ -128,6 +128,11 @@ pub(all) struct ProcessRequest {
   version : String
   target_os : String
   arch : String
+  virtual_enabled : Bool
+  virtual_root : String
+  virtual_temp : String
+  registry_json : String
+  runtime_image : String
 }
 
 ///|
@@ -188,6 +193,11 @@ pub(all) struct StartupReply {
   version : String
   target_os : String
   arch : String
+  virtual_enabled : Bool
+  virtual_root : String
+  virtual_temp : String
+  registry_json : String
+  runtime_image : String
   has_args : Bool
 }
 

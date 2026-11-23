@@ -220,6 +220,14 @@ Assert-Ok 'link spawn_chain.exe'
 Write-Host '==> compile crt_target.exe (CRT diagnostic, /SUBSYSTEM:CONSOLE)'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$crtExe" "$crtSrc" /link kernel32.lib
 Assert-Ok 'cl crt_target.exe'
+# The one fixture built with the CRT headers: it opens the same virtual file
+# through stdio and through Win32, which is the only way to see whether a
+# program that reads the ordinary way reaches the virtual layer.
+$crtOpenSrc = Join-Path $runtimeDir 'tests\crt_open.c'
+$crtOpenExe = Join-Path $distDir 'crt_open.exe'
+Write-Host '==> compile crt_open.exe (stdio vs Win32 read of the same virtual file)'
+& $clExe /nologo "/Fo:$objDir" "/Fe:$crtOpenExe" "$crtOpenSrc" /link kernel32.lib
+Assert-Ok 'cl crt_open.exe'
 Write-Host '==> compile launcher.exe'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$launcherExe" "$launcherSrc" /link kernel32.lib
 Assert-Ok 'cl launcher.exe'

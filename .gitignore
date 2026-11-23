@@ -13,6 +13,9 @@ reports/
 
 # Windows runtime build output (scripts/build_runtime_windows.ps1)
 dist/
+
+# Local probe scratch (L4 wiring experiments, not part of the build)
+build/
 *.obj
 *.exp
 *.pdb

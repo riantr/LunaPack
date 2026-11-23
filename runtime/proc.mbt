@@ -297,11 +297,102 @@ fn bootstrap_configured() -> Bool {
 }
 
 ///|
+/// Split a Windows command line into its program token and the rest of the
+/// line, separator included.
+///
+/// A quoted token ends at its closing quote; an unquoted one ends at the first
+/// space or tab. The C harness reads `LUNAPACK_CHILD_CMD` the same way, and the
+/// child has to agree with the parent about which part is the image and which
+/// part is passed on to it.
+fn split_program(line : String) -> (String, String) {
+  let n = line.length()
+  let mut i = 0
+  while i < n && (line[i] == ' ' || line[i] == '\t') {
+    i = i + 1
+  }
+  let mut start = i
+  let mut quoted = false
+  if i < n && line[i] == '"' {
+    quoted = true
+    start = i + 1
+    i = i + 1
+    while i < n && line[i] != '"' {
+      i = i + 1
+    }
+  } else {
+    while i < n && line[i] != ' ' && line[i] != '\t' {
+      i = i + 1
+    }
+  }
+  let program = str_slice(line, start, i)
+  let rest = if quoted && i < n { i + 1 } else { i }
+  (program, str_slice(line, rest, n))
+}
+
+///|
+/// The image a CreateProcess call names, and the arguments that follow it.
+///
+/// `lpApplicationName` wins when it is present: the command line's first token
+/// is then only `argv[0]`, which a caller may write as anything. Everything
+/// after that first token belongs to the program on both counts, so the same
+/// tail is used whether the image came from the argument or from the line.
+fn launch_parts(app : Int64, cmd : Int64, wide : Bool) -> (String, String) {
+  let read = fn(p : Int64) -> String {
+    if wide {
+      wide_to_string(p)
+    } else {
+      ansi_to_string(p)
+    }
+  }
+  let app_path = if app != 0L { read(app) } else { "" }
+  let line = if cmd != 0L { read(cmd) } else { "" }
+  let (line_program, tail) = if line == "" {
+    ("", "")
+  } else {
+    split_program(line)
+  }
+  let program = if app_path != "" { app_path } else { line_program }
+  (program, tail)
+}
+
+///|
+/// True when the virtual tree owns a *file* at `path`.
+fn virtual_program(path : String) -> Bool {
+  match state_vfs().path_info(path) {
+    Some(info) => (info.attrs & FILE_ATTRIBUTE_DIRECTORY) == 0
+    None => false
+  }
+}
+
+///|
+/// True when `path` names something CreateProcess can be asked to start: a
+/// program the virtual tree owns, or a real file on disk.
+///
+/// Both are followed, because both have to see the virtual tree: a program the
+/// parent installed on disk still reads the files the parent virtualized. A
+/// path that is in neither is left to the real API, so the caller gets the
+/// "file not found" it is written to handle, from the same call as before.
+fn followable_program(path : String) -> Bool {
+  if virtual_program(path) {
+    return true
+  }
+  let w = scratch_wide(path)
+  if w == 0L {
+    return false
+  }
+  let attrs = real_get_file_attributes_w(w)
+  ignore(virtual_free(w, 0L, MEM_RELEASE))
+  // INVALID_FILE_ATTRIBUTES is all ones, which is -1 as a signed Int32.
+  attrs != -1 && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0
+}
+
+///|
 /// The redirect: start the launcher on the requested program, with the virtual
 /// state in the environment, and return what the caller expects from
 /// CreateProcess. A negative result means "not handled, fall through".
 fn redirect_launch(
-  cmd : Int64,
+  program : String,
+  tail : String,
   inherit_handles : Int32,
   flags : Int32,
   env : Int64,
@@ -317,14 +408,20 @@ fn redirect_launch(
   if bootstrap == "" {
     return -1
   }
+  if program == "" || !followable_program(program) {
+    return -1
+  }
   let section = publish_state()
   if section == "" {
     g_runtime.child_failures = g_runtime.child_failures + 1
     return -1
   }
-  let target = if cmd != 0L { wide_to_string(cmd) } else { "" }
+  // The child is told which image to run, and separately receives the
+  // arguments on its own command line, so the program it maps sees what its
+  // parent passed. The environment carries the whole call, quoted, so a path
+  // with spaces survives.
   let extra : Array[(String, String)] = [
-    ("LUNAPACK_CHILD_CMD", target),
+    ("LUNAPACK_CHILD_CMD", "\"" + program + "\"" + tail),
     ("LUNAPACK_VFS_SECTION", section),
   ]
   let orig_wide = (flags & CREATE_UNICODE_ENVIRONMENT) != 0
@@ -333,7 +430,7 @@ fn redirect_launch(
     g_runtime.child_failures = g_runtime.child_failures + 1
     return -1
   }
-  let cmdptr = scratch_wide("\"" + bootstrap + "\"")
+  let cmdptr = scratch_wide("\"" + bootstrap + "\"" + tail)
   if cmdptr == 0L {
     ignore(virtual_free(block, 0L, MEM_RELEASE))
     g_runtime.child_failures = g_runtime.child_failures + 1
@@ -382,8 +479,9 @@ pub fn lp_create_process_w(
   pi : Int64,
 ) -> Int32 {
   if bootstrap_configured() {
+    let (program, tail) = launch_parts(app, cmd, true)
     let launched = redirect_launch(
-      cmd, inherit_handles, flags, env, dir, si, pi,
+      program, tail, inherit_handles, flags, env, dir, si, pi,
     )
     if launched >= 0 {
       return launched
@@ -410,17 +508,13 @@ pub fn lp_create_process_a(
   si : Int64,
   pi : Int64,
 ) -> Int32 {
-  ignore(app)
   if bootstrap_configured() {
-    let p = scratch_wide(ansi_to_string(cmd))
-    if p != 0L {
-      let launched = redirect_launch(
-        p, inherit_handles, flags, env, dir, si, pi,
-      )
-      ignore(virtual_free(p, 0L, MEM_RELEASE))
-      if launched >= 0 {
-        return launched
-      }
+    let (program, tail) = launch_parts(app, cmd, false)
+    let launched = redirect_launch(
+      program, tail, inherit_handles, flags, env, dir, si, pi,
+    )
+    if launched >= 0 {
+      return launched
     }
   }
   real_create_process_a(

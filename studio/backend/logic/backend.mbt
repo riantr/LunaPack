@@ -9,6 +9,7 @@ async fn handle_pick(
     "output" => "Choose where to write the bundle"
     "folder" | "edit" => "Choose a folder of files to bundle"
     "cli" | "launcher" => "Choose the LunaPack executable"
+    "runtime" => "Choose the lpvirt.dll runtime image"
     _ => "Choose the application executable"
   }
   let chosen = match context.window() {
@@ -76,13 +77,31 @@ async fn handle_probe(_request : @shared.ProbeRequest) -> @shared.ProbeReply {
 }
 
 ///|
+/// A forwarded `--registry` names a file; the editor wants its contents. An
+/// inline JSON value is left alone, so a caller that already has the text can
+/// still prefill the field.
+async fn registry_field_value(value : String) -> String {
+  if value == "" {
+    return ""
+  }
+  if @fs.exists(value) {
+    @fs.read_file(value).text() catch {
+      _ => value
+    }
+  } else {
+    value
+  }
+}
+
+///|
 /// The CLI forwards its own command line when it opens this window. Reading
 /// argv on the native side is the only way to see it: the renderer runs inside
 /// CEF and has no access to the process arguments.
 async fn handle_startup(
   _request : @shared.StartupRequest,
 ) -> @shared.StartupReply {
-  @core.parse_startup_args(@env.args())
+  let reply = @core.parse_startup_args(@env.args())
+  { ..reply, registry_json: registry_field_value(reply.registry_json), }
 }
 
 ///|
@@ -94,8 +113,23 @@ async fn handle_run_pack(
   } else {
     request.cli_path
   }
-  let args = @core.bundle_arguments(request)
-  try {
+  let registry_path = if request.virtual_enabled &&
+    request.registry_json.trim().to_owned() != "" {
+    let path = request.output_exe + ".lunapack-registry.json"
+    @fs.write_file(path, request.registry_json) catch {
+      err =>
+        return {
+          ok: false,
+          exit_code: -1,
+          output: "Could not write the registry seed file: " + err.to_string(),
+        }
+    }
+    path
+  } else {
+    ""
+  }
+  let args = @core.bundle_arguments_with_registry(request, registry_path)
+  let result : @shared.ProcessReply = try {
     let (code, captured) = @process.collect_output_merged(
       cli,
       args,
@@ -113,4 +147,10 @@ async fn handle_run_pack(
         ". Set its path on the Options tab.",
       }
   }
+  if registry_path != "" {
+    @fs.remove(registry_path) catch {
+      _ => ()
+    }
+  }
+  result
 }

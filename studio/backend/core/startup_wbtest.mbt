@@ -80,3 +80,25 @@ test "paths with spaces survive inline values" {
   ])
   assert_eq(r.input_exe, "C:/Program Files/My App/app.exe")
 }
+
+///|
+test "virtual flags prefill the whole layer" {
+  let r = parse_startup_args([
+    "studio", "--virtual", "--virtual-root=D:/virt", "--virtual-temp=D:/virt/tmp",
+    "--registry=D:/seeds.json", "--runtime=D:/lpvirt.dll",
+  ])
+  assert_eq(r.virtual_enabled, true)
+  assert_eq(r.virtual_root, "D:/virt")
+  assert_eq(r.virtual_temp, "D:/virt/tmp")
+  assert_eq(r.registry_json, "D:/seeds.json")
+  assert_eq(r.runtime_image, "D:/lpvirt.dll")
+}
+
+///|
+test "no-virtual wins even when other layer flags follow it" {
+  let r = parse_startup_args([
+    "studio", "--virtual", "--no-virtual", "--registry=D:/seeds.json",
+  ])
+  assert_eq(r.virtual_enabled, false)
+  assert_eq(r.registry_json, "")
+}

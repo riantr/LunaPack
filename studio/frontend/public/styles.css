@@ -474,6 +474,20 @@ button:disabled {
   font-size: 11px;
 }
 
+.json-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 130px;
+  padding: 8px 10px;
+  border: 1px solid #cfcfcf;
+  background: #fbfbfb;
+  color: #333;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
 .log {
   margin: 8px 0 0;
   padding: 8px 10px;

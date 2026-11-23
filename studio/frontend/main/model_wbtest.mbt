@@ -20,6 +20,9 @@ test "the initial model is empty and ready" {
   assert_eq(model.output_exe, "")
   assert_eq(model.tab, "files")
   assert_eq(model.busy, false)
+  assert_eq(model.virtual_enabled, false)
+  assert_eq(model.virtual_root, "C:\\virt")
+  assert_eq(model.registry_json, "[]")
   assert_eq(model.folders.length(), 0)
 }
 
@@ -36,6 +39,11 @@ fn startup_sample() -> @shared.StartupReply {
     version: "0.2.0",
     target_os: "linux",
     arch: "aarch64",
+    virtual_enabled: true,
+    virtual_root: "D:/virt",
+    virtual_temp: "D:/virt/tmp",
+    registry_json: "[]",
+    runtime_image: "D:/lpvirt.dll",
     has_args: true,
   }
 }
@@ -53,6 +61,9 @@ test "forwarded command-line flags prefill the whole form" {
   assert_eq(model.version, "0.2.0")
   assert_eq(model.target_os, "linux")
   assert_eq(model.arch, "aarch64")
+  assert_eq(model.virtual_enabled, true)
+  assert_eq(model.virtual_root, "D:/virt")
+  assert_eq(model.runtime_image, "D:/lpvirt.dll")
   assert_eq(model.status.contains("Command line loaded"), true)
 }
 
@@ -70,6 +81,11 @@ test "an empty startup reply leaves the defaults untouched" {
     version: "",
     target_os: "",
     arch: "",
+    virtual_enabled: false,
+    virtual_root: "",
+    virtual_temp: "",
+    registry_json: "",
+    runtime_image: "",
     has_args: false,
   })
   assert_eq(after.input_exe, before.input_exe)

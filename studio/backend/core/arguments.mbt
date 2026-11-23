@@ -27,6 +27,17 @@ pub fn cli_candidates() -> Array[String] {
 /// flag checker but only read by the no-subcommand `moonx` front end, so using
 /// them here would make bundle report "requires -i and -o" and exit.
 pub fn bundle_arguments(request : @shared.ProcessRequest) -> Array[String] {
+  bundle_arguments_with_registry(request, "")
+}
+
+///|
+/// The registry editor keeps JSON in the window. The backend writes it to a
+/// short-lived file and passes that path here, because the CLI reads seeds from
+/// `--registry <file>`.
+pub fn bundle_arguments_with_registry(
+  request : @shared.ProcessRequest,
+  registry_path : String,
+) -> Array[String] {
   let args : Array[String] = [
     "bundle",
     "--input",
@@ -40,7 +51,12 @@ pub fn bundle_arguments(request : @shared.ProcessRequest) -> Array[String] {
       args.push(dir)
     }
   }
-  if request.compression != "" {
+  // A virtual bundle cannot carry LZ4 or encryption. Store it instead of
+  // letting the CLI refuse a form that was only a leftover from the Storage tab.
+  if request.virtual_enabled {
+    args.push("--compression-method")
+    args.push("none")
+  } else if request.compression != "" {
     args.push("--compression-method")
     args.push(request.compression)
   }
@@ -63,6 +79,25 @@ pub fn bundle_arguments(request : @shared.ProcessRequest) -> Array[String] {
   if request.launcher != "" {
     args.push("--launcher")
     args.push(request.launcher)
+  }
+  if request.virtual_enabled {
+    args.push("--virtual")
+    if request.virtual_root != "" {
+      args.push("--virtual-root")
+      args.push(request.virtual_root)
+    }
+    if request.virtual_temp != "" {
+      args.push("--virtual-temp")
+      args.push(request.virtual_temp)
+    }
+    if registry_path != "" {
+      args.push("--registry")
+      args.push(registry_path)
+    }
+    if request.runtime_image != "" {
+      args.push("--runtime")
+      args.push(request.runtime_image)
+    }
   }
   args
 }

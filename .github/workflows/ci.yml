@@ -150,6 +150,57 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
+  # L7.1: the virtual bundle path, end to end, packed by the shipping CLI.
+  #
+  # This is the leg that keeps `lp bundle --virtual` honest. It needs two things
+  # that only exist on Windows: the root release CLI, and the artifacts
+  # build_runtime_windows.ps1 produces (lpvhost.exe, lpvirt.dll and the C
+  # fixtures the verifier packs). It is a separate job rather than three more
+  # steps in the one above because that job runs its harnesses with -Consume,
+  # which deletes dist\mini_target.exe and dist\dynlib.dll after mapping them -
+  # the very images this verifier has to bundle.
+  # ---------------------------------------------------------------------------
+  virtual-bundle:
+    name: Virtual bundle (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit
+        shell: pwsh
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # The verifier looks for the CLI at _build\native\release\build, so the
+      # CLI is built in release mode, exactly like the binary that ships.
+      - name: Build the release CLI
+        shell: pwsh
+        run: moon build --release --target native
+
+      # No -Consume on purpose: that switch deletes the target images after
+      # mapping them, and the verifier needs mini_target.exe and dynlib.dll on
+      # disk so it can pack them into a bundle.
+      - name: Build the runtime, the launcher and the C fixtures
+        shell: pwsh
+        run: ./scripts/build_runtime_windows.ps1
+
+      # Windows PowerShell 5.1 on purpose. The verifier hands each command line
+      # to cmd.exe to capture merged output, and PowerShell 7.3+ re-quotes the
+      # arguments of a native command, so the same call reaches cmd.exe with
+      # different quoting. The script is validated under 5.1; this step keeps
+      # it there.
+      - name: Verify the virtual bundle path
+        shell: powershell
+        run: ./scripts/verify_virtual_bundle.ps1
+
+  # ---------------------------------------------------------------------------
   # The source must be formatted and its generated interface up to date.
   # ---------------------------------------------------------------------------
   verify:

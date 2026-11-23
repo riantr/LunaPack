@@ -278,7 +278,7 @@ two signatures share, so the published source compiles on either toolchain.
   package; only a virtual bundle requires the new launcher.
 
 - **`bundle --virtual` produces a single self-contained file.** Bare `--virtual`
-  uses `C:\`; `--virtual-root`, `--virtual-temp` and `--registry <file>` refine
+  uses `C:\virt`; `--virtual-root`, `--virtual-temp` and `--registry <file>` refine
   the layer. `--no-virtual` keeps the old unpacking path. The packer refuses
   encryption, LZ4 and an automatic launcher for a virtual bundle, and an
   ordinary launcher refuses one instead of silently unpacking it.
@@ -298,8 +298,11 @@ two signatures share, so the published source compiles on either toolchain.
   directory or `%TEMP%`, and repeats the Huorong count (16 → 16 on this
   machine). The root suite is now **211 tests**.
 
-- **Studio editing of the virtual layer (L6.4) is not included.** The runtime
-  and CLI path are productized; the Studio editor remains a later increment.
+- **Studio can edit the virtual layer (L6.4).** The Virtual tab enables the
+  layer, sets the root and temp directory, picks `lpvhost.exe` and `lpvirt.dll`,
+  and edits the typed registry seeds as JSON. Studio writes the seeds to a
+  short-lived `--registry` file for the CLI and stores virtual bundles without
+  compression, since LZ4 and encryption are refused in this mode.
 
 ### What changed in 0.1.27
 
@@ -1826,8 +1829,11 @@ The produced file *is* the launcher with an appended archive. It carries
 `lpvirt.dll` as a reserved entry, so the runtime that interprets the layer is
 verified by the same SHA-256 as every other entry. A plain launcher prints a
 refusal instead of unpacking a virtual bundle; `lunapack info` shows the virtual
-root, the file count and the registry seed count. The Windows x64 target is a
-hard boundary: see [the runtime's limits](runtime/README.md#limits) and the
+root, the file count and the registry seed count. The same layer can be edited
+from LunaPack Studio's **Virtual** tab: enable the layer, choose `lpvhost.exe`
+as the launcher, set the root/temp paths and edit the typed registry seeds as
+JSON. The Windows x64 target is a hard boundary: see
+[the runtime's limits](runtime/README.md#limits) and the
 [toolchain decision](runtime/tests/corpus/X86_DECISION.md).
 
 What it currently does, end to end and in one process:
@@ -1844,7 +1850,27 @@ What it currently does, end to end and in one process:
 - a **manual PE mapper** maps a consumer DLL from a byte array, so the
   consumer does not have to exist as a file while it runs — headers,
   sections, base relocations, imports and section protections are all done
-  in memory.
+  in memory;
+- **child processes stay inside the layer.** The program's `CreateProcessW`
+  is redirected back into the same bundle, the virtual tree travels in a named
+  shared section and is imported by the child before it maps its own image, so
+  a grandchild follows too. A child the bundle carries is read out of the
+  layer; a child that only exists on disk is read from disk and still sees the
+  layer. A path that exists in neither is handed to the real API, so an
+  ordinary "file not found" still arrives where the caller expects it.
+
+Two limits are measured rather than assumed, and both are asserted by
+`scripts/verify_virtual_bundle.ps1`:
+
+- **stdio does not reach the layer.** `fopen` lives in `msvcrt`/`ucrtbase`, a
+  system DLL the runtime does not patch, so a program that reads its data
+  through `FILE*` or `std::ifstream` still sees the real disk. The script runs
+  `crt_open.exe`, which opens one virtual file both ways and prints
+  `C-open result=FAILED` next to `win32 result=OK`.
+- **`SearchPathW` is not hooked.** A program that resolves a name before
+  starting it asks the real filesystem; Windows 11's own `cmd.exe` does exactly
+  that, which is why it cannot find a virtual program even though
+  `GetFileAttributesW` on the same literal path is answered from the layer.
 
 Anything the runtime does not own falls through to the real Win32 API through
 the runtime DLL's own unpatched import, so ordinary files and registry keys
@@ -1873,9 +1899,11 @@ The shipping path is asserted by:
 powershell -File scripts\verify_virtual_bundle.ps1
 ```
 
-It exercises a CLI-produced bundle, not a C host. `lpvirt.dll` and
-`lpvhost.exe` are both built by the Windows CI job and attached to releases;
-the DLL is additionally embedded, checksummed, in every virtual bundle.
+It exercises a CLI-produced bundle, not a C host. The Windows CI job
+`virtual-bundle` runs exactly this script on every push, after building the
+release CLI and the runtime without `-Consume`. `lpvirt.dll` and `lpvhost.exe`
+are both built by CI and attached to releases; the DLL is additionally
+embedded, checksummed, in every virtual bundle.
 
 ## Running it
 
@@ -2475,9 +2503,17 @@ gap is worth closing rather than papering over.
 **Which of them CI runs.** The CI workflow (`.github/workflows/ci.yml`) runs
 `moon check --target native`, `moon test --target native`, both release
 builds, `bash scripts/test_linux.sh` on the Linux runner, `moon fmt --check`
-and the `moon info` diff. The `moon check --target wasm` and the
-`moon test` on the Wasm backend are **not** in CI: they are listed here
-because they were run by hand, not because CI depends on them.
+and the `moon info` diff. Two Windows jobs cover the runtime:
+`runtime-windows` builds `lpvirt.dll` and runs every harness with `-Consume`,
+and `virtual-bundle` builds the release CLI plus the runtime and runs
+`scripts/verify_virtual_bundle.ps1`, which is the leg that asserts the
+shipping path — a v7 bundle made by the CLI, the embedded runtime entry, a
+mapped program reading its virtual files, checksum refusal, `--no-virtual` and
+zero payload on disk. The verifier's Huorong comparison reports **skipped** on
+a runner, because there is no engine to compare against; that retest stays
+manual. The `moon check --target wasm` and the `moon test` on the Wasm backend
+are **not** in CI: they are listed here because they were run by hand, not
+because CI depends on them.
 
 ## Used By
 

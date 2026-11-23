@@ -263,16 +263,41 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
   **not** rewrite ntdll code, kernel32/KernelBase internals, or issue direct
   syscalls; programs that obtain the Win32 API outside our IAT/GPA hooks still
   bypass the runtime. Inline hooking remains a separate AV-gated decision.
-- **Child processes follow, but only through this hook (L4).** A program that
-  calls `CreateProcessW`/`CreateProcessA` is redirected into the launcher, the
-  virtual tree is carried in a named shared section, and a grandchild follows
-  the same way — verified as a three-level chain. **Not** covered:
-  `CreateProcessAsUserW`, `CreateProcessWithTokenW`, `CreateProcessWithLogonW`
-  and `ShellExecute*`, so a launch that passes its own token leaves the virtual
-  layer. Each spawn keeps one section handle open for the life of the process.
-  A mapped image's `GetCommandLineW` and CRT `argv` still describe the launcher,
-  not the image, because the PEB belongs to the process — PEB fidelity is L6
-  work.
+- **Child processes follow, and the shipping launcher does it too (L4).** A
+  program that calls `CreateProcessW`/`CreateProcessA` is redirected into the
+  launcher, the virtual tree is carried in a named shared section, and a
+  grandchild follows the same way — verified as a three-level chain. Since L4
+  was wired into `lp_run_bundle`, this holds for a v7 bundle as well: every
+  generation of the bundle is its own bootstrap, so a child that the parent
+  packed **and** a child that only exists on the parent's disk both run inside
+  the layer, with the imported tree taking precedence over the archive.
+  **Not** covered: `CreateProcessAsUserW`, `CreateProcessWithTokenW`,
+  `CreateProcessWithLogonW` and `ShellExecute*`, so a launch that passes its own
+  token leaves the virtual layer. Each spawn keeps one section handle open for
+  the life of the process. A mapped image's `GetCommandLineW` and CRT `argv`
+  still describe the launcher, not the image, because the PEB belongs to the
+  process — PEB fidelity is L6 work. Arguments *are* forwarded: the child's
+  command line is the bootstrap followed by the parent's tail, so `argv[1..]`
+  is what the parent passed.
+- **A child is only redirected when the target exists.** A path that is in
+  neither the virtual tree nor on disk is handed to the real `CreateProcess`,
+  so caller code that handles "file not found" still works. This also means
+  the runtime never invents a process for a path it cannot map.
+- **CRT-mediated file I/O is not virtualized.** This is the largest known gap
+  and it is measured, not assumed: `runtime/tests/crt_open.c` opens the same
+  virtual file twice and reports `C-open result=FAILED` next to
+  `win32 result=OK`. `fopen` lives in `msvcrt`/`ucrtbase`, a system DLL this
+  runtime deliberately does not patch, so a program that reads through stdio
+  reaches the real disk. Consequences: a real application that uses `FILE*`
+  or `std::ifstream` for its data files will not see the layer; `cmd.exe /c
+  type <virtual file>` fails for the same reason. `scripts/verify_virtual_bundle.ps1`
+  pins both halves of that boundary, so closing the gap fails the gate and
+  forces this paragraph to change with it.
+- **`SearchPathW` is not hooked.** A program that resolves a name before
+  starting or opening it asks the real filesystem (Windows 11 `cmd.exe` is one:
+  it imports `SearchPathW`, and that is why it cannot find a virtual program
+  even though `GetFileAttributesW` would answer). `CreateFileW` on the same
+  literal path works, so this is a resolution gap rather than a lookup gap.
 - **COM components register and activate without administrator rights (L5).**
   The whole `HKCR` namespace (and both `Software\Classes` subtrees, which are
   folded onto `hkcr`) is owned by the hive, so `DllRegisterServer` writes land in
@@ -331,10 +356,11 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
   mapper, produced no new quarantine entries. Other engines, unsigned
   binaries and signed binaries may behave differently. Re-test every new
   mechanism on a machine with security software enabled.
-- **Wired into the CLI, but Windows x64 only.** `lunapack bundle --virtual`
-  writes v7 virtual layers and `lpvhost.exe` runs them in memory. There is no
-  x86 runtime (see `X86_DECISION.md`), and Studio cannot yet edit the virtual
-  layer (L6.4). The ordinary launcher intentionally refuses a virtual bundle.
+- **Wired into the CLI and Studio, but Windows x64 only.** `lunapack bundle
+  --virtual` writes v7 virtual layers and `lpvhost.exe` runs them in memory;
+  Studio's Virtual tab edits the root, temp path, runtime image and typed
+  registry seeds. There is no x86 runtime (see `X86_DECISION.md`). The ordinary
+  launcher intentionally refuses a virtual bundle.
 
 ## Baselines (L0 measured 2026-11-18, L1 re-measured 2026-11-18)
 
@@ -472,11 +498,23 @@ Root tests **211/211**; runtime tests **41/41**. All eight assertion scripts are
 green: `verify_virtual_bundle`, `verify_child_follow`, `verify_com_activation`,
 `verify_fallback_chain`, `verify_ntdll_spike`, `verify_pe_features`,
 `verify_thin_launcher` and `verify_zero_disk` (run last, because the consume
-demos remove their own targets). The new virtual script checks 29 invariants,
-including a CLI-produced v7 layer, the embedded runtime entry, mapped-program
-output, checksum refusal of a byte-flipped payload, `--no-virtual`, no extracted
-file in the working directory or `%TEMP%`, and a separate Huorong count
-(**16 → 16**, Huorong only, second engine pending).
+demos remove their own targets). The virtual script checks **41 invariants**: a
+CLI-produced v7 layer, the embedded runtime entry, mapped-program output,
+checksum refusal of a byte-flipped payload, `--no-virtual`, no extracted file in
+the working directory or `%TEMP%`, a three-level child chain where the child is
+**in the layer** and a second one where the child is **only on disk**, and the
+CRT boundary (`C-open FAILED` beside `win32 OK`). The Huorong comparison is one
+of the 41 on a machine that runs the engine and is reported as skipped on a CI
+runner, which has none (**16 → 16** locally, Huorong only, second engine
+pending).
+
+**CI runs it with the shipping CLI.** `.github/workflows/ci.yml` has a
+`virtual-bundle` job that builds the root release CLI, builds this runtime and
+its C fixtures **without** `-Consume` (that switch deletes the very target
+images the verifier packs), and then runs `scripts/verify_virtual_bundle.ps1`
+under Windows PowerShell 5.1 — the shell it was validated in, because
+PowerShell 7.3+ re-quotes the arguments of a native command and the verifier
+hands each command line to `cmd.exe`.
 
 MSA 0.4.52: `files=83 parsed=83 actionable=0 defects=0 notices=767`
 (notices are structural only; +25 from the four new source/interface files and

@@ -627,11 +627,85 @@ fn refuse(message : String) -> Int32 {
 }
 
 ///|
+/// The program a virtualized parent asked this process to run, or "" when this
+/// is the start of the chain.
+fn child_program() -> String {
+  let line = env_get("LUNAPACK_CHILD_CMD")
+  if line == "" {
+    return ""
+  }
+  let (program, _) = split_program(line)
+  program
+}
+
+///|
+/// The child start: the parent published its tree in a named section and named
+/// the program to run.
+///
+/// The archive is deliberately not read here. The tree in the section is newer
+/// than the archive - the parent's program may have created, changed or deleted
+/// files since it was seeded - so importing is what makes the child see the
+/// same filesystem rather than a fresh copy of the package.
+///
+/// The program comes from the tree when the parent packed it, and from disk
+/// otherwise: a program the parent installed still has to run, and it still has
+/// to see the files the parent virtualized.
+fn run_child(program : String, verbose : Bool) -> Int32 {
+  let step = lp_import_inherited_state()
+  if step != 0 {
+    return refuse(
+      "cannot import the virtual state the parent published (step " +
+      step.to_string() +
+      ")",
+    )
+  }
+  let image = match state_vfs().read_file(program) {
+    Some(b) => b
+    None =>
+      match read_whole(utf16z(program)) {
+        Some(b) => b
+        None =>
+          return refuse(
+            "the parent asked for " +
+            program +
+            ", which is neither in the virtual tree nor on disk",
+          )
+      }
+  }
+  let base = host_map(image)
+  if base == 0L {
+    return refuse(
+      "cannot map " + program + " (reason " + host_map_error().to_string() + ")",
+    )
+  }
+  host_set_module_path(base, program)
+  let patched = host_install(base)
+  if verbose {
+    println(
+      "child        " + program + "  " + image.length().to_string() + " B",
+    )
+    println(
+      "mapped       " + program + "  " + patched.to_string() + " IAT slots",
+    )
+  }
+  host_run(base)
+}
+
+///|
 /// The run itself: seed the tree and the hive from the archive, map the main
 /// program, hook it, start it, and hand back the code it ended with.
 fn run_bundle() -> Int32 {
   let verbose = verbose_run()
   let path = own_module_path()
+  // Every generation of this file is its own bootstrap. A redirected child is
+  // this same program, started with the program to run in its environment, so
+  // recursion needs nothing beyond this line: whatever this process starts,
+  // and whatever that one starts in turn, comes back through here.
+  g_runtime.bootstrap_path = utf16_string(path)
+  let child = child_program()
+  if child != "" {
+    return run_child(child, verbose)
+  }
   let bytes = match read_whole(path) {
     Some(b) => b
     None => return refuse("cannot read " + utf16_string(path))

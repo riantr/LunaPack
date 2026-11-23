@@ -41,6 +41,10 @@ and appends `--cli=<its own executable>`. On startup Studio calls the
 | `--cli` | LunaPack CLI on the Options tab |
 | `--launcher`, `--name`, `--version`, `--os`, `--arch` | Packaging / Options |
 | `--compression-method` / `--compression` | Storage |
+| `--virtual` / `--virtual-root` / `--virtual-temp` | Virtual tab |
+| `--registry` | Virtual tab (the file's JSON is loaded into the seed editor) |
+| `--runtime` | Virtual tab |
+| `--no-virtual` | Turns the Virtual tab off, even if other layer flags follow |
 
 Empty forwarded fields keep the window's defaults. An explicit `--cli` from
 the launcher is never overwritten by auto-discovery. Unknown flags and
@@ -76,8 +80,9 @@ explicit `registrar.bind(...)` command bindings.
   by both targets (`pick_path`, `scan_dir`, `probe_cli`, `run_pack`,
   `startup_args`).
 - `frontend/main/main.mbt` — the Rabbita model, all views and the startup
-  chain (`startup_args` -> `probe_cli` -> first folder scan);
-  `frontend/public/styles.css` holds the light desktop styling.
+  chain (`startup_args` -> `probe_cli` -> first folder scan), including the
+  Virtual tab for the v7 layer; `frontend/public/styles.css` holds the light
+  desktop styling.
 - `backend/core/arguments.mbt` — pure `bundle` argument builder.
 - `backend/core/startup.mbt` — pure startup-argument parser.
 - `backend/logic/` — native command handlers: OS file dialogs, directory
@@ -132,6 +137,30 @@ self-extracting launcher, so a GUI process is not a usable stub.
 > the no-subcommand `moonx` front end. The GUI receives all of them from
 > `--GUI` but emits `bundle --input <exe> --output <exe>`.
 
+## Virtual layer
+
+The **Virtual** tab edits the v7 layer that `bundle --virtual` writes. Turning
+the layer on stores entries without compression: LunaPack refuses LZ4 and
+encryption for a virtual bundle, so Studio emits `--compression-method none`
+regardless of the Storage tab. A virtual bundle must use `lpvhost.exe` as its
+launcher; Studio checks that the launcher field is set before calling the CLI.
+
+| Field | CLI flag |
+|---|---|
+| Virtual layer | `--virtual` |
+| Virtual root | `--virtual-root` |
+| Virtual temp | `--virtual-temp` |
+| Runtime image | `--runtime` |
+| Registry seeds | temporary `--registry` file |
+
+The seed editor holds the JSON the CLI's `--registry` reader accepts: either an
+array of values or an object with a `values` array. Each value has `root`
+(`hkcr`, `hkcu`, `hklm`), `key`, `name`, `kind` (`sz`, `expand_sz`, `dword`,
+`binary`) and the matching `value`, `number` or `data`. The backend writes this
+text next to the output as `<output>.lunapack-registry.json`, passes that path
+to the CLI, and removes it after the process exits. An empty seed array is not
+passed at all.
+
 ## CLI discovery
 
 After startup arguments are applied, the frontend invokes `probe_cli`. The
@@ -151,7 +180,7 @@ sits next to the LunaPack checkout.
 ## Tests
 
 ```sh
-moon -C backend test core --target native   # 11 tests (arguments + startup)
+moon -C backend test core --target native   # 15 tests (arguments + startup)
 moon -C frontend test --target js           # 5 model tests
 ```
 

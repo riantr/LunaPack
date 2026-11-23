@@ -2,7 +2,20 @@
 using @rabbita {type Cmd, type Emit, type Html}
 
 ///|
-using @html {a, button, div, hr, input, option, p, pre, select, span, strong}
+using @html {
+  a,
+  button,
+  div,
+  hr,
+  input,
+  option,
+  p,
+  pre,
+  select,
+  span,
+  strong,
+  textarea,
+}
 
 ///|
 /// Everything the window shows. The backend is deliberately stateless: every
@@ -18,6 +31,11 @@ struct Model {
   target_os : String
   arch : String
   compression : String
+  virtual_enabled : Bool
+  virtual_root : String
+  virtual_temp : String
+  registry_json : String
+  runtime_image : String
   tab : String
   menu : String
   folders : Array[String]
@@ -41,12 +59,18 @@ enum Msg {
   OsChanged(String)
   ArchChanged(String)
   CompressionChanged(String)
+  VirtualEnabledChanged(Bool)
+  VirtualRootChanged(String)
+  VirtualTempChanged(String)
+  RegistryJsonChanged(String)
+  RuntimeChanged(String)
   TabChanged(String)
   MenuToggled(String)
   BrowseInput
   BrowseOutput
   BrowseCli
   BrowseLauncher
+  BrowseRuntime
   AddFolder
   EditFolder
   RemoveFolder
@@ -73,6 +97,11 @@ fn initial_model() -> Model {
     target_os: "windows",
     arch: "x86_64",
     compression: "lz4",
+    virtual_enabled: false,
+    virtual_root: "C:\\virt",
+    virtual_temp: "",
+    registry_json: "[]",
+    runtime_image: "",
     tab: "files",
     menu: "",
     folders: [],
@@ -185,6 +214,27 @@ fn apply_startup(model : Model, reply : @shared.StartupReply) -> Model {
     } else {
       reply.arch
     },
+    virtual_enabled: reply.virtual_enabled,
+    virtual_root: if reply.virtual_root == "" {
+      model.virtual_root
+    } else {
+      reply.virtual_root
+    },
+    virtual_temp: if reply.virtual_temp == "" {
+      model.virtual_temp
+    } else {
+      reply.virtual_temp
+    },
+    registry_json: if reply.registry_json == "" {
+      model.registry_json
+    } else {
+      reply.registry_json
+    },
+    runtime_image: if reply.runtime_image == "" {
+      model.runtime_image
+    } else {
+      reply.runtime_image
+    },
     folders,
     selected: if folders.length() > 0 {
       0
@@ -240,6 +290,27 @@ fn update(model : Model, msg : Msg, emit : Emit[Msg]) -> (Model, Cmd) {
     OsChanged(text) => ({ ..model, target_os: text, }, @rabbita.none)
     ArchChanged(text) => ({ ..model, arch: text, }, @rabbita.none)
     CompressionChanged(text) => ({ ..model, compression: text, }, @rabbita.none)
+    VirtualEnabledChanged(on) =>
+      (
+        {
+          ..model,
+          virtual_enabled: on,
+          compression: if on {
+            "none"
+          } else {
+            model.compression
+          },
+          error: None,
+        },
+        @rabbita.none,
+      )
+    VirtualRootChanged(text) =>
+      ({ ..model, virtual_root: text, }, @rabbita.none)
+    VirtualTempChanged(text) =>
+      ({ ..model, virtual_temp: text, }, @rabbita.none)
+    RegistryJsonChanged(text) =>
+      ({ ..model, registry_json: text, }, @rabbita.none)
+    RuntimeChanged(text) => ({ ..model, runtime_image: text, }, @rabbita.none)
     TabChanged(tab) => ({ ..model, tab, menu: "", }, @rabbita.none)
     MenuToggled(key) =>
       (
@@ -252,6 +323,8 @@ fn update(model : Model, msg : Msg, emit : Emit[Msg]) -> (Model, Cmd) {
     BrowseCli => (model, pick_cmd(emit, "cli", "cli", model.cli_path))
     BrowseLauncher =>
       (model, pick_cmd(emit, "launcher", "launcher", model.launcher))
+    BrowseRuntime =>
+      (model, pick_cmd(emit, "runtime", "runtime", model.runtime_image))
     AddFolder => (model, pick_cmd(emit, "folder", "folder", ""))
     EditFolder =>
       if model.selected >= 0 && model.selected < model.folders.length() {
@@ -290,6 +363,7 @@ fn update(model : Model, msg : Msg, emit : Emit[Msg]) -> (Model, Cmd) {
             ({ ..model, output_exe: reply.path, error: None, }, @rabbita.none)
           "cli" => ({ ..model, cli_path: reply.path, }, @rabbita.none)
           "launcher" => ({ ..model, launcher: reply.path, }, @rabbita.none)
+          "runtime" => ({ ..model, runtime_image: reply.path, }, @rabbita.none)
           "folder" => {
             let folders = append_folder(model.folders, reply.path)
             (
@@ -361,6 +435,16 @@ fn update(model : Model, msg : Msg, emit : Emit[Msg]) -> (Model, Cmd) {
           },
           @rabbita.none,
         )
+      } else if model.virtual_enabled && model.launcher == "" {
+        (
+          {
+            ..model,
+            error: Some(
+              "A virtual bundle needs lpvhost.exe. Choose it as the launcher on the Options tab.",
+            ),
+          },
+          @rabbita.none,
+        )
       } else {
         let request = @shared.ProcessRequest::{
           input_exe: model.input_exe,
@@ -373,6 +457,11 @@ fn update(model : Model, msg : Msg, emit : Emit[Msg]) -> (Model, Cmd) {
           version: model.version,
           target_os: model.target_os,
           arch: model.arch,
+          virtual_enabled: model.virtual_enabled,
+          virtual_root: model.virtual_root,
+          virtual_temp: model.virtual_temp,
+          registry_json: model.registry_json,
+          runtime_image: model.runtime_image,
         }
         (
           {
@@ -554,7 +643,8 @@ fn banner() -> Html {
       span(
         class="banner-text",
         "Bundle an executable and its folders into one runnable file. The " +
-        "bundle unpacks itself on first start and then runs the program. ",
+        "bundle unpacks itself on first start, or runs entirely in memory " +
+        "when the virtual layer is on. ",
       ),
       a(
         href="https://github.com/riantr/LunaPack",
@@ -584,7 +674,7 @@ fn tab_button(
 fn tab_strip(emit : Emit[Msg], model : Model) -> Html {
   div(class="tabs", [
     tab_button(emit, "Files", "files", model.tab),
-    tab_button(emit, "Registry", "registry", model.tab),
+    tab_button(emit, "Virtual", "virtual", model.tab),
     tab_button(emit, "Packaging", "packaging", model.tab),
     tab_button(emit, "Storage", "storage", model.tab),
     tab_button(emit, "Options", "options", model.tab),
@@ -679,15 +769,56 @@ fn setting_path_row(
 }
 
 ///|
-fn registry_panel() -> Html {
-  div(class="info-panel", [
-    p(class="info-title", "LunaPack virtualizes files, not the registry."),
+fn virtual_panel(emit : Emit[Msg], model : Model) -> Html {
+  div(class="settings-panel", [
+    div(class="setting-row", [
+      div(class="setting-label", "Virtual layer"),
+      select(on_change=emit.map(text => VirtualEnabledChanged(text == "on")), [
+        option(
+          value="off",
+          selected=!model.virtual_enabled,
+          "Off (unpacking bundle)",
+        ),
+        option(value="on", selected=model.virtual_enabled, "On (zero disk)"),
+      ]),
+    ]),
+    setting_row(
+      "Virtual root",
+      model.virtual_root,
+      "C:\\virt",
+      emit.map(text => VirtualRootChanged(text)),
+    ),
+    setting_row(
+      "Virtual temp",
+      model.virtual_temp,
+      "empty uses the runtime default",
+      emit.map(text => VirtualTempChanged(text)),
+    ),
+    setting_path_row(
+      "Runtime image",
+      model.runtime_image,
+      "empty uses lpvirt.dll beside the launcher",
+      emit.map(text => RuntimeChanged(text)),
+      emit(BrowseRuntime),
+    ),
+    div(class="setting-row", [
+      div(class="setting-label", "Registry seeds"),
+      textarea(
+        class="json-input",
+        value=model.registry_json,
+        rows=9,
+        placeholder="[]",
+        on_input=emit.map(text => RegistryJsonChanged(text)),
+        "",
+      ),
+    ]),
     p(
       class="info-text",
-      "Every folder on the Files tab is packed into the archive and written " +
-      "next to the program when the bundle first runs. There is no registry " +
-      "redirection: an application that needs registry entries should install " +
-      "them with its own pre-install script.",
+      "Seeds are JSON: an array of values, or an object with a \"values\" " +
+      "array. Each value has root (hkcr/hkcu/hklm), key, name, kind " +
+      "(sz/expand_sz/dword/binary) and value/number/data. Virtual bundles " +
+      "store entries without compression and must use lpvhost.exe as the " +
+      "launcher; encryption is not available in this mode.",
     ),
   ])
 }
@@ -786,7 +917,7 @@ fn options_panel(emit : Emit[Msg], model : Model) -> Html {
 fn panel_body(emit : Emit[Msg], model : Model) -> Html {
   div(class="panel-body", [
     match model.tab {
-      "registry" => registry_panel()
+      "virtual" => virtual_panel(emit, model)
       "packaging" => packaging_panel(emit, model)
       "storage" => storage_panel(emit, model)
       "options" => options_panel(emit, model)
@@ -812,6 +943,12 @@ fn actions(emit : Emit[Msg]) -> Html {
       class="action",
       on_click=emit(TabChanged("storage")),
       "Files Options",
+    ),
+    button(
+      type_="button",
+      class="action",
+      on_click=emit(TabChanged("virtual")),
+      "Virtual Layer",
     ),
   ])
 }
