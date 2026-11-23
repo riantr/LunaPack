@@ -8,7 +8,7 @@
 
 name = "riantr/lunapack_runtime"
 
-version = "0.1.25"
+version = "0.1.26"
 
 preferred_target = "native"
 

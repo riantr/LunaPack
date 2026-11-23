@@ -49,6 +49,11 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
   runtime — is refused before the program starts. See
   [Virtual bundles](#virtual-bundles-windows-x64).
 
+  This is a **Tier A preview**: the fixtures that cover it pass, and two
+  measured limits — CRT stdio and `SearchPathW` — are documented under
+  [Virtual bundles](#virtual-bundles-windows-x64) and summarised in
+  [what changed in 0.1.28](#what-changed-in-0128).
+
 * The libraries of the program are found and carried
 
   A Windows program is the executable **and** the libraries it loads, and the
@@ -193,7 +198,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.27
+moon add riantr/LunaPack@0.1.28
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -201,7 +206,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.27",
+  "riantr/LunaPack@0.1.28",
 }
 ```
 
@@ -221,7 +226,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.27`, `>=0.1.27`, `0.1` and `v0.1.27` are all rejected. A bare
+`latest`, `^0.1.28`, `>=0.1.28`, `0.1` and `v0.1.28` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -252,7 +257,8 @@ to be resolved when it is fetched.
 
 ### What the release was checked on
 
-`moon 0.1.20261104` — the toolchain every number in this file was measured on.
+`moon 0.1.20261119` (core `0.10.22+124d61d05`) — the toolchain every number in
+this file was measured on.
 
 The workflow installs the toolchain from the official install script, which
 serves the **current** release, so the runner's version moves with it. That is
@@ -268,7 +274,13 @@ enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
 
-### Unreleased — L6: the runtime becomes a shipping path
+It happened again while 0.1.28 was being prepared, on a two-day gap:
+`@http.get_stream` took a `ClientConnection` on 0.1.20261117 and takes a
+`Proxy` on 0.1.20261119, so the source that passed every gate on the older
+toolchain did not compile on the newer one. The download now describes the
+proxy to `@http` instead of opening the connection itself (see below).
+
+### What changed in 0.1.28
 
 - **The archive format is v7.** A new optional `virtual` section in the manifest
   carries the virtual root, the main program's virtual path, the virtual temp
@@ -303,6 +315,49 @@ two signatures share, so the published source compiles on either toolchain.
   and edits the typed registry seeds as JSON. Studio writes the seeds to a
   short-lived `--registry` file for the CLI and stores virtual bundles without
   compression, since LZ4 and encryption are refused in this mode.
+
+- **A child process stays inside the layer (L4.7).** The mechanism existed
+  before, but only in the C test host: the shipping host never registered itself
+  as the bootstrap, never looked for a child command and never imported the
+  parent's state, so every child a packaged program started came from the real
+  file system with no hooks on it. `run_bundle` now registers itself for every
+  generation and branches on `LUNAPACK_CHILD_CMD`; the child imports the
+  parent's virtual tree and registry hive, takes the image from the tree or from
+  disk, maps it and hooks it, and the grandchild repeats it, so the chain has no
+  depth limit. `lpApplicationName` wins over the command line's first token when
+  a caller passes both and they disagree — that case was following the wrong
+  image.
+
+- **CI runs that gate on every push (L7.1).** A `virtual-bundle` job builds the
+  release CLI, builds the runtime and its fixtures, and runs
+  `scripts/verify_virtual_bundle.ps1` under Windows PowerShell 5.1. On
+  `windows-latest` it reports `ALL 40 VIRTUAL BUNDLE INVARIANTS PASSED`: 41
+  assertions, minus the Huorong comparison, which prints `SKIP` because the
+  runner has no such engine rather than passing by accident.
+
+- **The proxy is described to `@http`, not dialled by hand.** The core change
+  above turned `get_stream`'s third parameter from a `ClientConnection` into a
+  `Proxy`, so `download_proxy` returns `@http.Proxy?` and builds
+  `Proxy::Proxy(url)`; a value with no `scheme://` still means "no proxy, go
+  direct". The `NO_PROXY` and loopback bypass logic is unchanged and tested; the
+  tunnel itself is not covered by an automated test.
+
+- **What this release does not claim.** `--virtual` is a **Tier A preview**.
+  Two limits are measured, not suspected, and each is pinned by an assertion so
+  that closing it turns the gate red:
+
+  * CRT stdio never reaches the layer. `runtime/tests/crt_open.c` opens one
+    virtual file twice in the same process: `CreateFileW` succeeds and `fopen`
+    does not, because `msvcrt`/`ucrtbase` are system DLLs and the import-table
+    patch deliberately leaves them alone.
+  * `SearchPathW` is not hooked, so `cmd.exe` cannot resolve a program that
+    exists only in the virtual tree, even though `GetFileAttributesW` and
+    `CreateFileW` answer for that same path.
+
+  The Tier B matrix of three real programs is therefore **not** satisfied; both
+  limits are registered as its preconditions in `runtime/tests/corpus/README.md`.
+  A passing Tier A fixture is not a passing Tier B program, and this release does
+  not present it as one.
 
 ### What changed in 0.1.27
 
@@ -1311,10 +1366,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.27 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.28 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.27 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.28 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1332,7 +1387,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.27 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.28 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
