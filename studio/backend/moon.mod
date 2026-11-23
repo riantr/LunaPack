@@ -7,6 +7,7 @@ import {
   "moonbitlang/async@0.22.5",
   "moonbit-community/proton@0.8.0",
   "moonbit-community/proton_contract@0.8.0",
+  "tonyfettes/xlog@0.5.1",
 }
 
 license = "Apache-2.0"
