@@ -56,6 +56,15 @@ struct RuntimeState {
   // One page the runtime keeps for calls that need a native buffer of its own
   // (NtQueryKey). Allocated on first use, never freed.
   mut nt_scratch : Int64
+  // L6: where this DLL's own image sits when it was not loaded by the loader.
+  //
+  // A virtual bundle carries the runtime inside its archive: the launcher maps
+  // that DLL out of the bundle's bytes, so the image is not in the loader's
+  // module list, `GetModuleHandleA("lpvirt.dll")` answers NULL, and every IAT
+  // hook that has to name a thunk address names nothing. The base is recorded
+  // once by `lp_run_bundle`, which is the entry point the launcher calls, and
+  // `thunk_address` reads this image's own export directory instead.
+  mut self_base : Int64
   // L5: the last registry paths the thunks were asked about. A component that
   // "cannot register" and a runtime that "cannot find the class" are the same
   // question asked from two sides; this is how the checks see which key was
@@ -98,6 +107,7 @@ let g_runtime : RuntimeState = {
   mapped_images: [],
   mapped_paths: {},
   nt_scratch: 0L,
+  self_base: 0L,
   reg_log: [],
   typelibs: [],
   typelib_vtable: 0L,
@@ -339,7 +349,21 @@ fn lookup_thunk(api : String) -> String? {
 
 ///|
 /// Address of one of our own exported thunks.
+///
+/// Two ways to be loaded, two ways to answer. As `lpvirt.dll` next to a
+/// launcher the image is in the loader's module list and `GetProcAddress` on
+/// it is the whole answer. As the runtime a virtual bundle carries, the image
+/// was mapped out of the archive by the launcher: the loader has never heard
+/// of it, so the module name it would be looked up by does not resolve, and
+/// the same export table is read out of the base the launcher recorded.
 fn thunk_address(export_name : String) -> Int64 {
+  let own = g_runtime.self_base
+  if own != 0L {
+    let thunk = export_address(own, export_name)
+    if thunk != 0L {
+      return thunk
+    }
+  }
   let self_mod = get_module_handle_a(cstring("lpvirt.dll"))
   real_get_proc_address(self_mod, cstring(export_name))
 }

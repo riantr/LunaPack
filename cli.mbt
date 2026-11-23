@@ -152,8 +152,9 @@ fn known_flags() -> Array[String] {
     "files", "gui", "i", "input", "input-exe", "input-file", "launcher", "machine",
     "machine-id", "name", "no-auto-deps", "not-after", "not-before", "o", "os", "output",
     "output-exe", "output-file", "passphrase", "passphrase-file", "post-install",
-    "pre-install", "public-key", "secret-key", "serial", "signature", "skip-scripts",
-    "subject", "version",
+    "pre-install", "public-key", "registry", "runtime", "secret-key", "serial", "signature",
+    "skip-scripts", "subject", "version", "virtual", "virtual-root", "virtual-temp",
+    "no-virtual",
   ]
 }
 
@@ -345,7 +346,8 @@ async fn build_options(flags : Array[Flag]) -> PackOptions {
   if compression == "" {
     compression = flag_value(flags, "compression")
   }
-  new_pack_options(
+  let (virtual_root, virtual_temp, seeds) = virtual_options(flags)
+  let opts = new_pack_options(
     flag_value(flags, "name"),
     flag_value(flags, "version"),
     flag_value(flags, "os"),
@@ -358,6 +360,11 @@ async fn build_options(flags : Array[Flag]) -> PackOptions {
       compression
     },
   )
+  if virtual_root == "" {
+    opts
+  } else {
+    with_virtual_layer(opts, virtual_root, virtual_temp, seeds)
+  }
 }
 
 ///|
@@ -418,6 +425,9 @@ fn usage() -> Unit {
   )
   println(
     "                          give no file to download the launcher for this system automatically",
+  )
+  println(
+    "  --runtime <file>        runtime a virtual bundle carries (default: lpvirt.dll beside the launcher)",
   )
   println("")
   println("verification:")
@@ -517,6 +527,7 @@ async fn bundle_program(
   opts : PackOptions,
 ) -> Unit {
   check_file_dirs(file_dirs)
+  check_virtual_bundle(opts, flags)
   let extra = auto_dependency_files(input_exe, flags)
   bundle_with_files(
     input_exe,
@@ -525,7 +536,233 @@ async fn bundle_program(
     extra,
     opts,
     resolve_launcher(flags),
+    if opts.virtual_root == "" {
+      ""
+    } else {
+      virtual_runtime_image(flags)
+    },
   )
+}
+
+///|
+/// The registry type a `--registry` entry asks for.
+///
+/// The long names are what the code reads, the short ones are what a person
+/// writes. Anything else is refused rather than defaulted to a string: a value
+/// that ends up in the hive with the wrong type is a bug the program will hit
+/// later, far from the command line that caused it.
+fn seed_kind(name : String) -> String raise {
+  match name.to_lower() {
+    "" | "sz" | "string" | "reg_sz" => "REG_SZ"
+    "expand_sz" | "reg_expand_sz" => "REG_EXPAND_SZ"
+    "dword" | "reg_dword" => "REG_DWORD"
+    "binary" | "reg_binary" => "REG_BINARY"
+    other => fail("--registry: unknown value type " + other)
+  }
+}
+
+///|
+/// The registry values a virtual package seeds before its program starts.
+///
+/// The file is a JSON object `{"values": [...]}` or a bare array. Each value
+/// names the root, the key and the value, plus the payload that matches its
+/// type — a `REG_DWORD` is a number and a `REG_BINARY` is hex, so neither has
+/// to survive a trip through a string.
+async fn registry_seeds_from(path : String) -> Array[RegSeed] {
+  let text = read_text_file(path) catch {
+    err => fail("cannot read --registry file: " + err.to_string())
+  }
+  let j = @json.parse(text) catch {
+    err => fail("--registry file is not JSON: " + err.to_string())
+  }
+  let list = match j {
+    Array(a) => a
+    Object(_) =>
+      match json_field(j, "values") {
+        Some(v) =>
+          match v {
+            Array(a) => a
+            _ => fail("--registry: \"values\" is not an array")
+          }
+        None =>
+          fail("--registry: expected an array, or an object with \"values\"")
+      }
+    _ => fail("--registry: expected an array, or an object with \"values\"")
+  }
+  let seeds = []
+  for v in list {
+    let root = json_string_of(v, "root", "hkcr").to_lower()
+    if root != "hkcr" && root != "hkcu" && root != "hklm" {
+      fail("--registry: root must be hkcr, hkcu or hklm, not " + root)
+    }
+    let key = json_string_of(v, "key", "")
+    if key == "" {
+      fail("--registry: every value needs a key")
+    }
+    let name = json_string_of(v, "name", "")
+    let kind = seed_kind(json_string_of(v, "kind", ""))
+    let number_field = json_number_field(v, "number")
+    let number = match number_field {
+      Some(n) => n.to_int()
+      None => 0
+    }
+    let data = json_string_of(v, "data", "")
+    let text_value = json_string_of(v, "text", "")
+    // A value of the wrong shape is caught here, where the file is named,
+    // rather than in the hive where nothing is.
+    if kind == "REG_DWORD" {
+      match number_field {
+        Some(_) => ()
+        None => fail("--registry: a REG_DWORD needs \"number\"")
+      }
+    }
+    if kind == "REG_BINARY" && data == "" {
+      fail("--registry: a REG_BINARY needs \"data\" (lowercase hex)")
+    }
+    seeds.push(new_reg_seed(root, key, name, kind, text_value, number, data))
+  }
+  seeds
+}
+
+///|
+/// The virtual layer asked for on the command line, if any.
+///
+/// `--virtual` on its own means "put the tree under the default root"; with a
+/// value it names that root, and `--virtual-root` is the spelled-out form.
+/// `--registry` adds the values that have to be there before the program
+/// starts and implies the layer, because a seeded value nothing reads is a
+/// crate with no label on it.
+///
+/// `--no-virtual` wins over everything else: a script that turns the layer off
+/// should not also have to remove the flags that turned it on.
+async fn virtual_options(
+  flags : Array[Flag],
+) -> (String, String, Array[RegSeed]) {
+  if flag_has(flags, "no-virtual") {
+    return ("", "", [])
+  }
+  // A bare `--virtual` parses to the string "true": it asks for the layer
+  // without naming a directory. `--virtual=false` is the way a script turns it
+  // off without dropping the flag it was set with.
+  let mut root = if flag_has(flags, "virtual") {
+    match flag_value(flags, "virtual") {
+      "true" => "C:\\virt"
+      "false" => ""
+      other => other
+    }
+  } else {
+    ""
+  }
+  let spelled = flag_value(flags, "virtual-root")
+  if spelled != "" {
+    root = spelled
+  }
+  let registry = flag_value(flags, "registry")
+  if root == "" {
+    if registry == "" {
+      return ("", "", [])
+    }
+    // A registry file without a root still describes a virtual package; the
+    // default root is what it gets.
+    root = "C:\\virt"
+  }
+  let temp = flag_value(flags, "virtual-temp")
+  let seeds = if registry == "" { [] } else { registry_seeds_from(registry) }
+  (root, temp, seeds)
+}
+
+///|
+/// The value of a JSON field that should be a string, or `dflt`.
+fn json_string_of(obj : @json.Json, key : String, dflt : String) -> String {
+  match json_field(obj, key) {
+    Some(v) =>
+      match v {
+        String(s) => s
+        _ => dflt
+      }
+    None => dflt
+  }
+}
+
+///|
+/// The value of a JSON field that should be a number, if it is one.
+fn json_number_field(obj : @json.Json, key : String) -> Double? {
+  match json_field(obj, key) {
+    Some(v) =>
+      match v {
+        Number(n, ..) => Some(n)
+        _ => None
+      }
+    None => None
+  }
+}
+
+///|
+/// Refuse a virtual bundle that the virtual launcher could not read.
+///
+/// The launcher is a small Windows program that reads raw and gzip entries and
+/// has no key to decrypt anything with; a bundle built the other way would
+/// start and die on its first file, far from the command line that produced
+/// it. The launcher it needs is a different binary from the ordinary one,
+/// because the ordinary one unpacks to a directory and has no code in common
+/// with the runtime, so an automatic download cannot be the right answer here.
+async fn check_virtual_bundle(opts : PackOptions, flags : Array[Flag]) -> Unit {
+  if opts.virtual_root == "" {
+    return
+  }
+  if opts.encryption is Some(_) {
+    fail(
+      "a virtual bundle cannot be encrypted yet: the launcher that runs it in memory has no key",
+    )
+  }
+  if opts.compression.to_lower() == "lz4" {
+    fail(
+      "a virtual bundle stores its files raw or gzip: use --compression=gzip (or auto) instead of lz4",
+    )
+  }
+  let spec = flag_value(flags, "launcher")
+  if spec == "" || is_launcher_auto(spec) {
+    fail(
+      "a virtual bundle needs the virtual launcher: pass --launcher <lpvhost.exe>, " +
+      "which is built by scripts/build_runtime_windows.ps1",
+    )
+  }
+  ignore(virtual_runtime_image(flags))
+}
+
+///|
+/// The runtime a virtual bundle carries inside itself.
+///
+/// It is not a separate file at run time: the launcher maps it out of the
+/// bundle's own archive, which is why it is packed as an entry and covered by
+/// that entry's checksum. The file still has to be somewhere when the bundle
+/// is made, and the natural place is next to the launcher that will map it -
+/// the two are built together by the same script.
+async fn virtual_runtime_image(flags : Array[Flag]) -> String {
+  let named = flag_value(flags, "runtime")
+  if named != "" {
+    if !@fs.exists(named) {
+      eprintln("--runtime: " + named + " does not exist")
+      fail("--runtime: the named runtime image does not exist")
+    }
+    return named
+  }
+  let launcher = flag_value(flags, "launcher")
+  let dir = if launcher == "" { "" } else { dirname(launcher) }
+  let guess = if dir == "" || dir == "." {
+    "lpvirt.dll"
+  } else {
+    dir + "/lpvirt.dll"
+  }
+  if @fs.exists(guess) {
+    return guess
+  }
+  eprintln(
+    "a virtual bundle carries the runtime that runs it: " +
+    guess +
+    " is not there, so pass --runtime <lpvirt.dll>",
+  )
+  fail("a virtual bundle carries the runtime that runs it")
 }
 
 ///|
@@ -1001,6 +1238,24 @@ async fn do_info(args : ArrayView[String]) -> Unit {
       }),
     )
     println("entries:      " + m.entries.length().to_string())
+    match m.virtual_layer {
+      Some(v) =>
+        println(
+          "virtual:      " +
+          v.root +
+          "  (" +
+          v.files.length().to_string() +
+          " files, " +
+          v.registry.length().to_string() +
+          " registry values)",
+        )
+      None => println("virtual:      none (unpacks to a directory)")
+    }
+    for e in m.entries {
+      if is_reserved_entry(e.path) {
+        println("runtime:      " + e.path + "  (" + e.size.to_string() + " B)")
+      }
+    }
     let mut total = 0L
     let mut stored = 0L
     for e in m.entries {

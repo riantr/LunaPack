@@ -28,9 +28,10 @@ say "Huorong only, second engine pending". Never write a bare "AV passed".
 
 ## Signed vs unsigned
 
-The release build is unsigned; the release workflow ships `lpvirt.dll` as an
-experimental asset without a code-signing certificate. Signing changes how
-some engines treat a binary, so both states must be recorded:
+The release build is unsigned. The release workflow ships `lpvirt.dll` as a
+standalone asset and every `--virtual` bundle embeds a checksummed copy of it;
+neither is code-signed. Signing changes how some engines treat a binary, so
+both states must be recorded:
 
 - [ ] unsigned `lpvirt.dll` + unsigned host (current state) — Huorong count before/after
 - [ ] signed build, if a certificate becomes available — same test, same harness
@@ -54,7 +55,7 @@ single quarantine event must be attributable to the mechanism that caused it.
 | M4 | Child-process following: `CreateProcessW/A` redirected into the launcher, virtual tree carried in a named shared section; three-level chain (parent → child → grandchild) | L4.1-L4.3 | 16 → 16, `scripts/verify_child_follow.ps1` (21 invariants incl. import-table check: no CreateRemoteThread / WriteProcessMemory / VirtualAllocEx / VirtualProtectEx / OpenProcess / SetThreadContext / QueueUserAPC / NtCreateThreadEx) | 2026-11-19 / 16 | pass (Huorong only, second engine pending). Explicit-token launches (`CreateProcessAsUserW` and friends) are not hooked — documented boundary, not a pass. |
 | M5 | COM registration + activation without administrator rights: `RegCreate/Set/Enum/QueryInfo/Delete` and `NtOpenKey/NtQueryValueKey/NtQueryKey` answered from the hive, `LoadLibrary*` served from the VFS, entry-point stub for hand-mapped images | L5.1-L5.5 | 16 → 16, `scripts/verify_com_activation.ps1` (59 assertions over three runs: no-CRT server, ordinary CRT server, and a run where the file is deleted before mapping) | 2026-11-19 / 16 | pass (Huorong only, second engine pending). The entry-point call is an in-process stub invoked through `InitOnceExecuteOnce`, not an injection. |
 | M6 | Type-library virtualization: the `TYPELIB` resource parsed out of the archive, seven oleaut32 entry points hooked (by name **and** by ordinal), `ITypeLib` object handed back, registration written to the hive | L5.6 | 16 → 16, `scripts/verify_com_activation.ps1` (now 33 assertions per run over the same three runs, including the library keys, `LoadRegTypeLib` round trip and removal) | 2026-11-19 / 16 | pass (Huorong only, second engine pending). Reads the image's own resource directory; no new memory-write primitive beyond the IAT `VirtualProtect` already covered by M0/M2a. |
-| M7 | CLI-shipped virtual launcher (not a C test double) | L6 | pending | — | — |
+| M7 | CLI-shipped virtual launcher: `lpvhost.exe` maps the embedded runtime and main image from a v7 bundle, seeds the virtual layer and runs the program with no extracted files | L6 | 16 → 16, `scripts/verify_virtual_bundle.ps1` (CLI-produced bundle, fixture deleted after packing, checksum refusal, `--no-virtual`, zero disk) | 2026-11-23 / 16 | pass (Huorong only, second engine pending) |
 
 ## Run procedure (all mechanisms)
 

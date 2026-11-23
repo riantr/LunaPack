@@ -46,6 +46,14 @@ try {
 $archive = Join-Path $runtimeDir '_build\native\release\build\lunapack_runtime.lib'
 if (-not (Test-Path $archive)) { throw "missing archive: $archive" }
 
+# The virtual launcher is the same module's second package: the runtime linked
+# into an executable that reads a bundle and runs it in memory. It is a product
+# program, not a test double - `lp bundle --virtual` appends the archive to it.
+$hostExe = Join-Path $runtimeDir '_build\native\release\build\host\host.exe'
+if (-not (Test-Path $hostExe)) { throw "missing virtual launcher: $hostExe" }
+Copy-Item $hostExe (Join-Path $distDir 'lpvhost.exe') -Force
+Write-Host "==> lpvhost.exe: $(Join-Path $distDir 'lpvhost.exe')"
+
 # ------------------------------------------------------------- 2. MSVC tools
 $linkExe = (Get-Command link.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 $clExe = (Get-Command cl.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source

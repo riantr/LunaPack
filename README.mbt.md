@@ -38,6 +38,17 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
   the application is alone on the desktop. A copy of the executable would not
   do this; a plain archiver cannot do it at all.
 
+* A virtual bundle that runs without unpacking
+
+  On Windows x64, `--virtual` adds a virtual layer to the v7 archive: a virtual
+  root, typed registry seeds and a map from each archive entry to the path the
+  program sees. The bundle carries `lpvirt.dll` as a checksummed entry, and
+  `lpvhost.exe` maps that image and the program in memory, seeds the virtual
+  filesystem and registry, installs the hooks and runs the program. Nothing is
+  extracted to a cache, and a checksum change in any entry — including the
+  runtime — is refused before the program starts. See
+  [Virtual bundles](#virtual-bundles-windows-x64).
+
 * The libraries of the program are found and carried
 
   A Windows program is the executable **and** the libraries it loads, and the
@@ -256,6 +267,39 @@ used to return a `&ProcessOutput` trait object and now returns a
 enum variant instead. The first 0.1.18 tag failed on every runner for exactly
 this reason. The Studio launcher was rewritten to use only the arguments the
 two signatures share, so the published source compiles on either toolchain.
+
+### Unreleased — L6: the runtime becomes a shipping path
+
+- **The archive format is v7.** A new optional `virtual` section in the manifest
+  carries the virtual root, the main program's virtual path, the virtual temp
+  directory, a `(path, entry)` map for each file and typed registry seeds.
+  `REG_SZ`, `REG_EXPAND_SZ`, `REG_DWORD` and `REG_BINARY` keep their type instead
+  of becoming text. A v6 manifest with no `virtual` key still reads as a plain
+  package; only a virtual bundle requires the new launcher.
+
+- **`bundle --virtual` produces a single self-contained file.** Bare `--virtual`
+  uses `C:\`; `--virtual-root`, `--virtual-temp` and `--registry <file>` refine
+  the layer. `--no-virtual` keeps the old unpacking path. The packer refuses
+  encryption, LZ4 and an automatic launcher for a virtual bundle, and an
+  ordinary launcher refuses one instead of silently unpacking it.
+
+- **`lpvhost.exe` is the virtual launcher.** It is built next to `lpvirt.dll`
+  by `scripts/build_runtime_windows.ps1` and attached to releases alongside it.
+  The runtime DLL is packed as a reserved, checksummed entry; the launcher maps
+  it in memory, calls its CRT attach and `moonbit_init`, then runs the whole
+  bundle pipeline from inside the DLL so no MoonBit object crosses the boundary.
+  The mapped program runs on a worker thread, where the runtime's
+  `ExitProcess`→`ExitThread` redirect cannot end the launcher prematurely.
+
+- **The end-to-end gate is `scripts/verify_virtual_bundle.ps1`.** It packs a
+  fixture with the shipping CLI, deletes the fixture, runs the bundle, checks
+  every mapped-program assertion, checks that a byte flip is refused by
+  checksum, checks `--no-virtual`, checks that no payload appears in the working
+  directory or `%TEMP%`, and repeats the Huorong count (16 → 16 on this
+  machine). The root suite is now **211 tests**.
+
+- **Studio editing of the virtual layer (L6.4) is not included.** The runtime
+  and CLI path are productized; the Studio editor remains a later increment.
 
 ### What changed in 0.1.27
 
@@ -1073,7 +1117,8 @@ The binaries of a release are attached to its
 | `lunapack-macos-aarch64` | macOS (Apple Silicon) |
 | `lunapack.wasm` | WebAssembly, for `moonx` |
 | `lunapack.core` | the compiled package the WebAssembly module needs |
-| `lpvirt.dll` | the optional in-process runtime for Windows |
+| `lpvirt.dll` | the in-process runtime image for Windows; embedded in virtual bundles and also shipped loose for hosts |
+| `lpvhost.exe` | the virtual launcher for Windows; maps a `--virtual` bundle without unpacking it |
 | `lunapack-studio-windows-x86_64.zip` | LunaPack Studio for Windows (v0.1.27 onward) |
 
 The **source of LunaPack Studio lives in [`studio/`](studio/)** in this
@@ -1753,18 +1798,37 @@ anti-debugging here, no obfuscation and no code protection. What a license
 gives you is a check a reader can trust, not a barrier a reader cannot
 remove.
 
-## Experimental: the in-process runtime
+## Virtual bundles (Windows x64)
 
-Alongside the packer there is now a **separate, Windows-only MoonBit module**
-in [`runtime/`](runtime/README.md). It is a research increment towards a
-memory filesystem and registry virtualization, not a feature of the CLI: no
-`lunapack` command uses it, no archive format for virtual files exists yet,
-and nothing from it is compiled into `LunaPack.exe` or the WebAssembly build.
+Alongside the packer there is a **separate, Windows-only MoonBit module** in
+[`runtime/`](runtime/README.md). It is the engine behind `lunapack bundle
+--virtual`: the CLI writes the virtual layer into the v7 manifest, and
+`lpvhost.exe` maps the runtime and the program from that same file. No part of
+it is compiled into `LunaPack.exe` or the WebAssembly build, and packages made
+without `--virtual` keep unpacking exactly as before.
 
 The root module keeps its `native+wasm` shape. The runtime is its own module
 because it calls Win32 directly, is a `foreign_library`, and needs
 `advapi32.lib` on the linker line — none of which belongs in the
 cross-platform CLI or in its Linux and macOS CI jobs.
+
+A virtual bundle is made and run like this:
+
+```powershell
+powershell -File scripts\build_runtime_windows.ps1
+lunapack bundle -i app.exe -o app-virtual.exe --Files assets `
+  --virtual --virtual-root=C:\ --virtual-temp=C:\virt\tmp\ `
+  --registry values.json --launcher dist\lpvhost.exe
+.\app-virtual.exe
+```
+
+The produced file *is* the launcher with an appended archive. It carries
+`lpvirt.dll` as a reserved entry, so the runtime that interprets the layer is
+verified by the same SHA-256 as every other entry. A plain launcher prints a
+refusal instead of unpacking a virtual bundle; `lunapack info` shows the virtual
+root, the file count and the registry seed count. The Windows x64 target is a
+hard boundary: see [the runtime's limits](runtime/README.md#limits) and the
+[toolchain decision](runtime/tests/corpus/X86_DECISION.md).
 
 What it currently does, end to end and in one process:
 
@@ -1774,9 +1838,9 @@ What it currently does, end to end and in one process:
 - an **in-memory registry hive** serves `RegOpenKeyExW`,
   `RegQueryValueExW`, `RegSetValueExW` and `RegCloseKey`, so a write to HKLM
   needs no administrator rights and never touches the real registry;
-- an **import address table patcher** redirects twelve Win32 entry points of
-  a consumer module, including `GetProcAddress` so dynamically resolved
-  calls are covered too;
+- an **import address table patcher** redirects the Win32, ANSI and ntdll
+  entry points listed in the [runtime README](runtime/README.md#exports),
+  including `GetProcAddress` so dynamically resolved calls are covered too;
 - a **manual PE mapper** maps a consumer DLL from a byte array, so the
   consumer does not have to exist as a file while it runs — headers,
   sections, base relocations, imports and section protections are all done
@@ -1794,17 +1858,24 @@ earlier injection experiment unacceptable to security software.
 powershell -File scripts\build_runtime_windows.ps1 -Consume
 ```
 
-The script builds `lpvirt.dll`, compiles two throwaway C test doubles and runs
-the demo. `-Consume` deletes the consumer DLL from disk *after* its bytes are
-read but *before* they are mapped; the demo still runs and
+The script builds `lpvirt.dll` and `lpvhost.exe`, compiles the C fixtures and
+runs the demos. `-Consume` deletes the consumer DLL from disk *after* its bytes
+are read but *before* they are mapped; the demo still runs and
 `GetModuleHandle("payload.dll")` returns NULL. On the development machine
 (Huorong) this produced no new quarantine entries, while the earlier remote
 injection experiment was isolated eleven times. That is a measurement on one
-engine, not a guarantee: see [the runtime's limits](runtime/README.md) before
-treating any of it as production code.
+engine, not a guarantee: see [the runtime's limits](runtime/README.md#limits)
+before treating any of it as production code.
 
-`lpvirt.dll` is built by an extra Windows CI job and attached to releases as
-an **optional, experimental asset**. Its build is not a release blocker.
+The shipping path is asserted by:
+
+```powershell
+powershell -File scripts\verify_virtual_bundle.ps1
+```
+
+It exercises a CLI-produced bundle, not a C host. `lpvirt.dll` and
+`lpvhost.exe` are both built by the Windows CI job and attached to releases;
+the DLL is additionally embedded, checksummed, in every virtual bundle.
 
 ## Running it
 
@@ -1883,9 +1954,10 @@ older window. A mirror or an offline install can set `LUNAPACK_STUDIO_URL` to
 any URL (or a `file` served over loopback in a test); a bad archive is refused
 with a message naming the reason.
 
-That asset is **not attached to the releases so far** - Studio is built on
-another machine - so `--GUI` says that it cannot find one instead of pretending
-to have downloaded it.
+The Windows Studio zip is attached to releases from 0.1.27 onward, with its
+size and SHA-256 recorded in the release notes. An older release, a mirror
+without the asset, or a version mismatch still makes `--GUI` say that it cannot
+find one instead of pretending to have downloaded it.
 
 `HTTPS_PROXY`, `HTTP_PROXY` and their lowercase forms are honoured through a
 CONNECT tunnel. `NO_PROXY` (including its `*` wildcard) and all loopback hosts
@@ -2088,7 +2160,9 @@ lives inside the `--Files` folder.
 
 `moon fmt --check`, the two `moon check` targets, `moon test --target native`
 and the two release builds are the baseline, and `bash scripts/test_linux.sh`
-is the end-to-end suite on top of it.
+is the end-to-end suite on top of it. The Windows runtime has its own build
+script and assertion scripts; the virtual-bundle one is part of the shipping
+path, not a research demo.
 
 | Gate | What it checks |
 |---|---|
@@ -2098,10 +2172,11 @@ is the end-to-end suite on top of it.
 | `moon build --release --target native` / `--target wasm` | that the binary and the WebAssembly module are produced |
 | `moon info` + `git diff --exit-code -- '*.mbti'` | that the published interface is not stale |
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
+| `powershell -File scripts\verify_virtual_bundle.ps1` | the CLI-produced v7 bundle: virtual layer, embedded runtime, mapped program, checksum refusal, `--no-virtual`, zero disk and a separate AV retest |
 
 Measured on this machine (Windows, `moon 0.1.20261104`): `moon test --target
-native` reports **209 tests, 209 passed, 0 failed**, and `--target wasm`
-reports the same.
+native` reports **211 tests, 211 passed, 0 failed**, and `--target wasm`
+reports the same. The runtime module adds **41 tests, 41 passed, 0 failed**.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
 the install-script runner on a Windows host. Without a shell on `PATH` it
@@ -2388,12 +2463,14 @@ drift, because a green suite says nothing about a claim written in prose:
 | `moon test --target native` | a change in the format, the compression, the encryption or one of the primitives — every one of them is checked against a vector or against the reference implementation |
 | `moon info` + `git diff --exit-code -- '*.mbti'` | a published interface that is stale: a symbol changed and the `.mbti` was not regenerated |
 | `bash scripts/test_linux.sh` | a round trip the unit tests do not cover — the install scripts, the permission bits, the corruption detection, the bundle as a byte-identical round trip |
+| `powershell -File scripts\verify_virtual_bundle.ps1` | a virtual bundle that silently starts unpacking, loses its runtime entry, accepts damaged bytes, or writes a payload to disk |
 | the tag check of the release workflow | a tag that disagrees with the version in `moon.mod`, which would publish a module that is not the tree it was cut from |
 
-**There are no separate drift detectors here.** The gates above are the whole
-gate, and the numbers in this file come from running them by hand. A gate that
-only runs when someone remembers it is a gate that drifts, and that gap is
-worth closing rather than papering over.
+The Windows runtime scripts are separate drift detectors, each named for the
+mechanism it gates; `verify_virtual_bundle.ps1` is the one that covers the
+shipping path. The numbers in this file come from running these gates by hand.
+A gate that only runs when someone remembers it is a gate that drifts, and that
+gap is worth closing rather than papering over.
 
 **Which of them CI runs.** The CI workflow (`.github/workflows/ci.yml`) runs
 `moon check --target native`, `moon test --target native`, both release

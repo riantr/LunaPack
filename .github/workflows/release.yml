@@ -244,12 +244,13 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # The experimental in-process runtime DLL. It lives in its own MoonBit
-  # module (runtime/) and is Windows-only; the CLI binaries above do not
-  # depend on it. This job is deliberately not a release blocker.
+  # The Windows in-process runtime and the virtual launcher. They live in
+  # their own MoonBit module (runtime/) and are Windows-only; plain CLI
+  # binaries do not depend on them. This job is deliberately not a release
+  # blocker, but a release without these files cannot run --virtual bundles.
   # ---------------------------------------------------------------------------
   build-runtime:
-    name: Windows runtime DLL
+    name: Windows runtime and virtual launcher
     needs: verify-tag
     runs-on: windows-latest
     continue-on-error: true
@@ -273,11 +274,13 @@ jobs:
         shell: pwsh
         run: ./scripts/build_runtime_windows.ps1 -Consume
 
-      - name: Upload the runtime DLL
+      - name: Upload the runtime and virtual launcher
         uses: actions/upload-artifact@v4
         with:
-          name: binary-lpvirt-dll
-          path: dist/lpvirt.dll
+          name: binary-runtime-windows
+          path: |
+            dist/lpvirt.dll
+            dist/lpvhost.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -401,10 +404,10 @@ jobs:
               NOTES="$NOTES"$'\n\n'"The binary $name is not part of this release: the runner that builds it was not available when the tag was pushed."
             fi
           done
-          # The runtime DLL comes from an optional job, so its absence has a
-          # different explanation from a missing runner.
-          if [ ! -f "artifacts/lpvirt.dll" ]; then
-            NOTES="$NOTES"$'\n\n'"The experimental Windows in-process runtime lpvirt.dll is not attached to this release: its optional build job did not produce it. It is not needed by any CLI command."
+          # The runtime and launcher come from an optional job, so their
+          # absence has a different explanation from a missing runner.
+          if [ ! -f "artifacts/lpvirt.dll" ] || [ ! -f "artifacts/lpvhost.exe" ]; then
+            NOTES="$NOTES"$'\n\n'"The Windows virtual runtime is incomplete in this release: lpvirt.dll and/or lpvhost.exe were not produced by the optional build job. Plain bundles still work, but `lunapack bundle --virtual` needs both files."
           fi
           # Studio is built outside CI (proton_cli + CEF is a Windows desktop
           # toolchain). A release without its asset still works on the command
@@ -433,6 +436,15 @@ jobs:
         run: |
           gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets \
             --jq '{tag: .tagName, name: .name, draft: .isDraft, prerelease: .isPrerelease, assets: [.assets[] | .name]}'
+          # A missing virtual-runtime asset is a warning, not a failed release:
+          # plain bundles still work, but --virtual needs both files.
+          RUNTIME=$(gh release view "$TAG" --json assets \
+            --jq '[.assets[].name | select(. == "lpvirt.dll" or . == "lpvhost.exe")] | length')
+          if [ "$RUNTIME" != "2" ]; then
+            echo "::warning::virtual runtime incomplete ($RUNTIME/2 assets); --virtual cannot run from this release"
+          else
+            echo "Virtual runtime assets attached: $RUNTIME/2"
+          fi
           # A missing Studio asset is a warning, not a failed release: the CLI
           # binaries above are complete and the asset can be attached later.
           STUDIO=$(gh release view "$TAG" --json assets \

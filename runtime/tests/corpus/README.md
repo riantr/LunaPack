@@ -18,6 +18,7 @@ its size and its SHA-256 so a machine can report which sample it actually ran.
 | `host.exe` + `lpvirt.dll` + `payload.dll` | `runtime/tests/host.c`, `payload.c`, built by `scripts/build_runtime_windows.ps1` | virtual file read/enum, HKLM virtual read+write, real-FS and real-registry fall-through, dynamic `GetProcAddress` hook, 22/22 IAT slots (the count moves with the hook table), DllMain attach/detach order, zero-disk mapping; plus L1: write/append, `GetFileInformationByHandle` (file ID), `GetFileAttributesExW`, overlapped positioned read, rename/delete, completion queue |
 | `-Consume` variant | same, `-Consume` flag | payload deleted before mapping; OS loader never knows the image |
 | `launcher.exe` + `mini_target.exe` (L2.0 thin launcher) | `runtime/tests/launcher.c`, `mini_exe.c`, built by `scripts/build_runtime_windows.ps1` | a real **EXE image** (not a DLL) mapped in-process, 10 IAT slots patched on the EXE, its entry point called directly, virtual file read through the hooked IAT; L2.1 ANSI (`CreateFileA`/`GetFileAttributesA`) + virtual `GetTempPathW`; L2.2 dynamic `GetProcAddress`→thunk, ordinal no-fault, and `LoadLibraryA` of `dynlib.dll` (whose static imports are then patched); `--consume` proves zero disk. `crt_target.exe` runs on a worker thread and its `ExitProcess` is redirected to `ExitThread`, so a CRT `main()` reads the virtual file and the launcher regains control. |
+| `lunapack bundle --virtual` + `lpvhost.exe` (L6) | `cli.mbt`, `pack.mbt`, `runtime/bundle.mbt`, `runtime/host/main.mbt`; built by the root release build and `scripts/build_runtime_windows.ps1` | CLI-produced v7 bundle with an embedded, checksummed `lpvirt.dll`; the source fixture is deleted after packing, then the launcher maps the runtime and main image in memory, seeds VFS/hive, patches the mapped IAT and runs the program with no extracted files. `scripts/verify_virtual_bundle.ps1` also checks checksum refusal, `--no-virtual` and the Huorong count. |
 | `dynlib.dll` (L2.2 runtime-loaded module) | `runtime/tests/dynlib.c`, built by `scripts/build_runtime_windows.ps1` | loaded at runtime by the mapped EXE through the hooked `LoadLibraryA`; its static `CreateFileW`/`ReadFile` IAT is patched so `dyn_probe()` reads the virtual file - proof that dynamically loaded application modules get the same hooks (system DLLs are skipped). |
 | `com_host.exe` + `com_server.dll` / `com_server_crt.dll` + `com_consumer.exe` (L5, L5.6) | `runtime/tests/com_host.c`, `com_server.c`, `com_server_crt.c`, `com_consumer.c`, `com_server.idl`, `com_server.rc`; built by `scripts/build_runtime_windows.ps1`, which needs `midl.exe` and `rc.exe` from the Windows SDK | register → activate → unregister through real COM, unelevated: `RegCreate/Set/Query/Enum/Delete` and `NtOpenKey`/`NtQueryValueKey`/`NtQueryKey` answered from the hive, `LoadLibrary*` served from the VFS, entry point called by the runtime, `GetModuleFileNameW` answered with the virtual path. L5.6 adds the component's own type library: parsed out of the archive (`RT_TYPELIB` id 1, `MSFT` layout), so `LoadTypeLibEx` + `RegisterTypeLib` succeed with no `.tlb` on disk, `LoadRegTypeLib` hands the same library to a client, `UnRegisterTypeLib` removes it. Driven by `scripts/verify_com_activation.ps1`. |
 
@@ -61,18 +62,21 @@ A sample that cannot expose a virtual-file probe is not a pass; it is an
 incomplete test and must be upgraded or replaced.
 
 `scripts/verify_zero_disk.ps1` (L0.3) is the reusable assertion wrapper for
-Tier A. It requires `payload.dll` to be present, so run the plain build first
-(the `--consume` demo deletes the payload and cannot be reused):
+the DLL harness. It requires `payload.dll` to be present, so run the plain build
+first (the `--consume` demo deletes the payload and cannot be reused). The
+CLI-level equivalent is `scripts/verify_virtual_bundle.ps1`, which uses the
+shipping launcher and needs the root release CLI as well:
 
 ```powershell
 powershell -File scripts\build_runtime_windows.ps1        # rebuilds payload.dll + mini_target.exe
 powershell -File scripts\verify_zero_disk.ps1             # 18 invariants, exit 1 on failure
 powershell -File scripts\verify_thin_launcher.ps1         # 25 invariants + AV retest (L2.0/L2.1/L2.2)
+powershell -File scripts\verify_virtual_bundle.ps1        # CLI artifact + AV retest (L6)
 ```
 
-Both verification scripts consume their target image, so run the plain build
-first each time. The thin launcher's script also records a separate Huorong
-quarantine count before/after (M2a in `AV_RETEST.md`).
+The two consume scripts delete their target image, so run the plain build
+first each time. Both they and the virtual-bundle script record a separate
+Huorong quarantine count before/after (M2a and M7 in `AV_RETEST.md`).
 
 The harness checks the demo's output plus a before/after snapshot of the dist
 directory and `%TEMP%`; the only new file it tolerates is `real.txt`, which the

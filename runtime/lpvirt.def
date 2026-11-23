@@ -113,3 +113,4 @@ EXPORTS
   lp_tl_is_name
   lp_tl_type_comp
   lp_tl_release_tl_attr
+  lp_run_bundle

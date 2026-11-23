@@ -1190,6 +1190,19 @@ pub async fn try_launch_self_extracting() -> Bool {
   if m.main_program == "" {
     return false
   }
+  // A package that carries a virtual layer is meant to be started by the
+  // virtual launcher, which maps the program out of the archive and never
+  // writes it down. This one only knows how to unpack to a directory, and
+  // unpacking is not a slower version of the same thing: it puts the payload
+  // on the disk the package was built to avoid. Refusing says so; carrying on
+  // would quietly do the wrong thing and look like it worked.
+  if m.virtual_layer is Some(_) {
+    eprintln(
+      "LunaPack: this bundle runs in memory and this launcher cannot do that: start it with lpvhost.exe",
+    )
+    exit_with(1)
+    return true
+  }
   let key = resolve_key(m, exe)
   if m.encryption is Some(_) && key is None {
     eprintln("LunaPack: cannot decrypt the package")

@@ -1,5 +1,9 @@
 import {
   "moonbitlang/core/encoding/utf16",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonbitlang/core/compress/gzip",
+  "moonbitlang/core/compress/flate",
 }
 
 pkgtype(kind: "foreign_library")
@@ -18,7 +22,22 @@ supported_targets = "native"
 // oleaut32.lib is for the type-library thunks (L5.6). They fall through to the
 // real LoadTypeLibEx / RegisterTypeLib for a path that is not in the archive,
 // which is the behaviour a component that ships a real .tlb expects.
+//
+// bcrypt.lib is for the SHA-256 a bundle's manifest asks for, and for the same
+// reason the launcher names it: a bundle is checked before it runs.
+//
+// gzip and flate are how a bundle stores an entry that compressed. The archive
+// reader in `bundle.mbt` decodes those, and it lives in this package because
+// the process that decodes them is the one the mapped runtime is in.
 
 options(
-  link: { "native": { "cc-link-flags": "advapi32.lib ntdll.lib oleaut32.lib" } },
+  "allow-experimental-packages": [
+    "moonbitlang/core/compress/gzip",
+    "moonbitlang/core/compress/flate",
+  ],
+  link: {
+    "native": {
+      "cc-link-flags": "advapi32.lib ntdll.lib oleaut32.lib bcrypt.lib",
+    },
+  },
 )

@@ -67,6 +67,77 @@ pub async fn collect_files(root : String) -> Array[String] {
 }
 
 ///|
+/// The name a virtual bundle carries its runtime under.
+///
+/// `@runtime/` is the reserved prefix: the packer does not put such an entry
+/// into the virtual layer, and the two sides that have to agree on the name -
+/// this packer and the launcher that reads it - agree on it here.
+pub fn reserved_runtime_entry() -> String {
+  "@runtime/lpvirt.dll"
+}
+
+///|
+/// Whether an entry name belongs to the bundle rather than to the program.
+pub fn is_reserved_entry(path : String) -> Bool {
+  path.has_prefix("@runtime/")
+}
+
+///|
+/// Windows spelling of a virtual path. Roots and the temp directory arrive
+/// from the command line, where `/` is often easier to type and survives
+/// shells that eat backslashes; a program reading them through Win32 has to
+/// see `\`. Unlike `virtual_path_of` this keeps a trailing separator, which
+/// `GetTempPathW` requires.
+fn win_slashes(p : String) -> String {
+  let mut out = ""
+  for i = 0; i < p.length(); i = i + 1 {
+    if p[i] == '/' {
+      out = out + "\\"
+    } else {
+      match p[i].to_int().to_char() {
+        Some(c) => out = out + String::make(1, c)
+        None => ()
+      }
+    }
+  }
+  out
+}
+
+///|
+/// The path a program sees for an entry of the virtual layer.
+///
+/// Entries are named with forward slashes because the archive format is
+/// separator-neutral; the layer is what a Windows program walks, so its paths
+/// use backslashes and never end in one.
+fn virtual_path_of(root : String, entry : String) -> String {
+  let mut base = root
+  while base.length() > 0 {
+    let c = base[base.length() - 1]
+    if c == '\\' || c == '/' {
+      base = base[:base.length() - 1].to_owned()
+    } else {
+      break
+    }
+  }
+  if base == "" {
+    return ""
+  }
+  let mut rel = ""
+  for i = 0; i < entry.length(); i = i + 1 {
+    let c = entry[i]
+    if c == '/' {
+      rel = rel + "\\"
+    } else {
+      match c.to_int().to_char() {
+        Some(x) => rel = rel + String::make(1, x)
+        None => ()
+      }
+    }
+  }
+  base + "\\" + rel
+}
+
+///|
 /// Lowercase hex MD5 of the content of the file at `path`.
 ///
 /// The file is read as a whole, so it needs to fit in memory; that is the
@@ -185,6 +256,43 @@ async fn write_archive(
       index = index + 1
     }
     println("scanned " + scanned.to_string() + " files")
+    // The virtual layer is built here rather than by the caller because this
+    // is the only place that knows every entry: a file is listed under the
+    // path the program will use for it, and the entry that holds it is the
+    // name it was packed under. A package with an empty root has no layer and
+    // unpacks to a directory exactly as before.
+    let virtual_layer = if opts.virtual_root == "" {
+      None
+    } else {
+      let files = []
+      for e in entries {
+        // Reserved entries are the bundle's own machinery, not files of the
+        // program inside it: the runtime that runs the bundle travels in the
+        // same archive, and a program that could see it as one of its own
+        // files would be looking at a copy of the thing that is running it.
+        if is_reserved_entry(e.path) {
+          continue
+        }
+        files.push(
+          new_virtual_file(virtual_path_of(opts.virtual_root, e.path), e.path),
+        )
+      }
+      let main = if opts.main_program == "" {
+        ""
+      } else {
+        virtual_path_of(opts.virtual_root, opts.main_program)
+      }
+      Some(
+        new_virtual_layer(
+          win_slashes(opts.virtual_root),
+          main,
+          win_slashes(opts.virtual_root),
+          win_slashes(opts.virtual_temp),
+          files,
+          opts.registry_seeds,
+        ),
+      )
+    }
     let manifest = {
       format_version: FORMAT_VERSION,
       name: opts.name,
@@ -201,6 +309,7 @@ async fn write_archive(
         Some(a) => Some(a.info)
         None => None
       },
+      virtual_layer,
       entries,
     }
     let mjson = manifest_to_json(manifest)
@@ -320,7 +429,7 @@ pub async fn bundle(
   opts : PackOptions,
   launcher : String,
 ) -> Unit {
-  bundle_with_files(input_exe, output_exe, file_dirs, [], opts, launcher)
+  bundle_with_files(input_exe, output_exe, file_dirs, [], opts, launcher, "")
 }
 
 ///|
@@ -335,6 +444,14 @@ pub async fn bundle(
 ///
 /// A file that is already in the archive is not put in twice: the file the
 /// caller named comes first, and it is the one that is kept.
+///
+/// `runtime_image` is the DLL a virtual bundle carries and runs itself from.
+/// It is packed as an entry like any other - that is what puts it under the
+/// same per-entry checksum as the payload, so a bundle whose runtime was
+/// tampered with is refused before anything is mapped - but under a reserved
+/// name the packer keeps out of the virtual layer, so the program inside never
+/// sees it among its own files. An ordinary bundle carries no runtime and
+/// passes "".
 pub async fn bundle_with_files(
   input_exe : String,
   output_exe : String,
@@ -342,11 +459,15 @@ pub async fn bundle_with_files(
   extra_files : Array[String],
   opts : PackOptions,
   launcher : String,
+  runtime_image : String,
 ) -> Unit {
   let exe_real = norm_sep(@fs.realpath(input_exe))
   let items = []
   let main_name = basename(input_exe)
   items.push((input_exe, main_name))
+  if runtime_image != "" {
+    items.push((runtime_image, reserved_runtime_entry()))
+  }
   let single = file_dirs.length() == 1
   for d in file_dirs {
     // A folder given without a path is a mistake, and the mistake is said

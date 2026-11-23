@@ -6,7 +6,7 @@ pub const CHECKSUM_ALGO : String = "sha256"
 
 pub const CLI_VERSION : String = "0.1.27"
 
-pub const FORMAT_VERSION : Int32 = 6
+pub const FORMAT_VERSION : Int32 = 7
 
 pub const GZIP_LEVEL : Int32 = 1
 
@@ -86,7 +86,7 @@ pub fn basename(String) -> String
 
 pub async fn bundle(String, String, Array[String], PackOptions, String) -> Unit
 
-pub async fn bundle_with_files(String, String, Array[String], Array[String], PackOptions, String) -> Unit
+pub async fn bundle_with_files(String, String, Array[String], Array[String], PackOptions, String, String) -> Unit
 
 pub fn bytes_concat(Bytes, Bytes) -> Bytes
 
@@ -178,6 +178,8 @@ pub fn is_native_target() -> Bool
 
 pub async fn is_protected_key_file(String) -> Bool
 
+pub fn is_reserved_entry(String) -> Bool
+
 pub fn iso8601_utc(UInt64) -> String
 
 pub fn json_to_manifest(String) -> Manifest raise
@@ -244,9 +246,15 @@ pub fn new_package_key(Bytes, Bytes) -> PackageKey
 
 pub fn new_package_signature(String, String, String) -> PackageSignature
 
+pub fn new_reg_seed(String, String, String, String, String, Int32, String) -> RegSeed
+
 pub fn new_script(String, String) -> Script
 
 pub fn new_sealed_package(Bytes, Bytes, Bytes, Bytes) -> SealedPackage
+
+pub fn new_virtual_file(String, String) -> VirtualFile
+
+pub fn new_virtual_layer(String, String, String, String, Array[VirtualFile], Array[RegSeed]) -> VirtualLayer
 
 pub fn norm_sep(String) -> String
 
@@ -305,6 +313,8 @@ pub async fn remove_dir(String) -> Unit
 pub fn report_md5(String, String) -> Unit
 
 pub async fn report_output_md5(String) -> Unit
+
+pub fn reserved_runtime_entry() -> String
 
 pub async fn run_install_script(String, String, Script, String) -> Int32
 
@@ -384,6 +394,8 @@ pub fn with_encryption(PackOptions, EncryptionOptions) -> PackOptions
 
 pub fn with_main_program(PackOptions, String) -> PackOptions
 
+pub fn with_virtual_layer(PackOptions, String, String, Array[RegSeed]) -> PackOptions
+
 pub fn x25519(Bytes, Bytes) -> Bytes
 
 pub fn x25519_public_key(Bytes) -> Bytes
@@ -460,6 +472,7 @@ pub struct Manifest {
   pre_install : Script?
   post_install : Script?
   encryption : Encryption?
+  virtual_layer : VirtualLayer?
   entries : Array[Entry]
 }
 
@@ -482,6 +495,9 @@ pub struct PackOptions {
   compression : String
   main_program : String
   encryption : EncryptionOptions?
+  virtual_root : String
+  virtual_temp : String
+  registry_seeds : Array[RegSeed]
 }
 
 pub struct PackageKey {
@@ -528,6 +544,16 @@ pub struct PublicKeyPair {
   signing : Bytes
 }
 
+pub struct RegSeed {
+  root : String
+  key : String
+  name : String
+  kind : String
+  text : String
+  number : Int32
+  data : String
+}
+
 pub struct Script {
   platform : String
   body : String
@@ -548,6 +574,20 @@ pub struct Sha512 {
 pub fn Sha512::Sha512() -> Self
 pub fn Sha512::finish(Self) -> Bytes
 pub fn Sha512::update(Self, Bytes) -> Unit
+
+pub struct VirtualFile {
+  path : String
+  entry : String
+}
+
+pub struct VirtualLayer {
+  root : String
+  main : String
+  cwd : String
+  temp : String
+  files : Array[VirtualFile]
+  registry : Array[RegSeed]
+}
 
 type ZipEntry
 

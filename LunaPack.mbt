@@ -31,8 +31,12 @@ pub const MAGIC : String = "APPKGD02"
 /// v4 adds the LZ4 codec. v5 adds the encryption of the entries. v6 adds
 /// the integrity block: a digest of the manifest that says that the manifest
 /// is the one the packer wrote, and, for an encrypted package, a MAC of the
-/// manifest that says that nobody changed it since.
-pub const FORMAT_VERSION : Int32 = 6
+/// manifest that says that nobody changed it since. v7 adds the virtual layer:
+/// which entry appears at which path in memory, and which registry values are
+/// seeded before the program starts. A v6 reader ignores the block, so a
+/// package that carries one is still a package that an older LunaPack reads —
+/// it just unpacks it to a directory instead of starting it in memory.
+pub const FORMAT_VERSION : Int32 = 7
 
 ///|
 /// Checksum algorithm used for every entry payload.
@@ -113,6 +117,97 @@ pub struct Entry {
 }
 
 ///|
+/// One file of the virtual layer.
+///
+/// `path` is where the program will see the file — an absolute Windows path
+/// such as `C:\virt\app.exe` — and `entry` is the name of the package entry
+/// that holds its bytes. The two are separate because the program must not be
+/// able to tell that the file came out of an archive: the entry name is the
+/// packing detail, the path is the program's view.
+pub struct VirtualFile {
+  path : String
+  entry : String
+}
+
+///|
+/// One registry value the virtual layer seeds before the program starts.
+///
+/// A value is stored the way the registry would store it rather than as text:
+/// `kind` names the registry type and only the matching field is meaningful,
+/// so a `REG_DWORD` survives a round trip as a number and a `REG_BINARY` as
+/// bytes instead of being flattened into a string.
+pub struct RegSeed {
+  /// "hkcr", "hkcu" or "hklm". A key under any of them lands in the hive.
+  root : String
+  /// Subkey path, backslash separated, below the root.
+  key : String
+  /// Value name; the empty string is the default value of the key.
+  name : String
+  /// "REG_SZ" | "REG_EXPAND_SZ" | "REG_DWORD" | "REG_BINARY"
+  kind : String
+  /// Payload of a string value.
+  text : String
+  /// Payload of a `REG_DWORD`.
+  number : Int32
+  /// Payload of a `REG_BINARY`, lowercase hex.
+  data : String
+}
+
+///|
+/// The virtual layer of a package: the tree the program sees instead of the
+/// disk, plus the registry values it expects to find already there.
+///
+/// A package without one behaves exactly as it always did — unpack to a
+/// directory and start the program from there. A package with one is meant to
+/// be started by the virtual launcher, which maps the main program out of the
+/// archive and answers its file and registry calls from this description.
+pub struct VirtualLayer {
+  /// Directory the program's files appear in, e.g. `C:\virt`.
+  root : String
+  /// Virtual path of the main program: the image that is mapped.
+  main : String
+  /// Virtual working directory, so a relative open lands in the tree.
+  cwd : String
+  /// Virtual directory `GetTempPath` answers with; empty leaves it alone.
+  temp : String
+  files : Array[VirtualFile]
+  registry : Array[RegSeed]
+}
+
+///|
+/// Constructor for a [`VirtualFile`], for callers outside this package.
+pub fn new_virtual_file(path : String, entry : String) -> VirtualFile {
+  { path, entry, }
+}
+
+///|
+/// Constructor for a [`RegSeed`], for callers outside this package.
+pub fn new_reg_seed(
+  root : String,
+  key : String,
+  name : String,
+  kind : String,
+  text : String,
+  number : Int32,
+  data : String,
+) -> RegSeed {
+  { root, key, name, kind, text, number, data, }
+}
+
+///|
+/// Constructor for a [`VirtualLayer`], for callers outside this package.
+pub fn new_virtual_layer(
+  root : String,
+  main : String,
+  cwd : String,
+  temp : String,
+  files : Array[VirtualFile],
+  registry : Array[RegSeed],
+) -> VirtualLayer {
+  { root, main, cwd, temp, files, registry, }
+}
+
+///|
 /// An install script together with the platform it targets.
 ///
 /// A package built on Windows can carry a Windows batch script while a
@@ -152,6 +247,8 @@ pub struct Manifest {
   post_install : Script?
   /// How the entries are encrypted, if they are.
   encryption : Encryption?
+  /// The virtual layer, when the package is meant to run in memory.
+  virtual_layer : VirtualLayer?
   entries : Array[Entry]
 }
 
@@ -170,6 +267,14 @@ pub struct PackOptions {
   main_program : String
   /// How the entries are encrypted, if they are.
   encryption : EncryptionOptions?
+  /// Directory the program's files appear in at run time. Empty means "no
+  /// virtual layer": the package unpacks to a directory and runs from there,
+  /// which is what every package did before v7.
+  virtual_root : String
+  /// Virtual `GetTempPath` directory; empty leaves the real one alone.
+  virtual_temp : String
+  /// Registry values seeded into the hive before the program starts.
+  registry_seeds : Array[RegSeed]
 }
 
 ///|
@@ -194,6 +299,9 @@ pub fn new_pack_options(
     compression,
     main_program: "",
     encryption: None,
+    virtual_root: "",
+    virtual_temp: "",
+    registry_seeds: [],
   }
 }
 
@@ -213,6 +321,9 @@ pub fn with_encryption(
     compression: opts.compression,
     main_program: opts.main_program,
     encryption: Some(encryption),
+    virtual_root: opts.virtual_root,
+    virtual_temp: opts.virtual_temp,
+    registry_seeds: opts.registry_seeds,
   }
 }
 
@@ -229,6 +340,9 @@ pub fn with_main_program(opts : PackOptions, name : String) -> PackOptions {
     compression: opts.compression,
     main_program: name,
     encryption: opts.encryption,
+    virtual_root: opts.virtual_root,
+    virtual_temp: opts.virtual_temp,
+    registry_seeds: opts.registry_seeds,
   }
 }
 
@@ -251,6 +365,37 @@ pub fn with_defaults(
     compression: opts.compression,
     main_program: opts.main_program,
     encryption: opts.encryption,
+    virtual_root: opts.virtual_root,
+    virtual_temp: opts.virtual_temp,
+    registry_seeds: opts.registry_seeds,
+  }
+}
+
+///|
+/// Return a copy of `opts` that makes the package run from memory.
+///
+/// `root` is the directory the program's files appear in; the mapping between
+/// entries and paths is derived from the entries themselves when the archive
+/// is written, because only then is the whole list known.
+pub fn with_virtual_layer(
+  opts : PackOptions,
+  root : String,
+  temp : String,
+  seeds : Array[RegSeed],
+) -> PackOptions {
+  {
+    name: opts.name,
+    version: opts.version,
+    os: opts.os,
+    arch: opts.arch,
+    pre_install: opts.pre_install,
+    post_install: opts.post_install,
+    compression: opts.compression,
+    main_program: opts.main_program,
+    encryption: opts.encryption,
+    virtual_root: root,
+    virtual_temp: temp,
+    registry_seeds: seeds,
   }
 }
 
@@ -321,6 +466,56 @@ fn encryption_to_json(e : Encryption?) -> String {
 }
 
 ///|
+/// Serialize the virtual layer as a nested JSON object.
+///
+/// Every path is written with backslashes and no escaping beyond what JSON
+/// needs, so the manifest reads the way a Windows path reads; the reader
+/// accepts either separator.
+fn virtual_to_json(v : VirtualLayer?) -> String {
+  match v {
+    None => "null"
+    Some(l) => {
+      let mut s = "{\"root\":\"" + json_escape(l.root) + "\""
+      s = s + ",\"main\":\"" + json_escape(l.main) + "\""
+      s = s + ",\"cwd\":\"" + json_escape(l.cwd) + "\""
+      s = s + ",\"temp\":\"" + json_escape(l.temp) + "\""
+      s = s + ",\"files\":["
+      let mut i = 0
+      while i < l.files.length() {
+        let f = l.files[i]
+        if i > 0 {
+          s = s + ","
+        }
+        s = s +
+          "{\"path\":\"" +
+          json_escape(f.path) +
+          "\",\"entry\":\"" +
+          json_escape(f.entry) +
+          "\"}"
+        i = i + 1
+      }
+      s = s + "],\"registry\":["
+      let mut j = 0
+      while j < l.registry.length() {
+        let r = l.registry[j]
+        if j > 0 {
+          s = s + ","
+        }
+        s = s + "{\"root\":\"" + json_escape(r.root) + "\""
+        s = s + ",\"key\":\"" + json_escape(r.key) + "\""
+        s = s + ",\"name\":\"" + json_escape(r.name) + "\""
+        s = s + ",\"kind\":\"" + json_escape(r.kind) + "\""
+        s = s + ",\"text\":\"" + json_escape(r.text) + "\""
+        s = s + ",\"number\":" + r.number.to_string()
+        s = s + ",\"data\":\"" + json_escape(r.data) + "\"}"
+        j = j + 1
+      }
+      s + "]}"
+    }
+  }
+}
+
+///|
 /// Serialize a manifest into the canonical UTF-8 JSON representation.
 pub fn manifest_to_json(m : Manifest) -> String {
   let mut s = "{"
@@ -336,6 +531,7 @@ pub fn manifest_to_json(m : Manifest) -> String {
   s = s + ",\"pre_install\":" + script_to_json(m.pre_install)
   s = s + ",\"post_install\":" + script_to_json(m.post_install)
   s = s + ",\"encryption\":" + encryption_to_json(m.encryption)
+  s = s + ",\"virtual\":" + virtual_to_json(m.virtual_layer)
   s = s + ",\"entries\":["
   let mut i = 0
   while i < m.entries.length() {
@@ -502,6 +698,64 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
       None => None
     }
   }
+  // The virtual layer is optional in both directions: a package written
+  // before v7 has no `virtual` key, and one written by v7 with no layer
+  // writes `null`. Both read as "there is none", which is what a launcher
+  // that only knows how to unpack needs.
+  let get_virtual = fn(obj : @json.Json) -> VirtualLayer? {
+    let node = match json_field(obj, "virtual") {
+      Some(v) => v
+      None => return None
+    }
+    match node {
+      Object(_) => ()
+      _ => return None
+    }
+    let files = []
+    match json_field(node, "files") {
+      Some(v) =>
+        match json_array(v) {
+          Some(a) =>
+            for f in a {
+              let path = get_str_def(f, "path", "")
+              let entry = get_str_def(f, "entry", "")
+              if path != "" && entry != "" {
+                files.push(VirtualFile::{ path, entry, })
+              }
+            }
+          None => ()
+        }
+      None => ()
+    }
+    let registry = []
+    match json_field(node, "registry") {
+      Some(v) =>
+        match json_array(v) {
+          Some(a) =>
+            for r in a {
+              registry.push(RegSeed::{
+                root: get_str_def(r, "root", "hkcr"),
+                key: get_str_def(r, "key", ""),
+                name: get_str_def(r, "name", ""),
+                kind: get_str_def(r, "kind", "REG_SZ"),
+                text: get_str_def(r, "text", ""),
+                number: get_int_def(r, "number", 0),
+                data: get_str_def(r, "data", ""),
+              })
+            }
+          None => ()
+        }
+      None => ()
+    }
+    Some(VirtualLayer::{
+      root: get_str_def(node, "root", ""),
+      main: get_str_def(node, "main", ""),
+      cwd: get_str_def(node, "cwd", ""),
+      temp: get_str_def(node, "temp", ""),
+      files,
+      registry,
+    })
+  }
   let entries_arr = match json_field(j, "entries") {
     Some(v) =>
       match json_array(v) {
@@ -537,6 +791,7 @@ pub fn json_to_manifest(text : String) -> Manifest raise {
     pre_install: get_script(j, "pre_install"),
     post_install: get_script(j, "post_install"),
     encryption: get_encryption(j),
+    virtual_layer: get_virtual(j),
     entries,
   }
 }

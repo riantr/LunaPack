@@ -315,7 +315,7 @@ async test "pack produces a manifest that round-trips" {
   )
   @LunaPack.pack(src, pkg, opts)
   let m = @LunaPack.read_package_manifest(pkg)
-  assert_true(m.format_version == 6)
+  assert_true(m.format_version == 7)
   assert_true(m.name == "demo")
   assert_true(m.version == "1.0.0")
   assert_true(m.os == "linux")
@@ -865,7 +865,7 @@ async test "a file carried next to the program lands next to it" {
     "windows",
     "x86_64",
   )
-  @LunaPack.bundle_with_files(app, out, [], [lib], opts, launcher)
+  @LunaPack.bundle_with_files(app, out, [], [lib], opts, launcher, "")
   let m = @LunaPack.read_package_manifest(out)
   assert_eq(m.main_program, "app.exe")
   assert_eq(m.entries.length(), 2)
@@ -907,7 +907,7 @@ async test "a folder without a path is refused with a clear message" {
   )
   // A folder of the bundle that has no path.
   let message = try {
-    @LunaPack.bundle_with_files(app, out, [""], [], opts, launcher)
+    @LunaPack.bundle_with_files(app, out, [""], [], opts, launcher, "")
     ""
   } catch {
     err => err.to_string()
@@ -921,4 +921,118 @@ async test "a folder without a path is refused with a clear message" {
     err => err.to_string()
   }
   assert_true(message.contains("is empty"))
+}
+
+///|
+/// The layer is derived, not accepted: the packer is the only place that knows
+/// every entry, so a file is listed under the path the program will use for it
+/// and points at the entry it was packed as. This test packs a tree with the
+/// layer switched on and reads the manifest back, so it covers the writer, the
+/// JSON and the reader at once.
+async test "pack writes the virtual layer it was given" {
+  let src = scratch_dir("lunapack_vsrc")
+  defer drop_scratch(src)
+  @fs.write_text(src + "/app.exe", "MZ")
+  @fs.mkdir(src + "/data", recursive=true, allow_existing=true)
+  @fs.write_text(src + "/data/one.txt", "one")
+  let outdir = scratch_dir("lunapack_vout")
+  defer drop_scratch(outdir)
+  let pkg = outdir + "/virt.appkg"
+  let seeds = [
+    @LunaPack.new_reg_seed(
+      "hkcu", "Software\\Acme", "Licence", "REG_SZ", "A1-B2", 0, "",
+    ),
+    @LunaPack.new_reg_seed(
+      "hklm", "Software\\Acme", "Port", "REG_DWORD", "", 8080, "",
+    ),
+  ]
+  let opts = @LunaPack.with_virtual_layer(
+    @LunaPack.with_defaults(
+      @LunaPack.new_pack_options(
+        "demo",
+        "1.0.0",
+        "windows",
+        "x86_64",
+        None,
+        None,
+        "auto",
+      ),
+      "demo",
+      "1.0.0",
+      "windows",
+      "x86_64",
+    ),
+    "C:\\virt",
+    "C:\\virt\\tmp",
+    seeds,
+  )
+  let opts = @LunaPack.with_main_program(opts, "app.exe")
+  @LunaPack.pack(src, pkg, opts)
+  let m = @LunaPack.read_package_manifest(pkg)
+  assert_true(m.format_version == 7)
+  match m.virtual_layer {
+    Some(l) => {
+      assert_true(l.root == "C:\\virt")
+      assert_true(l.main == "C:\\virt\\app.exe")
+      assert_true(l.cwd == "C:\\virt")
+      assert_true(l.temp == "C:\\virt\\tmp")
+      // One entry per file, each named the way the program will open it.
+      assert_true(l.files.length() == m.entries.length())
+      let mut found_data = false
+      for f in l.files {
+        if f.entry == "data/one.txt" {
+          found_data = true
+          assert_true(f.path == "C:\\virt\\data\\one.txt")
+        }
+      }
+      assert_true(found_data)
+      // A value keeps its type: a dword is a number, not the text "8080".
+      assert_true(l.registry.length() == 2)
+      assert_true(l.registry[0].kind == "REG_SZ")
+      assert_true(l.registry[0].text == "A1-B2")
+      assert_true(l.registry[1].kind == "REG_DWORD")
+      assert_true(l.registry[1].number == 8080)
+    }
+    None => fail("the virtual layer is missing from the manifest")
+  }
+}
+
+///|
+/// A package with no layer says so twice over: the manifest of an older
+/// package has no `virtual` key at all, and the manifest of a new one with the
+/// layer switched off writes `null`. Both mean "unpack to a directory", which
+/// is what every package did before this existed, so both have to read as the
+/// absence of a layer rather than as an error.
+async test "a package without a virtual layer reads as none" {
+  let src = scratch_dir("lunapack_nvsrc")
+  defer drop_scratch(src)
+  @fs.write_text(src + "/hello.txt", "hello")
+  let outdir = scratch_dir("lunapack_nvout")
+  defer drop_scratch(outdir)
+  let pkg = outdir + "/plain.appkg"
+  @LunaPack.pack(
+    src,
+    pkg,
+    @LunaPack.new_pack_options(
+      "plain",
+      "1.0.0",
+      "windows",
+      "x86_64",
+      None,
+      None,
+      "none",
+    ),
+  )
+  let m = @LunaPack.read_package_manifest(pkg)
+  assert_true(m.virtual_layer is None)
+  assert_true(@LunaPack.manifest_to_json(m).contains("\"virtual\":null"))
+  // A manifest written before v7, with no key at all.
+  let v6 = "{\"format_version\":6,\"name\":\"old\",\"version\":\"0.1.0\"," +
+    "\"os\":\"windows\",\"arch\":\"x86_64\",\"checksum_algo\":\"sha256\"," +
+    "\"compression\":\"none\",\"created_at\":\"2026-01-01T00:00:00Z\"," +
+    "\"main_program\":\"a.exe\",\"pre_install\":null,\"post_install\":null," +
+    "\"encryption\":null,\"entries\":[]}"
+  let old = @LunaPack.json_to_manifest(v6)
+  assert_true(old.format_version == 6)
+  assert_true(old.virtual_layer is None)
 }

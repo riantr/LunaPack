@@ -24,9 +24,45 @@ pub const MAP_ORDINAL_IMPORT : Int32 = 9
 
 pub const MAP_TRUNCATED : Int32 = 4
 
+pub fn call_address(Int64, Int64) -> Int32
+
 pub fn guid_bytes(String) -> Bytes
 
 pub fn guid_text_at(Int64) -> String
+
+pub fn host_add_file(String, Bytes) -> Unit
+
+pub fn host_attach_image(Int64) -> Int32
+
+pub fn host_bundle_runtime_image() -> Bytes
+
+pub fn host_call_sync(Int64, Int64) -> Int32
+
+pub fn host_exit(Int32) -> Unit
+
+pub fn host_image_export(Int64, String) -> Int64
+
+pub fn host_install(Int64) -> Int32
+
+pub fn host_map(Bytes) -> Int64
+
+pub fn host_map_error() -> Int32
+
+pub fn host_patched() -> Int32
+
+pub fn host_reset() -> Unit
+
+pub fn host_run(Int64) -> Int32
+
+pub fn host_seed_reg(String, String, String, String, String, Int32, Bytes) -> Bool
+
+pub fn host_set_cwd(String) -> Unit
+
+pub fn host_set_module_path(Int64, String) -> Unit
+
+pub fn host_set_temp(String) -> Unit
+
+pub fn host_stats() -> (Int32, Int32)
 
 pub fn install_iat_hooks(Int64) -> Int32
 
@@ -79,6 +115,8 @@ pub fn lp_reg_log_reset() -> Unit
 pub fn lp_reg_stats(Int64, Int32) -> Int32
 
 pub fn lp_register_eh(Int64) -> Int32
+
+pub fn lp_run_bundle(Int64) -> Int32
 
 pub fn lp_set_bootstrap_path(Int64) -> Int32
 
@@ -261,6 +299,8 @@ pub fn typelib_from_image(Bytes) -> TypeLibInfo?
 // Errors
 
 // Types and methods
+type Bundle
+
 pub struct Completion {
   key : Int64
   bytes : Int64
@@ -272,6 +312,8 @@ pub enum CreateResult {
   NotVirtual
   Failed(Int32)
 }
+
+type Entry
 
 type FallbackProbe
 
@@ -287,12 +329,16 @@ pub struct FileInfo {
 
 type ImageLayout
 
+type Layer
+
 pub struct RegValue {
   typ : Int32
   data : Bytes
 }
 
 type RuntimeState
+
+type Seed
 
 pub struct TypeEntry {
   kind : Int32

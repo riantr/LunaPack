@@ -1,0 +1,30 @@
+import {
+  "riantr/lunapack_runtime" @rt,
+}
+
+supported_targets = "native"
+
+pkgtype(kind: "executable")
+
+// The runtime's code is linked in and the launcher drives it, so the libraries
+// the runtime names are on this link line too: advapi32 and ntdll for the
+// registry thunks, oleaut32 for the type-library ones, bcrypt for the SHA-256 a
+// bundle's manifest asks for. gzip and flate are how an entry that compressed
+// is stored.
+//
+// The launcher itself reads no command line, no environment and no file: the
+// bundle it runs is the file it was started from, and every path in it is read
+// by the runtime, which is why none of core's fs, env or async packages appear
+// here any more.
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/compress/gzip",
+    "moonbitlang/core/compress/flate",
+  ],
+  link: {
+    "native": {
+      "cc-link-flags": "advapi32.lib ntdll.lib oleaut32.lib bcrypt.lib",
+    },
+  },
+)

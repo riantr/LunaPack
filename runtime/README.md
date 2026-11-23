@@ -1,4 +1,4 @@
-# LunaPack in-process runtime (experimental, Windows x64 only)
+# LunaPack in-process runtime and virtual launcher (Windows x64)
 
 This directory is a **separate MoonBit module** (`riantr/lunapack_runtime`), not
 a package of the root `riantr/LunaPack` module. That separation is deliberate:
@@ -10,8 +10,11 @@ a package of the root `riantr/LunaPack` module. That separation is deliberate:
   Windows. A Windows-only link flag inside the root module would break its
   Linux and macOS CI jobs.
 
-The root CLI is unchanged. Nothing here is bundled into `LunaPack.exe`, and the
-wasm front end never sees this code.
+The root CLI stays cross-platform: nothing here is compiled into
+`LunaPack.exe`, and the wasm build never sees this code. But `lunapack bundle
+--virtual` now writes a virtual layer into the v7 archive, and `lpvhost.exe` —
+built in `host/` next to this module — maps the runtime and the program out of
+that archive. `lpvirt.dll` is a shipping image, not just a test asset.
 
 ## What it does
 
@@ -90,8 +93,9 @@ powershell -File scripts\build_runtime_windows.ps1 -Consume
 ```
 
 The script runs `moon fmt`, `moon info`, `moon check`, `moon test` and
-`moon build --release` inside this directory, links `dist/lpvirt.dll`, compiles
-the C test doubles in `tests/`, and runs two demos:
+`moon build --release` inside this directory and `host/`, links
+`dist/lpvirt.dll`, copies the launcher to `dist/lpvhost.exe`, compiles the C
+test doubles in `tests/`, and runs two demos:
 
 1. the L1 DLL harness (`host.exe` + `payload.dll`), and
 2. the L2.0 thin launcher (`launcher.exe` + `mini_target.exe`), which maps a
@@ -111,6 +115,46 @@ The C files in `tests/` are throwaway harnesses, not product code. They exist
 because a consumer that believes it is an ordinary Windows program cannot be
 written in MoonBit. Everything that ships is `*.mbt`.
 
+### CLI virtual bundles (L6)
+
+`lpvhost.exe` is the product launcher. A virtual bundle is a launcher image
+with a v7 archive appended; the manifest's `virtual` section names the virtual
+root, temp directory, main program, file map and typed registry seeds. The
+runtime DLL is packed as a reserved `@runtime/lpvirt.dll` entry, so its bytes
+are covered by the same SHA-256 check as the program and the data files.
+
+```powershell
+lunapack bundle -i app.exe -o app-virtual.exe --Files assets `
+  --virtual --virtual-root=C:\ --virtual-temp=C:\virt\tmp\ `
+  --registry values.json --launcher dist\lpvhost.exe
+.\app-virtual.exe
+```
+
+Bare `--virtual` uses `C:\`; `--no-virtual` produces a plain archive that
+unpacks. Encryption, LZ4 and an automatic launcher are refused for a virtual
+bundle. The ordinary launcher refuses a virtual bundle instead of unpacking it.
+
+The launcher cannot hold the thunks itself. MoonBit only allows `#export_name`
+in a `foreign_library`, and a `foreign_library` may not contain `main`, so a
+pure-MoonBit executable has no C symbols to put in its export table. Instead
+`lpvhost.exe` maps the embedded `lpvirt.dll` in memory, records its base in the
+runtime state, and calls `lp_run_bundle`. The DLL parses and verifies the
+archive, seeds the VFS and hive, maps the main image, patches its IAT and runs
+it. Only `Int64`/`Int32` values cross the launcher boundary: two independently
+linked MoonBit runtimes must not exchange `Bytes`, `String` or closures.
+
+`bundle.mbt` holds the archive reader and runner; `host_api.mbt` exposes the
+address-based bridge; `host/main.mbt` is the launcher's tiny front end. The
+shipping assertion is:
+
+```powershell
+powershell -File scripts\verify_virtual_bundle.ps1
+```
+
+It uses the CLI and the shipping launcher, deletes the fixture after packing,
+and checks the mapped program, checksum refusal, `--no-virtual`, zero disk and
+a separate Huorong count.
+
 ### Thin-launcher entry-point boundary (L2.0)
 
 The thin launcher demonstrates the mapping-and-hooking path for a **no-CRT**
@@ -118,12 +162,15 @@ EXE (`mini_target.exe`): its entry point returns control to the launcher, which
 then prints counters and exits 0. A normal **CRT** EXE (`crt_target.c`,
 diagnostic only) also runs correctly: L2.1 redirects its `ExitProcess` to
 `ExitThread` and runs the mapped entry on a worker thread, so the launcher
-regains control, reads the target exit code and finishes its epilogue. This is
-still a diagnostic target, not a Tier B pass — the product launcher/CLI arrives
-in L6.
+regains control, reads the target exit code and finishes its epilogue. It is
+still a controlled double; the product launcher now follows the same
+worker-thread boundary through `lp_run_bundle`.
 
-`moonbit_init` must be called before any other export: the MoonBit runtime
-inside a DLL is not initialized by the OS loader.
+For a **hand-mapped DLL** the loader never runs DllMain, so its statically
+linked CRT heap is still zeroed. The launcher must call the image entry with
+`DLL_PROCESS_ATTACH` first, then `moonbit_init` on the main thread, and keep
+`lp_run_bundle` on the worker so `ExitProcess`→`ExitThread` cannot end the
+launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
 
 ## Exports
 
@@ -171,7 +218,9 @@ inside a DLL is not initialized by the OS loader.
 | `lp_tl_query_interface` … `lp_tl_release_tl_attr` | L5.6: the thirteen `ITypeLib` vtable entries handed to a caller. `GetTypeInfo*`, `FindName`, `GetTypeComp` and `GetDocumentation` answer `E_NOTIMPL`; the rest are real. |
 | `lp_virt_get_reg`, `lp_virt_has_reg` | L5.6: read a value, or a key's existence, back out of the hive. The hive is not the real registry, so a check has no other way to see what a registration wrote. |
 
-## Limits — read these before treating this as production code
+## Limits
+
+*Read these before treating this as production code.*
 
 - **x64 PE32+ only.** x86 images, PE32 images and ARM64 are refused with
   `MAP_NOT_X64`. A matching 32-bit runtime is a hard toolchain NO-GO: MoonBit
@@ -282,9 +331,10 @@ inside a DLL is not initialized by the OS loader.
   mapper, produced no new quarantine entries. Other engines, unsigned
   binaries and signed binaries may behave differently. Re-test every new
   mechanism on a machine with security software enabled.
-- **Not wired into the CLI yet.** No command in `LunaPack.exe` uses this DLL;
-  there is no archive format for virtual files yet, and the release workflow
-  ships `lpvirt.dll` as an experimental asset only.
+- **Wired into the CLI, but Windows x64 only.** `lunapack bundle --virtual`
+  writes v7 virtual layers and `lpvhost.exe` runs them in memory. There is no
+  x86 runtime (see `X86_DECISION.md`), and Studio cannot yet edit the virtual
+  layer (L6.4). The ordinary launcher intentionally refuses a virtual bundle.
 
 ## Baselines (L0 measured 2026-11-18, L1 re-measured 2026-11-18)
 
@@ -416,6 +466,41 @@ Two things are worth recording because they cost the most time:
   is why it fails with `TYPE_E_CANTLOADLIBRARY` natively and under any file-less
   scheme alike. That is a component bug, not a gap in this runtime.
 
+### L6 re-measure (2026-11-23)
+
+Root tests **211/211**; runtime tests **41/41**. All eight assertion scripts are
+green: `verify_virtual_bundle`, `verify_child_follow`, `verify_com_activation`,
+`verify_fallback_chain`, `verify_ntdll_spike`, `verify_pe_features`,
+`verify_thin_launcher` and `verify_zero_disk` (run last, because the consume
+demos remove their own targets). The new virtual script checks 29 invariants,
+including a CLI-produced v7 layer, the embedded runtime entry, mapped-program
+output, checksum refusal of a byte-flipped payload, `--no-virtual`, no extracted
+file in the working directory or `%TEMP%`, and a separate Huorong count
+(**16 → 16**, Huorong only, second engine pending).
+
+MSA 0.4.52: `files=83 parsed=83 actionable=0 defects=0 notices=767`
+(notices are structural only; +25 from the four new source/interface files and
+the CLI virtual tests). LunaFlow 0.1.27: `dead_code=1 taint_sinks=9
+unreachable=0 infinite_loop=0`, funnel L3 `abstract_findings=23`, `vcs=0`.
+`taint_sinks` fell from 15 to 9; the one new L2 abstract finding came from
+interpolating a user-supplied path into a `fail` message in
+`virtual_runtime_image`, and was removed by printing the path and failing with
+a constant message. `moon fmt --check` is clean in the root, `runtime/` and
+`runtime/host/`, and `moon info` leaves every `.mbti` byte-identical.
+
+Two constraints shaped the launcher and are worth recording before anyone
+tries to simplify it:
+
+- A MoonBit **executable cannot export its own thunks**. `#export_name` is
+  legal only in a `foreign_library`, and a `foreign_library` may not contain
+  `main`. A `.def` on the executable produces `LNK2001` because the MoonBit
+  amalgamation gives those functions mangled, static names. The runtime must
+  therefore be mapped from the bundle as a DLL.
+- A hand-mapped DLL has no CRT heap until its entry point sees
+  `DLL_PROCESS_ATTACH`. The first `HeapAlloc` faults with `0xC0000005` if the
+  launcher calls `moonbit_init` first. The correct order is attach,
+  `moonbit_init` on the main thread, then `lp_run_bundle` on a worker.
+
 ## Source map
 
 | File | Contents |
@@ -432,5 +517,8 @@ Two things are worth recording because they cost the most time:
 | `iat.mbt` | In-process import address table patcher; also patches runtime-loaded modules, skipping Windows system DLLs. |
 | `thunks.mbt` | The Win32-compatible C ABI thunks and management exports. |
 | `mapper.mbt` | Manual PE mapping, relocations, imports, protections, export lookup. |
+| `bundle.mbt` | L6: v7 virtual-layer manifest reader, checksummed archive entry decoder, registry seeding and `lp_run_bundle` — the whole run lives inside the DLL. |
+| `host_api.mbt` | L6: address-based bridge for the launcher: map an image, find an export, call a computed address, run an entry on a worker, read the exit code. |
+| `host/main.mbt` | L6: `lpvhost.exe`, the shipping virtual launcher — maps the embedded runtime, attaches its CRT, calls `moonbit_init` and transfers to `lp_run_bundle`. |
 | `runtime_wbtest.mbt` | Unit tests for the data model, L1/L2.1 VFS semantics, the PE layout reader, the hive, the entry stub and the type-library reader (41 tests). |
 | `tests/dynlib.c` | L2.2 runtime-loaded DLL whose static virtualized imports prove LoadLibrary IAT patching. |
