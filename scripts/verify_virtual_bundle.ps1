@@ -89,8 +89,31 @@ function RunCapture([string]$exe, [string[]]$arguments, [string]$outFile) {
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
   }
 }
+function RunChecked([string]$exe, [string[]]$arguments, [string]$outFile) {
+  # Two messages here are the machine talking, not the program: the engine that
+  # scans a file written moments ago holds it without sharing, so cmd.exe cannot
+  # redirect into the log, or the CLI cannot rename its temporary output onto
+  # the target. Both were observed on this machine and both would otherwise be
+  # recorded as the program refusing something. The run is repeated instead.
+  $code = 1
+  for ($attempt = 0; $attempt -lt 5; $attempt++) {
+    $code = RunCapture $exe $arguments $outFile
+    $text = ReadOut $outFile
+    if ($text -notmatch 'Access is denied|拒绝访问|正在使用此文件|cannot access the file') { break }
+    Start-Sleep -Milliseconds 1500
+  }
+  return $code
+}
 function ReadOut([string]$path) {
   return ((Get-Content -LiteralPath $path -Raw) -join "`n")
+}
+function Test-PathQuiet([string]$path) {
+  # An engine holding the file without sharing makes Test-Path throw instead of
+  # answering, which would end the script before the assertions that follow.
+  for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    try { return (Test-Path -LiteralPath $path) } catch { Start-Sleep -Milliseconds 200 }
+  }
+  return $false
 }
 function Snapshot([string]$dir, [string]$pattern) {
   $set = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -265,7 +288,7 @@ try {
   }
 
   Write-Host "==> build the virtual bundle with the shipping CLI"
-  $bundleExit = RunCapture $cli @(
+  $bundleExit = RunChecked $cli @(
     'bundle', '-i', $target, '-o', $bundle,
     '--Files', $fixture,
     '--virtual', '--virtual-root=C:/', '--virtual-temp=C:/virt/tmp/',
@@ -275,9 +298,9 @@ try {
   $bundleLog = ReadOut $bundleOut
   Write-Host $bundleLog
   Check ($bundleExit -eq 0) "CLI bundle exit code 0 (got $bundleExit)"
-  Check (Test-Path -LiteralPath $bundle) 'virtual bundle was produced'
+  Check (Test-PathQuiet $bundle) 'virtual bundle was produced'
 
-  $infoExit = RunCapture $cli @('info', $bundle) $infoOut
+  $infoExit = RunChecked $cli @('info', $bundle) $infoOut
   $bundleInfo = ReadOut $infoOut
   Check ($infoExit -eq 0) "CLI info exit code 0 (got $infoExit)"
   Check ($bundleInfo -match 'format:\s+v7') 'bundle uses format v7'
@@ -288,14 +311,14 @@ try {
   New-Item -ItemType Directory -Path $chainFixture -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $dist 'spawn_chain.exe') -Destination (Join-Path $chainFixture 'spawn_chain.exe') -Force
   WriteAscii (Join-Path $chainFixture 'hello.txt') 'VIRTUAL-FS-OK'
-  $chainExit = RunCapture $cli @(
+  $chainExit = RunChecked $cli @(
     'bundle', '-i', (Join-Path $dist 'spawn_chain.exe'), '-o', $chain,
     '--Files', $chainFixture,
     '--virtual', '--virtual-root=C:/virt', '--compression-method=none',
     '--launcher', $launcher
   ) $chainBundleOut
   Check ($chainExit -eq 0) "child chain bundle exit code 0 (got $chainExit)"
-  $chainInfoExit = RunCapture $cli @('info', $chain) $chainInfoOut
+  $chainInfoExit = RunChecked $cli @('info', $chain) $chainInfoOut
   $chainInfo = ReadOut $chainInfoOut
   Check ($chainInfoExit -eq 0) "CLI info on the chain bundle exit code 0 (got $chainInfoExit)"
   Check ($chainInfo -match 'format:\s+v7') 'chain bundle uses format v7'
@@ -305,17 +328,17 @@ try {
   Remove-Path $chainFixture
 
   Write-Host "==> build and refuse a plain bundle"
-  $plainExit = RunCapture $cli @(
+  $plainExit = RunChecked $cli @(
     'bundle', '-i', $target, '-o', $plain,
     '--Files', $fixture, '--no-virtual',
     '--compression-method=none', '--launcher', $launcher
   ) $plainBundleOut
   Check ($plainExit -eq 0) "--no-virtual bundle exit code 0 (got $plainExit)"
-  $plainInfoExit = RunCapture $cli @('info', $plain) $plainInfoOut
+  $plainInfoExit = RunChecked $cli @('info', $plain) $plainInfoOut
   $plainInfo = ReadOut $plainInfoOut
   Check ($plainInfoExit -eq 0) "CLI info on plain bundle exit code 0 (got $plainInfoExit)"
   Check ($plainInfo -match 'virtual:\s+none') '--no-virtual manifest has no virtual layer'
-  $refuseExit = RunCapture $plain @() $plainOut
+  $refuseExit = RunChecked $plain @() $plainOut
   $refuseLog = ReadOut $plainOut
   Write-Host $refuseLog
   Check ($refuseExit -ne 0) "lpvhost refuses the plain bundle (got $refuseExit)"
@@ -336,7 +359,7 @@ try {
   if ($found -ge 0) {
     $bytes[$found + $needle.Length - 1] = [byte][char]'X'
     WriteAllBytes $corrupt $bytes
-    $damagedExit = RunCapture $corrupt @() $damagedOut
+    $damagedExit = RunChecked $corrupt @() $damagedOut
     $damagedLog = ReadOut $damagedOut
     Write-Host $damagedLog
     Check ($damagedExit -ne 0) "corrupted bundle is refused (got $damagedExit)"
@@ -391,7 +414,7 @@ try {
     $signExit = 1
     for ($attempt = 0; $attempt -lt 6; $attempt++) {
       WriteAllBytes $signed $plainBytes
-      $signExit = RunCapture $signtool @('sign', '/sha1', $thumb, '/fd', 'sha256', $signed) $signtoolOut
+      $signExit = RunChecked $signtool @('sign', '/sha1', $thumb, '/fd', 'sha256', $signed) $signtoolOut
       if ($signExit -eq 0) { break }
       Start-Sleep -Milliseconds 500
     }
@@ -427,7 +450,7 @@ try {
   $beforeScratch = Snapshot $scratch $null
   $beforeTemp = Snapshot $tempDir $tempPattern
 
-  $runExit = RunCapture $bundle @() $runOut
+  $runExit = RunChecked $bundle @() $runOut
   $runLog = ReadOut $runOut
   Write-Host $runLog
   Check ($runExit -eq 0) "virtual bundle exit code 0 (got $runExit)"
@@ -442,18 +465,18 @@ try {
 
   Write-Host "==> a signed bundle, a bad tail, a cut bundle"
   if ($signReady) {
-    $signedExit = RunCapture $signed @() $signedOut
+    $signedExit = RunChecked $signed @() $signedOut
     $signedLog = ReadOut $signedOut
     Write-Host $signedLog
     Check ($signedExit -eq 0) "signed bundle exit code 0 (got $signedExit)"
     Check ($signedLog -match 'THIN-EXE file="VIRTUAL-FS-OK" size=\x00?13\s+attrs=0x80 result=OK') 'the signed bundle found its archive in front of the signature'
   }
-  $bogusExit = RunCapture $bogus @() $bogusOut
+  $bogusExit = RunChecked $bogus @() $bogusOut
   $bogusLog = ReadOut $bogusOut
   Write-Host $bogusLog
   Check ($bogusExit -eq 0) "a footer that closes nothing is skipped (got $bogusExit)"
   Check ($bogusLog -match 'THIN-EXE file="VIRTUAL-FS-OK" size=\x00?13\s+attrs=0x80 result=OK') 'the real footer was still found behind the bogus one'
-  $cutExit = RunCapture $cut @() $cutOut
+  $cutExit = RunChecked $cut @() $cutOut
   $cutLog = ReadOut $cutOut
   Write-Host $cutLog
   Check ($cutExit -ne 0) "a bundle cut short is refused (got $cutExit)"
@@ -466,7 +489,7 @@ try {
   # claim: the redirect, the state handover and the recursion.
   $env:LUNAPACK_TEST_CHILD = 'C:\virt\spawn_chain.exe'
   $env:LUNAPACK_TEST_LEVEL = '1'
-  $chainRunExit = RunCapture $chain @() $chainOut
+  $chainRunExit = RunChecked $chain @() $chainOut
   $env:LUNAPACK_TEST_CHILD = $null
   $env:LUNAPACK_TEST_LEVEL = $null
   $chainLog = ReadOut $chainOut
@@ -483,7 +506,7 @@ try {
   # the program it mapped.
   $env:LUNAPACK_TEST_CHILD = $chainExe
   $env:LUNAPACK_TEST_LEVEL = '1'
-  $chainDiskExit = RunCapture $chain @() $chainDiskOut
+  $chainDiskExit = RunChecked $chain @() $chainDiskOut
   $env:LUNAPACK_TEST_CHILD = $null
   $env:LUNAPACK_TEST_LEVEL = $null
   $chainDiskLog = ReadOut $chainDiskOut
@@ -496,7 +519,7 @@ try {
   # program that reads the ordinary way reaches the real disk. The Win32 read
   # of the same virtual path does reach the layer. Both facts are asserted: the
   # day the gap closes this check fails, and the docs have to move with it.
-  $crtExit = RunCapture (Join-Path $dist 'launcher.exe') @(
+  $crtExit = RunChecked (Join-Path $dist 'launcher.exe') @(
     $dist, (Join-Path $dist 'crt_open.exe'), '--thread'
   ) $crtOut
   $crtLog = ReadOut $crtOut
@@ -541,8 +564,8 @@ try {
     Check ($newOurs.Count -eq 0) "360 recorded no new detection under the repository ($($oursBefore.Count) -> $($oursAfter.Count))"
     if ($newOurs.Count -gt 0) { $newOurs | ForEach-Object { Write-Host "        detected: $_" } }
     Write-Host "        (360 recorded $($av360Before.Count) -> $($av360After.Count) detections in total, others included)"
-    Check (Test-Path -LiteralPath $bundle) 'the bundle is still on disk after the run'
-    if (Test-Path -LiteralPath $bundle) {
+    Check (Test-PathQuiet $bundle) 'the bundle is still on disk after the run'
+    if (Test-PathQuiet $bundle) {
       $hashAfter = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
       Check ($hashAfter -eq $bundleHash) 'the bundle is byte-identical after the run'
     }

@@ -52,7 +52,8 @@ Repository: [github.com/riantr/LunaPack](https://github.com/riantr/LunaPack)
   This is a **Tier A preview**: the fixtures that cover it pass, and two
   measured limits — CRT stdio and `SearchPathW` — are documented under
   [Virtual bundles](#virtual-bundles-windows-x64) and summarised in
-  [what changed in 0.1.28](#what-changed-in-0128).
+  [what changed in 0.1.28](#what-changed-in-0128). From
+  [0.1.29](#what-changed-in-0129) on, a bundle can also be signed.
 
 * The libraries of the program are found and carried
 
@@ -198,7 +199,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.28
+moon add riantr/LunaPack@0.1.29
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -206,7 +207,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.28",
+  "riantr/LunaPack@0.1.29",
 }
 ```
 
@@ -226,7 +227,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.28`, `>=0.1.28`, `0.1` and `v0.1.28` are all rejected. A bare
+`latest`, `^0.1.29`, `>=0.1.29`, `0.1` and `v0.1.29` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -279,6 +280,80 @@ It happened again while 0.1.28 was being prepared, on a two-day gap:
 `Proxy` on 0.1.20261119, so the source that passed every gate on the older
 toolchain did not compile on the newer one. The download now describes the
 proxy to `@http` instead of opening the connection itself (see below).
+
+### What changed in 0.1.29
+
+- **A virtual bundle can be signed (L7.2a).** An Authenticode signature is
+  appended after the last byte of the file, which is exactly where the archive
+  footer used to be, so every reader — `lpvhost.exe`, the mapped runtime,
+  `unpack`, `verify`, `info`, and an ordinary launcher probing its own file —
+  read the last 24 bytes, found a certificate table there instead of a footer,
+  and answered *"this file carries no LunaPack virtual bundle"*. Each of them
+  now starts at the end and walks backwards to the last footer that closes an
+  archive that is really there: `manifest_offset >= 8`, `manifest_length > 0`,
+  both inside the file, and the archive start carrying the marker as well.
+  Bytes after that footer are not part of the archive, which is what leaves room
+  for a signature. The CLI reads in 64 KiB windows from the end, so a large file
+  is not read whole and a footer cannot hide on a window boundary. Measured: a
+  1002091-byte bundle signed with a code-signing certificate made on this
+  machine becomes 1003520 bytes, the last byte the signer changed sits at offset
+  437 — the PE headers, not the archive — and the signed bundle passes every
+  mapped-program assertion. 4096 zero bytes appended also run; 100 bytes cut off
+  are refused. The end-to-end gate grew from 45 invariants to **55** to hold
+  that: the signed copy and its run, a forged footer that must be skipped rather
+  than believed, and a truncated bundle that must still be refused. Its new
+  checks were run against the `lpvirt.dll` built before the change first, where
+  they failed, and pass after it.
+
+- **Two AV engines are measured, not one (L7.2).** Both engines were calibrated
+  first with the EICAR string, and both removed it within six seconds — Huorong
+  into quarantine, 360 by deleting the file — so a quiet run afterwards means
+  something. On 2026-11-23 both left `lpvhost.exe`, `lpvirt.dll`, a signed and an
+  unsigned virtual bundle and `mini_target.exe` alone, and 360 blocked
+  `ntdll_target.exe` and `com_consumer.exe` as
+  `HEUR/QVM202.0.992D.Malware.Gen` — a fact about those two test fixtures.
+  **On 2026-11-24 the second engine began deleting virtual bundles produced by
+  the CLI**, as `HEUR/QVM202.0.9D11.Malware.Gen`, while other bundles written by
+  the same binary in the same minute survived; the paths and MD5s are recorded
+  in `runtime/tests/corpus/AV_RETEST.md`. That is a regression of the shipping
+  artefact and it is **open**. Controls run on 2026-11-24 narrow it to a verdict
+  drift on the bundle class, not on this change: bundles built with the
+  **released 0.1.28 `lpvirt.dll` and `lpvhost.exe`** were deleted just like the
+  current ones; a plain SFX carrying `lpvirt.dll` as an ordinary file payload
+  was deleted while a plain SFX without it survived; and all six members of
+  three matched signed/unsigned pairs were deleted, so an Authenticode
+  signature does not clear it. This release therefore claims no engine's
+  silence for the bundle it produces, and the gate fails on the detection
+  instead of passing. 360 keeps no quarantine directory to count, so the gate
+  reads its real-time protection log and asserts that no new record names a
+  path inside this repository.
+
+- **Release assets are now built in CI, including Studio (L7.5).**
+  `release.yml` gained a `build-studio` job that installs the locked
+  `proton_cli` 0.8.0 / `warren` 0.4.5 tools on a clean `windows-latest` runner,
+  prepares CEF, packages the Studio workspace and uploads the zip under the
+  name `--GUI` downloads. It is optional, so a failure leaves the CLI and
+  runtime release intact and the notes name the missing asset. The earlier
+  local packaging failure (`Access is denied` writing `chrome_elf.dll`) was
+  reproduced with both engines' logs clean and is a machine-specific problem,
+  not a reason to omit the asset from every release.
+
+- **The static-analysis numbers became a gate (L7.3).**
+  `scripts/verify_static_analysis.ps1` runs both analyzers over a staged copy of
+  the 74 git-tracked `.mbt` files at pinned coordinates and compares the counts
+  with `scripts/static_analysis_baseline.json`: actionable findings must be
+  zero, and no count may rise without the rise being attributed. Staging is the
+  point — the same tree measured 270 files with 21 actionable findings while
+  `_build` source copies and `studio/.mooncakes` were present, and 83 files with
+  none once they were not. The baseline behind this release is
+  `moonbit_static_analysis` 0.5.0 (74 files, 0 actionable, 793 notices, 2133
+  unchecked) and LunaFlow 0.1.28 with `--max-functions 5000` (`dead_code=1`,
+  `taint_sinks=84`, `abstract_findings=75`, `vcs=0/0/0` over 1216 functions).
+  The much smaller `taint_sinks` figure quoted in earlier notes was the
+  analyzer's default 150-function cap, not a result: `--max-functions=5000` in
+  the `--flag=value` form is accepted and silently ignored, which is why the
+  gate passes it as two arguments and asserts that more than 150 functions were
+  analysed.
 
 ### What changed in 0.1.28
 
@@ -1177,7 +1252,7 @@ The binaries of a release are attached to its
 | `lunapack.core` | the compiled package the WebAssembly module needs |
 | `lpvirt.dll` | the in-process runtime image for Windows; embedded in virtual bundles and also shipped loose for hosts |
 | `lpvhost.exe` | the virtual launcher for Windows; maps a `--virtual` bundle without unpacking it |
-| `lunapack-studio-windows-x86_64.zip` | LunaPack Studio for Windows (v0.1.27 onward; **not in v0.1.28**) |
+| `lunapack-studio-windows-x86_64.zip` | LunaPack Studio for Windows (v0.1.27 and 0.1.29 onward; **not in v0.1.28**) |
 
 The **source of LunaPack Studio lives in [`studio/`](studio/)** in this
 repository: a separate MoonBit workspace with a Rabbita frontend, a Proton
@@ -1366,10 +1441,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.28 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.29 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.28 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.29 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1387,7 +1462,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.28 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.29 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
@@ -1934,13 +2009,14 @@ Two limits are measured rather than assumed, and both are asserted by
   starting it asks the real filesystem; Windows 11's own `cmd.exe` does exactly
   that, which is why it cannot find a virtual program even though
   `GetFileAttributesW` on the same literal path is answered from the layer.
-- **A `--virtual` bundle cannot be signed, in this layout.** The archive footer
-  sits at the end of the file and the launcher requires it there, so appended
-  bytes break the lookup: adding 4096 zero bytes — which is what an Authenticode
-  certificate table amounts to — makes `lpvhost.exe` answer *"this file carries
-  no LunaPack virtual bundle"*. Making a signed bundle possible means searching
-  backwards for the footer instead of reading it from EOF. That is a change to
-  the reader, not to the signer, and it has not been made.
+- **A `--virtual` bundle can be signed, and the reader is what makes that
+  possible.** The archive footer used to be read from the last 24 bytes of the
+  file, and an Authenticode certificate table is appended exactly there, so
+  signing a bundle — or appending anything at all — made `lpvhost.exe` answer
+  *"this file carries no LunaPack virtual bundle"*. The footer is now found by
+  walking backwards from the end to the last self-consistent one, so the bytes
+  after it belong to the signer and not to the archive. A signed bundle runs,
+  and the signature does not disturb the archive's own checksums.
 
 Anything the runtime does not own falls through to the real Win32 API through
 the runtime DLL's own unpatched import, so ordinary files and registry keys
@@ -2063,12 +2139,17 @@ older window. A mirror or an offline install can set `LUNAPACK_STUDIO_URL` to
 any URL (or a `file` served over loopback in a test); a bad archive is refused
 with a message naming the reason.
 
-The Windows Studio zip is attached to releases from 0.1.27 onward, with its
-size and SHA-256 recorded in the release notes. **0.1.28 is the exception**: its
-packaging step fails on the machine that builds it, so no zip was produced and
-the release notes say so. An older release, a mirror without the asset, or a
-version mismatch still makes `--GUI` say that it cannot find one instead of
-pretending to have downloaded it.
+The Windows Studio zip is attached to releases from 0.1.27 onward, with its size
+and SHA-256 printed by the `build-studio` job. **0.1.28 is the exception**: the
+packaging step failed on the machine that built it (`Access is denied` while it
+writes the extracted window files, reproducible, and not the work of either
+installed engine — neither logged a detection and both left the tree untouched),
+so no zip was produced and the notes say so. Since 0.1.29 the zip is built by
+`release.yml` on a clean `windows-latest` runner instead of on a developer
+machine; `build-studio` is optional, so if it fails the release still goes out
+and the notes name the missing asset. An older release, a mirror without the
+asset, or a version mismatch still makes `--GUI` say that it cannot find one
+instead of pretending to have downloaded it.
 
 `HTTPS_PROXY`, `HTTP_PROXY` and their lowercase forms are honoured through a
 CONNECT tunnel. `NO_PROXY` (including its `*` wildcard) and all loopback hosts
@@ -2283,12 +2364,12 @@ path, not a research demo.
 | `moon build --release --target native` / `--target wasm` | that the binary and the WebAssembly module are produced |
 | `moon info` + `git diff --exit-code -- '*.mbti'` | that the published interface is not stale |
 | `bash scripts/test_linux.sh` | the round trip the unit tests do not cover |
-| `powershell -File scripts\verify_virtual_bundle.ps1` | the CLI-produced v7 bundle: virtual layer, embedded runtime, mapped program, checksum refusal, `--no-virtual`, zero disk, and no new detection by either AV engine installed |
+| `powershell -File scripts\verify_virtual_bundle.ps1` | the CLI-produced v7 bundle: virtual layer, embedded runtime, mapped program, checksum refusal, `--no-virtual`, a signed copy and an appended signature that must not hide the archive, zero disk, and no new detection by either AV engine installed |
 | `powershell -File scripts\verify_static_analysis.ps1` | that `moonbit_static_analysis` still reports zero actionable findings and that neither analyzer's counts rose past the recorded baseline |
 
 Measured on this machine (Windows, `moon 0.1.20261119`): `moon test --target
-native` reports **211 tests, 211 passed, 0 failed**, and `--target wasm`
-reports the same. The runtime module adds **41 tests, 41 passed, 0 failed**.
+native` reports **213 tests, 213 passed, 0 failed**, and `--target wasm`
+reports the same. The runtime module adds **43 tests, 43 passed, 0 failed**.
 
 One of those tests needs a POSIX `sh`, because it exercises the POSIX branch of
 the install-script runner on a Windows host. Without a shell on `PATH` it

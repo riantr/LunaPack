@@ -494,19 +494,39 @@ Two things are worth recording because they cost the most time:
 
 ### L6 re-measure (2026-11-23)
 
-Root tests **211/211**; runtime tests **41/41**. All eight assertion scripts are
+Root tests **213/213**; runtime tests **43/43**. All nine assertion scripts are
 green: `verify_virtual_bundle`, `verify_child_follow`, `verify_com_activation`,
 `verify_fallback_chain`, `verify_ntdll_spike`, `verify_pe_features`,
-`verify_thin_launcher` and `verify_zero_disk` (run last, because the consume
-demos remove their own targets). The virtual script checks **41 invariants**: a
-CLI-produced v7 layer, the embedded runtime entry, mapped-program output,
-checksum refusal of a byte-flipped payload, `--no-virtual`, no extracted file in
-the working directory or `%TEMP%`, a three-level child chain where the child is
-**in the layer** and a second one where the child is **only on disk**, and the
-CRT boundary (`C-open FAILED` beside `win32 OK`). The Huorong comparison is one
-of the 41 on a machine that runs the engine and is reported as skipped on a CI
-runner, which has none (**16 → 16** locally, Huorong only, second engine
-pending).
+`verify_thin_launcher`, `verify_zero_disk` (run last, because the consume demos
+remove their own targets) and `verify_static_analysis`. The virtual script
+checks **55 invariants**: a CLI-produced v7 layer, the embedded runtime entry,
+mapped-program output, checksum refusal of a byte-flipped payload,
+`--no-virtual`, a signed copy whose appended certificate table must not hide the
+archive, a forged footer that must be skipped rather than believed, a bundle cut
+short that must still be refused, no extracted file in the working directory or
+`%TEMP%`, a three-level child chain where the child is **in the layer** and a
+second one where the child is **only on disk**, and the CRT boundary
+(`C-open FAILED` beside `win32 OK`). The AV comparisons are one per engine, so
+they are counted on a machine that runs the engines and reported as skipped on a
+CI runner, which has none (**17 → 17** for Huorong, whose baseline carries the
+one entry the EICAR calibration wrote; no new record naming this repository for
+360).
+
+MSA 0.5.0 over the 74 git-tracked `.mbt` files: `files=74 parsed=74
+actionable=0 notices=793 unchecked=2133`. LunaFlow 0.1.28 with
+`--max-functions 5000`: `dead_code=1 taint_sinks=84 abstract_findings=75
+vcs=0/0/0` over 1216 functions. The `taint_sinks=9` quoted by an earlier
+revision of this section was the analyzer's default 150-function cap — writing
+`--max-functions=5000` as a single `--flag=value` argument is accepted and then
+silently ignored — so it measured a prefix of the code, not the code. Both
+analyzers are now driven by `scripts/verify_static_analysis.ps1` over a staged
+copy of the tracked files, because a built tree adds `_build` source copies and
+`studio/.mooncakes`, and the same code then reports 21 actionable findings
+instead of none. The one new finding that release did introduce — a
+user-supplied path interpolated into a `fail` message in
+`virtual_runtime_image` — was removed by printing the path and failing with a
+constant. `moon fmt --check` is clean in the root, `runtime/` and `runtime/host/`,
+and `moon info` leaves every `.mbti` byte-identical.
 
 **CI runs it with the shipping CLI.** `.github/workflows/ci.yml` has a
 `virtual-bundle` job that builds the root release CLI, builds this runtime and
@@ -515,16 +535,6 @@ images the verifier packs), and then runs `scripts/verify_virtual_bundle.ps1`
 under Windows PowerShell 5.1 — the shell it was validated in, because
 PowerShell 7.3+ re-quotes the arguments of a native command and the verifier
 hands each command line to `cmd.exe`.
-
-MSA 0.4.52: `files=83 parsed=83 actionable=0 defects=0 notices=767`
-(notices are structural only; +25 from the four new source/interface files and
-the CLI virtual tests). LunaFlow 0.1.27: `dead_code=1 taint_sinks=9
-unreachable=0 infinite_loop=0`, funnel L3 `abstract_findings=23`, `vcs=0`.
-`taint_sinks` fell from 15 to 9; the one new L2 abstract finding came from
-interpolating a user-supplied path into a `fail` message in
-`virtual_runtime_image`, and was removed by printing the path and failing with
-a constant message. `moon fmt --check` is clean in the root, `runtime/` and
-`runtime/host/`, and `moon info` leaves every `.mbti` byte-identical.
 
 Two constraints shaped the launcher and are worth recording before anyone
 tries to simplify it:
@@ -555,8 +565,8 @@ tries to simplify it:
 | `iat.mbt` | In-process import address table patcher; also patches runtime-loaded modules, skipping Windows system DLLs. |
 | `thunks.mbt` | The Win32-compatible C ABI thunks and management exports. |
 | `mapper.mbt` | Manual PE mapping, relocations, imports, protections, export lookup. |
-| `bundle.mbt` | L6: v7 virtual-layer manifest reader, checksummed archive entry decoder, registry seeding and `lp_run_bundle` — the whole run lives inside the DLL. |
+| `bundle.mbt` | L6: v7 virtual-layer manifest reader, the backwards footer search that lets a signed bundle keep running, checksummed archive entry decoder, registry seeding and `lp_run_bundle` — the whole run lives inside the DLL. |
 | `host_api.mbt` | L6: address-based bridge for the launcher: map an image, find an export, call a computed address, run an entry on a worker, read the exit code. |
 | `host/main.mbt` | L6: `lpvhost.exe`, the shipping virtual launcher — maps the embedded runtime, attaches its CRT, calls `moonbit_init` and transfers to `lp_run_bundle`. |
-| `runtime_wbtest.mbt` | Unit tests for the data model, L1/L2.1 VFS semantics, the PE layout reader, the hive, the entry stub and the type-library reader (41 tests). |
+| `runtime_wbtest.mbt` | Unit tests for the data model, L1/L2.1 VFS semantics, the PE layout reader, the hive, the entry stub, the type-library reader and the footer search (43 tests). |
 | `tests/dynlib.c` | L2.2 runtime-loaded DLL whose static virtualized imports prove LoadLibrary IAT patching. |

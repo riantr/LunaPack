@@ -163,3 +163,112 @@ regression, and re-run it on a machine where the fixture is not flagged.
 
 Nothing in this checklist disables, excludes, or works around security
 software. That was an explicit project constraint from the P0 decision.
+
+## 2026-11-24: the produced bundle is flagged again (open)
+
+The 2026-11-23 matrix above says the virtual bundle is left alone by both
+engines. **That is no longer true, and it changed without a code change to the
+archive.** On 2026-11-24 the 0.1.29 release candidate produced bundles that 360
+deleted as `HEUR/QVM202.0.9D11.Malware.Gen` (the 23rd's verdicts were
+`.992D`), while other bundles written by the same binary in the same minute
+survived. 360's real-time log (`Log\RealtimeProtectLog\2026-11-24.log`,
+UTF-16LE) holds the paths and MD5s:
+
+| Artifact | MD5 | Engine verdict |
+| --- | --- | --- |
+| `build\verify_virtual_bundle\vdemo.exe` (gate bundle) | `0390504e2f72e132beab06888ab27ee6` | 360 deleted, QVM202.0.9D11 |
+| `build\verify_virtual_bundle\chain.exe` | `68fca4be749dabe8d891fcdc33d6dbe5` | 360 deleted, QVM202.0.9D11 |
+| `%TEMP%\lpbundleprobe\probe1.exe` | `b64d1c29709ed91d1e71a5692f0cd57f` | 360 deleted, QVM202.0.9D11 |
+| `%TEMP%\lpbundleprobe\probe2.exe` | `cb998374cc01a9838283983ad72ef3f3` | 360 deleted, QVM202.0.9D11 |
+| `%TEMP%\lpbundleprobe\probe3.exe` | `cb998374cc01a9838283983ad72ef3f3` | 360 deleted, QVM202.0.9D11 |
+| `build\vbprobe\vdemo1.exe`, `vdemo2.exe` | `9aff5df1f5fd716215ed6574d7320f4d`, `8378b68b6c1d84f6df7a792c54769de6` | 360 deleted, QVM202.0.9D11 |
+| `%TEMP%\lpavprobe2\plain.exe` (same CLI, same minute) | - | survived a 31 s observation and has no 360 record to date |
+| `%TEMP%\lpavprobe2\virt.exe` (same CLI, same minute) | `321590128d78756de3263b0db031feec` | 360 deleted it after the 31 s observation had ended, `HEUR/QVM202.0.9D11` |
+
+What this means, stated narrowly:
+
+- The CLI itself, `lpvhost.exe` and `lpvirt.dll` are not what 360 acted on; the
+  deleted objects are the **packed output**.
+- It is not deterministic per binary: two bundles from the same build, written
+  minutes apart, were left alone. The verdict looks like a content/cloud
+  classification that changed between the 23rd and the 24th, not a property the
+  code acquired.
+- The verifier now sees the failure as `@fs.rename(): ... Access is denied` while
+  writing the bundle, or as a run that cannot start, because the engine is
+  deleting the artefact underneath it. Those two messages are retried by
+  `RunChecked` before they are believed, and the 360 leg of the gate fails on the
+  log record rather than passing.
+
+Open questions, in the order they should be answered:
+
+1. Does the verdict follow the **virtual layer** (embedded, unsigned
+   `lpvirt.dll` + appended archive) or the plain SFX (launcher + appended
+   archive)? `plain.exe` survived once, which points at the virtual layer, but
+   one sample is not a measurement.
+2. Does an Authenticode signature change the verdict? The signed leg is now
+   mechanically possible (L7.2a), so this is finally testable.
+3. Does the same bundle get a different verdict when produced by the released
+   0.1.28 CLI instead of the 0.1.29 build? That separates "the artefact" from
+   "this build".
+
+Until 1–3 are answered, no release may state that either engine leaves the
+produced bundle alone, and L7.2 stays open.
+
+### 2026-11-24, second pass: all three questions answered
+
+The three open questions above were run as controlled matrices. All verdicts
+below are `HEUR/QVM202.0.9D11.Malware.Gen` from
+`Log\RealtimeProtectLog\2026-11-24.log`.
+
+**1. It follows `lpvirt.dll`, not the virtual manifest.** Plain SFX (launcher +
+appended archive, `--no-virtual`) with and without a 500 KB dummy payload both
+survived, with no 360 record. A plain SFX that carried `lpvirt.dll` as an
+*ordinary file payload* — no `--virtual`, no runtime mapping — was deleted
+(`4730e92af564aad5786dc4d373642c73`). An empty virtual layer was deleted too
+(`ff91e315bbf3c44a5724b72edb9c3f59`). One virtual bundle with a real layer
+survived (`3a227a1d0ab173076d08c4ea88b3b6d9`, no record), so the engine is not
+uniform across every sample, but the only clean control is the one without the
+DLL.
+
+**2. A signature does not clear it.** Three bundles were built, then each copied
+before signing so the pair differed only in the Authenticode table. After 90 s
+all six were gone, one 360 record per file:
+
+| unsigned | signed |
+| --- | --- |
+| `u1.exe` `929178133fc4cd8ddcb25bc4012eb6b9` | `s1.exe` `0fc9f4a8a54f219d93013139b6db02aa` |
+| `u2.exe` `1a1af9d485ea9c710aa62377013eeb0b` | `s2.exe` `cc98d54827c2030f3591c3c0c24eba28` |
+| `u3.exe` `a5fb3e56eb473de1208a8f62945dce75` | `s3.exe` `b5ed5a98697c7b680c1ef99f0f02098a` |
+
+The certificate was created with `New-SelfSignedCertificate -Type
+CodeSigningCert` for the test and removed from `Cert:/CurrentUser/My`
+afterwards. An untrusted signature cannot confer reputation, so this measures
+the mechanical effect of the appended table, not what a purchased certificate
+would do.
+
+**3. It is not this build.** Five virtual bundles were made with the current
+CLI, crossing the current and the **released v0.1.28** `lpvirt.dll` /
+`lpvhost.exe` in all four combinations plus a repeat. All five were deleted,
+each with its own 360 record:
+
+| runtime | launcher | MD5 |
+| --- | --- | --- |
+| current | current | `472a88399589e754d0967546b40587a7` |
+| v0.1.28 | v0.1.28 | `f5dece4cb136eada43fa374df105113f` |
+| v0.1.28 | current | `65d1dca5bc2105f9adc7bb833d09722e` |
+| current | v0.1.28 | `91670f94c7ea8abecf0143bac41a0b45` |
+| current | current (repeat) | `e9eec3eaed25e2fa128a9a6a894674f0` |
+
+The v0.1.28 binaries were downloaded from the published release, not rebuilt.
+So the 23rd's clean run and the 24th's deletions differ by the engine's model
+(`.992D` -> `.9D11`), not by anything LunaPack committed in between.
+
+**Conclusion and disposition.** L7.2 stays open as a third-party false positive
+against the produced bundle class. It is not fixable by changing the footer
+reader, by signing with a certificate available on this machine, or by
+reverting to the released runtime. The gate is deliberately left failing: it
+asserts that no 360 record names a path in this repository, and that assertion
+is true of the engine's behaviour, not something to be tuned away. Release
+assets are now produced on clean CI runners (`build-studio` in `release.yml`),
+where no engine is installed; those runs cannot establish AV silence and the
+release notes make no such claim.
