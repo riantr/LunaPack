@@ -3,7 +3,7 @@ name = "riantr/LunaPackGUI_shared"
 version = "0.1.0"
 
 import {
-  "moonbit-community/proton_contract@0.9.1",
+  "moonbit-community/proton_contract@0.10.0",
 }
 
 license = "Apache-2.0"

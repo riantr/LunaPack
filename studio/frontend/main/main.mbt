@@ -548,7 +548,7 @@ fn menu_dropdown(emit : Emit[Msg], key : String) -> Html {
       ])
     _ =>
       div(class="menu-dropdown", [
-        div(class="menu-item menu-note", "LunaPack Studio 0.1.30"),
+        div(class="menu-item menu-note", "LunaPack Studio 0.1.31"),
         a(
           href="https://github.com/riantr/LunaPack",
           class="menu-item",

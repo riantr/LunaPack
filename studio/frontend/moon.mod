@@ -4,9 +4,9 @@ version = "0.1.0"
 
 import {
   "riantr/LunaPackGUI_shared@0.1.0",
-  "moonbit-community/proton_contract@0.9.1",
-  "moonbit-community/proton_client@0.9.1",
-  "moonbit-community/proton_rabbita@0.9.1",
+  "moonbit-community/proton_contract@0.10.0",
+  "moonbit-community/proton_client@0.10.0",
+  "moonbit-community/proton_rabbita@0.10.0",
   "moonbit-community/rabbita@0.16.4",
 }
 

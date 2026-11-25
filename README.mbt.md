@@ -199,7 +199,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.30
+moon add riantr/LunaPack@0.1.31
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -207,7 +207,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.30",
+  "riantr/LunaPack@0.1.31",
 }
 ```
 
@@ -227,7 +227,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.30`, `>=0.1.30`, `0.1` and `v0.1.30` are all rejected. A bare
+`latest`, `^0.1.31`, `>=0.1.31`, `0.1` and `v0.1.31` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -280,6 +280,20 @@ It happened again while 0.1.28 was being prepared, on a two-day gap:
 `Proxy` on 0.1.20261119, so the source that passed every gate on the older
 toolchain did not compile on the newer one. The download now describes the
 proxy to `@http` instead of opening the connection itself (see below).
+
+### What changed in 0.1.31
+
+- **Studio moves to Proton 0.10.0.** All three Studio modules and the
+  `build-studio` job now pin `proton`/`proton_contract`/`proton_client`/
+  `proton_rabbita`/`proton_cli` 0.10.0; `warren` stays at 0.4.5. The 0.9.1 CLI
+  installer failed while compiling `proton_cefsetup@0.9.1` on `moon
+  0.1.20261119`; 0.10.0 installs cleanly on the same toolchain and reports
+  `proton_cli 0.10.0`. Studio modules type-check and pure tests pass
+  (backend 15/15, frontend 5/5).
+- **This tag retries `build-studio`.** The 0.1.30 release had seven assets and
+  no Studio zip because the pinned 0.9.1 CLI could not be installed. The
+  optional job now runs with the working 0.10.0 toolchain; if it still fails,
+  the release notes name the missing asset instead of claiming it shipped.
 
 ### What changed in 0.1.30
 
@@ -1455,10 +1469,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.30 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.31 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.30 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.31 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1476,7 +1490,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.30 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.31 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
