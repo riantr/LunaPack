@@ -1,13 +1,13 @@
 # LunaPack Studio
 
 The graphical front end of [LunaPack](https://github.com/riantr/LunaPack),
-built with `proton_cli` 0.8.0 and `moonbit-community/rabbita`. The frontend is
+built with `proton_cli` 0.9.1 and `moonbit-community/rabbita`. The frontend is
 a Rabbita app served by Warren; the backend is a native Proton app that starts
 the LunaPack CLI and returns its output to the window.
 
 **LunaPack and LunaPack Studio are one product, not two packages.** Studio has
 no version of its own and is not published to Mooncakes. It is an optional
-asset of the LunaPack release, shares that release's version (`0.1.27` here),
+asset of the LunaPack release, shares that release's version (`0.1.30` here),
 and is downloaded on first use by `lunapack --GUI`. There is one tag and one
 GitHub release for both.
 
@@ -60,19 +60,20 @@ cache and the source respectively.
 
 | Component | Version |
 |---|---|
-| `moonbit-community/proton_cli` | 0.8.0 |
+| `moonbit-community/proton_cli` | 0.9.1 |
 | `moonbit-community/warren` | 0.4.5 |
-| `moonbit-community/proton` | 0.8.0 |
-| `moonbit-community/proton_contract` | 0.8.0 |
-| `moonbit-community/proton_client` | 0.8.0 |
-| `moonbit-community/proton_rabbita` | 0.8.0 |
+| `moonbit-community/proton` | 0.9.1 |
+| `moonbit-community/proton_contract` | 0.9.1 |
+| `moonbit-community/proton_client` | 0.9.1 |
+| `moonbit-community/proton_rabbita` | 0.9.1 |
 | `moonbit-community/rabbita` | 0.16.4 |
 | `moonbitlang/async` | 0.22.5 |
-| LunaPack / Studio release | 0.1.27 |
+| LunaPack / Studio release | 0.1.30 |
 
-Proton 0.8.0 requires lockstep versions. Do not mix a 0.3.x CLI with 0.8.0
-modules: the 0.8.0 app builder uses the cascade `..config(...)` form and
-explicit `registrar.bind(...)` command bindings.
+Proton 0.9.1 requires lockstep versions. Do not mix a 0.8.x CLI with 0.9.1
+modules: both the CLI and the modules use the cascade `..config(...)` form and
+explicit `registrar.bind(...)` command bindings, and a version mismatch is
+rejected before the window starts.
 
 ## Layout
 

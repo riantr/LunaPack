@@ -321,7 +321,7 @@ jobs:
         run: |
           moon update
           moon install moonbit-community/warren@0.4.5
-          moon install moonbit-community/proton_cli@0.8.0
+          moon install moonbit-community/proton_cli@0.9.1
           "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           proton_cli --version
 

@@ -27,7 +27,7 @@ pub(all) struct FileNode {
   is_dir : Bool
 }
 pub fn FileNode::equal(Self, Self) -> Bool
-pub fn FileNode::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn FileNode::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn FileNode::not_equal(Self, Self) -> Bool
 pub fn FileNode::to_json(Self) -> @json.Json
 
@@ -36,7 +36,7 @@ pub(all) struct PickReply {
   path : String
 }
 pub fn PickReply::equal(Self, Self) -> Bool
-pub fn PickReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn PickReply::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn PickReply::not_equal(Self, Self) -> Bool
 pub fn PickReply::to_json(Self) -> @json.Json
 
@@ -46,7 +46,7 @@ pub(all) struct PickRequest {
   current : String
 }
 pub fn PickRequest::equal(Self, Self) -> Bool
-pub fn PickRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn PickRequest::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn PickRequest::not_equal(Self, Self) -> Bool
 pub fn PickRequest::to_json(Self) -> @json.Json
 
@@ -56,7 +56,7 @@ pub(all) struct ProbeReply {
   found : Bool
 }
 pub fn ProbeReply::equal(Self, Self) -> Bool
-pub fn ProbeReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProbeReply::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn ProbeReply::not_equal(Self, Self) -> Bool
 pub fn ProbeReply::to_json(Self) -> @json.Json
 
@@ -65,7 +65,7 @@ pub(all) struct ProbeRequest {
   hint : String
 }
 pub fn ProbeRequest::equal(Self, Self) -> Bool
-pub fn ProbeRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProbeRequest::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn ProbeRequest::not_equal(Self, Self) -> Bool
 pub fn ProbeRequest::to_json(Self) -> @json.Json
 
@@ -76,7 +76,7 @@ pub(all) struct ProcessReply {
   output : String
 }
 pub fn ProcessReply::equal(Self, Self) -> Bool
-pub fn ProcessReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProcessReply::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn ProcessReply::not_equal(Self, Self) -> Bool
 pub fn ProcessReply::to_json(Self) -> @json.Json
 
@@ -99,7 +99,7 @@ pub(all) struct ProcessRequest {
   runtime_image : String
 }
 pub fn ProcessRequest::equal(Self, Self) -> Bool
-pub fn ProcessRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ProcessRequest::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn ProcessRequest::not_equal(Self, Self) -> Bool
 pub fn ProcessRequest::to_json(Self) -> @json.Json
 
@@ -108,7 +108,7 @@ pub(all) struct ScanReply {
   nodes : Array[FileNode]
 }
 pub fn ScanReply::equal(Self, Self) -> Bool
-pub fn ScanReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ScanReply::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn ScanReply::not_equal(Self, Self) -> Bool
 pub fn ScanReply::to_json(Self) -> @json.Json
 
@@ -117,7 +117,7 @@ pub(all) struct ScanRequest {
   path : String
 }
 pub fn ScanRequest::equal(Self, Self) -> Bool
-pub fn ScanRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ScanRequest::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn ScanRequest::not_equal(Self, Self) -> Bool
 pub fn ScanRequest::to_json(Self) -> @json.Json
 
@@ -141,7 +141,7 @@ pub(all) struct StartupReply {
   has_args : Bool
 }
 pub fn StartupReply::equal(Self, Self) -> Bool
-pub fn StartupReply::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn StartupReply::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn StartupReply::not_equal(Self, Self) -> Bool
 pub fn StartupReply::to_json(Self) -> @json.Json
 
@@ -150,7 +150,7 @@ pub(all) struct StartupRequest {
   hint : String
 }
 pub fn StartupRequest::equal(Self, Self) -> Bool
-pub fn StartupRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn StartupRequest::from_json(@json.Json, @json.DecodeContext) -> Self raise @json.JsonDecodeError
 pub fn StartupRequest::not_equal(Self, Self) -> Bool
 pub fn StartupRequest::to_json(Self) -> @json.Json
 

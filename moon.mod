@@ -3,7 +3,7 @@
 
 name = "riantr/LunaPack"
 
-version = "0.1.29"
+version = "0.1.30"
 
 readme = "README.mbt.md"
 

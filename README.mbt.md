@@ -199,7 +199,7 @@ bundle with its own payload byte for byte.
 ## Install
 
 ```sh
-moon add riantr/LunaPack@0.1.29
+moon add riantr/LunaPack@0.1.30
 ```
 
 That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
@@ -207,7 +207,7 @@ That is a **module** dependency, and it belongs in the consumer's `moon.mod`.
 
 ```toml
 import {
-  "riantr/LunaPack@0.1.29",
+  "riantr/LunaPack@0.1.30",
 }
 ```
 
@@ -227,7 +227,7 @@ a module and takes **no version at all**. A version in a `moon.pkg` import is
 not a newer spelling — it is an import the toolchain cannot find.
 
 For the same reason there is no `@latest`: the version is parsed as semver, so
-`latest`, `^0.1.29`, `>=0.1.29`, `0.1` and `v0.1.29` are all rejected. A bare
+`latest`, `^0.1.30`, `>=0.1.30`, `0.1` and `v0.1.30` are all rejected. A bare
 `moon add riantr/LunaPack` resolves the newest release and pins the concrete
 version it found — that is the "latest" this toolchain has.
 
@@ -281,6 +281,20 @@ It happened again while 0.1.28 was being prepared, on a two-day gap:
 toolchain did not compile on the newer one. The download now describes the
 proxy to `@http` instead of opening the connection itself (see below).
 
+### What changed in 0.1.30
+
+- **Studio is pinned to Proton 0.9.1.** The three Studio modules and the
+  `build-studio` job now use `proton`/`proton_contract`/`proton_client`/
+  `proton_rabbita`/`proton_cli` 0.9.1; `warren` stays at 0.4.5. All three
+  Studio modules type-check against the new version and the pure tests pass
+  (backend 15/15, frontend 5/5).
+- **This tag is also a live check of `build-studio`.** The CLI installer could
+  not be validated on the developer machine: with `moon 0.1.20261119`,
+  `moon install moonbit-community/proton_cli@0.9.1` fails while compiling
+  `proton_cefsetup@0.9.1` because `read_into` now wants `MutArrayView[Byte]`.
+  The CI job is optional, so a failure there leaves the CLI release intact and
+  the notes name the missing Studio zip instead of claiming it shipped.
+
 ### What changed in 0.1.29
 
 - **A virtual bundle can be signed (L7.2a).** An Authenticode signature is
@@ -330,7 +344,7 @@ proxy to `@http` instead of opening the connection itself (see below).
 
 - **Release assets are now built in CI, including Studio (L7.5).**
   `release.yml` gained a `build-studio` job that installs the locked
-  `proton_cli` 0.8.0 / `warren` 0.4.5 tools on a clean `windows-latest` runner,
+  `proton_cli` 0.9.1 / `warren` 0.4.5 tools on a clean `windows-latest` runner,
   prepares CEF, packages the Studio workspace and uploads the zip under the
   name `--GUI` downloads. It is optional, so a failure leaves the CLI and
   runtime release intact and the notes name the missing asset. The earlier
@@ -1441,10 +1455,10 @@ build — a machine with no MoonBit toolchain can still pack:
 
 ```bash
 # The package of the application, as one file. This is the artifact to publish.
-moonx riantr/LunaPack@0.1.29 pack -i ./app -o app.appkg
+moonx riantr/LunaPack@0.1.30 pack -i ./app -o app.appkg
 
 # The self-extracting single file.
-moonx riantr/LunaPack@0.1.29 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
+moonx riantr/LunaPack@0.1.30 bundle -i ./app.exe -o app.exe --Files=./assets --launcher
 ```
 
 `--launcher` with no file downloads the native launcher of the current system
@@ -1462,7 +1476,7 @@ build of whoever depends on them. What MoonBit does have is a `rule` in
 # moon.mod
 rule(
   name: "lunapack",
-  command: "moonx riantr/LunaPack@0.1.29 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
+  command: "moonx riantr/LunaPack@0.1.30 bundle -i \"$input\" -o \"$output\" --Files=./assets --launcher",
 )
 
 # moon.pkg
