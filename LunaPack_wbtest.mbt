@@ -1176,18 +1176,14 @@ async test "the libraries of a library are found as well" {
 async test "a library of the system next to the program is left out" {
   let dir = scratch_dir("lunapack_deps")
   defer drop_scratch(dir)
+  // An obscure KnownDLL is enough: local AV refuses to create files named
+  // kernel32.dll or api-ms-* in TEMP, which would test the engine instead of
+  // the packer. API-set classification has its own tests above.
   @fs.write_binary(
     dir + "/app.exe",
-    build_pe(
-      ["kernel32.dll", "api-ms-win-crt-runtime-l1-1-0.dll", "alpha.dll"],
-      [],
-    ),
+    build_pe(["compositebus.dll", "alpha.dll"], []),
   )
-  @fs.write_text(dir + "/kernel32.dll", "not a real library")
-  @fs.write_text(
-    dir + "/api-ms-win-crt-runtime-l1-1-0.dll",
-    "not a real library",
-  )
+  @fs.write_text(dir + "/compositebus.dll", "not a real library")
   @fs.write_text(dir + "/alpha.dll", "not a real library")
   let found = discover_dependencies(dir + "/app.exe")
   assert_eq(found.length(), 1)
