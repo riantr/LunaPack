@@ -1323,6 +1323,50 @@ The registry refuses a version that already exists, and it wants a `0.x.y`
 version while it is in its early stage, so the releases are numbered `0.1.0`,
 `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, `0.1.5` and so on.
 
+### CI-only release assets
+
+Release assets are produced only by `.github/workflows/release.yml`. The
+publishing job does not use `GITHUB_TOKEN` for writes: it mints a short-lived
+GitHub App token, prunes any asset that the current run did not build, and then
+checks every asset's SHA-256, byte size and uploader. A mismatch fails the
+job, so an asset uploaded from a laptop cannot sit unnoticed on a release.
+
+Steps 3 and 6 below are already implemented in the workflow. The rest are
+one-time GitHub settings that must be made by a repository administrator:
+
+0. Confirm the current baseline: every asset of `v0.1.31` was uploaded by
+   `github-actions[bot]` and its digest matched the CI build log. No manual
+   asset has been found so far.
+1. Remove `Write` / `Maintain` from human accounts and teams on this
+   repository; leave `Read` or `Triage`. This is the step that actually blocks
+   manual uploads: anyone who still has `Contents: write` can upload an asset
+   from a laptop regardless of what the workflow says.
+2. Create a dedicated GitHub App (for example `lunapack-release`) with
+   repository permissions `Contents: read & write` and `Metadata: read-only`,
+   and install it on `riantr/LunaPack` only. Do not give it other permissions.
+3. The release job already uses `actions/create-github-app-token@v3` with
+   `permission-contents: write`; `GITHUB_TOKEN` is read-only there.
+4. Create the `release` environment. Add the App's Client ID as environment
+   variable `RELEASE_APP_CLIENT_ID` and its private key as environment secret
+   `RELEASE_APP_PRIVATE_KEY`. Enable required reviewers and restrict the
+   environment to `v*` tags where your GitHub plan allows it. Also add the
+   repository variable `RELEASE_APP_LOGIN` with the App's bot login, for
+   example `lunapack-release[bot]`; the daily audit uses it with a read-only
+   token and does not need the private key.
+5. Add a tag ruleset for `v*` that restricts create, delete and rewrite, with
+   only the release App or a small named team allowed to bypass it. This
+   controls who can start a release, not who can upload an asset.
+6. The `Verify the release` step already compares the digest and size of each
+   downloaded artifact against the release asset and requires the uploader to
+   be `<app-slug>[bot]`. It also fails if the release contains any asset that
+   this run did not build. `.github/workflows/release-audit.yml` runs daily and
+   re-checks the uploader of every asset on the latest release, so a file added
+   by hand after publishing turns the audit red.
+
+Re-running a tag keeps the existing release but deletes unapproved assets
+before uploading the fresh artifacts. That is intentional: a release page
+should describe exactly one CI run, not a mixture of runs and manual fixes.
+
 ### Publishing to Mooncakes
 
 `moonx` resolves a package from the registry, so the module has to be published

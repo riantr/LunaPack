@@ -11,12 +11,21 @@ name: Release
 #
 # LunaPack Studio is part of this one release, not a separate package. Its zip
 # is built by the build-studio job below on a clean Windows runner, then picked
-# up by the release job through the shared artifact directory. A manual upload
-# with
-#   gh release upload "$TAG" lunapack-studio-<os>-<arch>.zip --clobber
-# still works if that job cannot run. `lunapack --GUI` downloads the asset by
-# name from this very release, so the name must stay in step with
-# studio_asset_name() in studio.mbt.
+# up by the release job through the shared artifact directory. Release assets
+# are CI-only: the publish job mints a dedicated GitHub App token, prunes any
+# asset that this run did not build, and checks every digest and uploader before
+# the job is green. A missing Studio zip is reported, never patched by hand.
+# `lunapack --GUI` downloads the asset by name from this very release, so the
+# name must stay in step with studio_asset_name() in studio.mbt.
+#
+# Required GitHub configuration (see README.mbt.md, "CI-only release assets"):
+#   - a GitHub App with Contents: read & write, Metadata: read-only, installed
+#     on this repository only;
+#   - `release` environment variable RELEASE_APP_CLIENT_ID;
+#   - `release` environment secret RELEASE_APP_PRIVATE_KEY;
+#   - repository variable RELEASE_APP_LOGIN = <app-slug>[bot], used by the
+#     daily `release-audit.yml` check;
+#   - human accounts/teams must not keep Contents: write on this repository.
 
 on:
   push:
@@ -441,11 +450,35 @@ jobs:
       needs.publish-registry.result == 'success'
     needs: [verify-tag, build, build-macos, build-wasm, build-runtime, publish-registry, build-studio]
     runs-on: ubuntu-latest
+    environment: release
 
+    # GITHUB_TOKEN stays read-only. The only Contents: write identity in this
+    # job is the short-lived GitHub App token minted below.
     permissions:
-      contents: write
+      contents: read
 
     steps:
+      - name: Check release automation configuration
+        shell: bash
+        env:
+          RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_APP_CLIENT_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
+            echo "::error::release automation is not configured: set RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY on the 'release' environment"
+            exit 1
+          fi
+
+      - name: Mint the release App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-contents: write
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
@@ -462,9 +495,42 @@ jobs:
         shell: bash
         run: ls -la artifacts/
 
+      # A re-run must not keep an asset from a previous run or from a laptop.
+      # Keep only the files this workflow just downloaded, then let the upload
+      # below replace same-named assets with the freshly built bytes.
+      - name: Prune unapproved release assets
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "No existing release for $TAG; nothing to prune"
+            exit 0
+          fi
+
+          shopt -s nullglob
+          declare -A approved=()
+          for file in artifacts/*; do
+            approved[$(basename "$file")]=1
+          done
+
+          rel_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)
+          gh api "repos/$GITHUB_REPOSITORY/releases/$rel_id/assets" \
+            --jq '.[] | [.id, .name] | @tsv' |
+          while IFS=$'\t' read -r id name; do
+            [ -n "$id" ] || continue
+            if [ -n "${approved[$name]:-}" ]; then
+              echo "Keeping approved asset $name"
+            else
+              echo "Deleting unapproved asset $name"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" >/dev/null
+            fi
+          done
+
       - name: Create the release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
           VERSION: ${{ needs.verify-tag.outputs.version }}
         shell: bash
@@ -491,7 +557,7 @@ jobs:
           # CLI still works without it, but `lunapack --GUI` has nothing to
           # download; say so instead of leaving a silent 404.
           if ! ls artifacts/lunapack-studio-*.zip >/dev/null 2>&1; then
-            NOTES="$NOTES"$'\n\n'"LunaPack Studio was not attached to this release: the optional build-studio job did not produce a zip. lunapack --GUI cannot auto-download it until lunapack-studio-windows-x86_64.zip is uploaded here."
+            NOTES="$NOTES"$'\n\n'"LunaPack Studio was not attached to this release: the optional build-studio job did not produce a zip. lunapack --GUI cannot auto-download it until this tag is released again with a successful build-studio job; release assets are CI-only and manual uploads are rejected."
           fi
           # A tag that already carries a release is reused, so re-running the
           # workflow replaces the assets instead of failing.
@@ -507,12 +573,16 @@ jobs:
 
       - name: Verify the release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          EXPECTED_UPLOADER: "${{ steps.app-token.outputs.app-slug }}[bot]"
         shell: bash
         run: |
+          set -euo pipefail
+
           gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets \
             --jq '{tag: .tagName, name: .name, draft: .isDraft, prerelease: .isPrerelease, assets: [.assets[] | .name]}'
+
           # A missing virtual-runtime asset is a warning, not a failed release:
           # plain bundles still work, but --virtual needs both files.
           RUNTIME=$(gh release view "$TAG" --json assets \
@@ -523,11 +593,78 @@ jobs:
             echo "Virtual runtime assets attached: $RUNTIME/2"
           fi
           # A missing Studio asset is a warning, not a failed release: the CLI
-          # binaries above are complete and the asset can be attached later.
+          # binaries above are complete. Re-run the tag with build-studio green;
+          # do not attach a zip from a developer machine.
           STUDIO=$(gh release view "$TAG" --json assets \
             --jq '[.assets[].name | select(startswith("lunapack-studio-"))] | length')
           if [ "$STUDIO" = "0" ]; then
-            echo "::warning::no lunapack-studio-*.zip asset; --GUI cannot auto-download until it is uploaded"
+            echo "::warning::no lunapack-studio-*.zip asset; --GUI cannot auto-download until build-studio succeeds in a new release run"
           else
             echo "Studio assets attached: $STUDIO"
           fi
+
+          # `gh release view` does not expose uploader.login, so read the REST
+          # representation of the release assets instead.
+          rel_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)
+          gh api "repos/$GITHUB_REPOSITORY/releases/$rel_id/assets" \
+            --jq '.[] | [.name, .digest, (.size|tostring), .uploader.login] | @tsv' \
+            > release-assets.tsv
+
+          shopt -s nullglob
+          if [ ! -e artifacts/lunapack.wasm ]; then
+            echo "::error::no downloaded artifacts found; cannot verify the release"
+            exit 1
+          fi
+
+          declare -A expected_digest expected_size
+          for file in artifacts/*; do
+            name=$(basename "$file")
+            expected_digest["$name"]="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+            expected_size["$name"]=$(stat -c%s "$file")
+          done
+
+          failed=0
+
+          # Every artifact built by this run must be on the release with the
+          # same bytes and must have been uploaded by the release App.
+          for name in "${!expected_digest[@]}"; do
+            line=$(awk -F '\t' -v n="$name" '$1 == n { print; exit }' release-assets.tsv)
+            if [ -z "$line" ]; then
+              echo "::error::artifact $name is missing from release $TAG"
+              failed=1
+              continue
+            fi
+            IFS=$'\t' read -r aname adigest asize auploader <<< "$line"
+            if [ "$adigest" != "${expected_digest[$name]}" ]; then
+              echo "::error::$name digest is $adigest on the release, expected ${expected_digest[$name]}"
+              failed=1
+            fi
+            if [ "$asize" != "${expected_size[$name]}" ]; then
+              echo "::error::$name size is $asize on the release, expected ${expected_size[$name]}"
+              failed=1
+            fi
+            if [ "$auploader" != "$EXPECTED_UPLOADER" ]; then
+              echo "::error::$name was uploaded by '$auploader', expected '$EXPECTED_UPLOADER'"
+              failed=1
+            fi
+          done
+
+          # The reverse check catches assets added by hand after the workflow
+          # uploaded its own files, including same-named files with a new digest.
+          while IFS=$'\t' read -r aname adigest asize auploader; do
+            [ -n "$aname" ] || continue
+            if [ -z "${expected_digest[$aname]:-}" ]; then
+              echo "::error::release asset $aname was not built by this workflow"
+              failed=1
+            fi
+            if [ "$auploader" != "$EXPECTED_UPLOADER" ]; then
+              echo "::error::release asset $aname was uploaded by '$auploader', expected '$EXPECTED_UPLOADER'"
+              failed=1
+            fi
+          done < release-assets.tsv
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::release verification failed; assets on $TAG are not exactly the artifacts built by this workflow"
+            exit 1
+          fi
+          echo "Verified ${#expected_digest[@]} assets: digest, size and uploader ($EXPECTED_UPLOADER) all match"

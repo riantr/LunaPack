@@ -1,0 +1,67 @@
+name: Audit release assets
+
+# Daily guard for the CI-only release policy. The release workflow checks
+# digests and uploaders at publish time; this job re-reads the latest release
+# afterwards so an asset added by hand between runs is visible. It only needs
+# Contents: read and the expected App login as a repository variable.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Check latest release uploaders
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check audit configuration
+        shell: bash
+        env:
+          EXPECTED_UPLOADER: ${{ vars.RELEASE_APP_LOGIN }}
+        run: |
+          if [ -z "$EXPECTED_UPLOADER" ]; then
+            echo "::error::set the RELEASE_APP_LOGIN repository variable to <app-slug>[bot], for example lunapack-release[bot]"
+            exit 1
+          fi
+
+      - name: Audit the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_UPLOADER: ${{ vars.RELEASE_APP_LOGIN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag=$(gh release view --json tagName --jq .tagName)
+          rel_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
+          gh api "repos/$GITHUB_REPOSITORY/releases/$rel_id/assets" \
+            --jq '.[] | [.name, .uploader.login] | @tsv' \
+            > release-assets.tsv
+
+          failed=0
+          count=0
+          while IFS=$'\t' read -r name uploader; do
+            [ -n "$name" ] || continue
+            count=$((count + 1))
+            if [ "$uploader" != "$EXPECTED_UPLOADER" ]; then
+              echo "::error::$name on $tag was uploaded by '$uploader', expected '$EXPECTED_UPLOADER'"
+              failed=1
+            fi
+          done < release-assets.tsv
+
+          if [ "$count" -eq 0 ]; then
+            echo "::error::release $tag has no assets"
+            failed=1
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::release audit failed; remove the unapproved asset and re-run the release workflow"
+            exit 1
+          fi
+
+          echo "Audited $count assets on $tag: all uploaded by $EXPECTED_UPLOADER"
