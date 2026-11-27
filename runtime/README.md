@@ -185,7 +185,7 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
 | `lp_virt_set_cwd` | Set the directory used to resolve relative virtual paths. |
 | `lp_virt_add_alias` | Register a short-name alias (e.g. `progra~1` -> `program files`). |
 | `lp_virt_post_completion` | Post an overlapped completion record to the in-memory queue. |
-| `lp_install_iat_hooks` | Patch the 62 hooked IAT slots of an image base (55 Win32 + 7 ntdll), plus any oleaut32 slot imported by ordinal. Works for loaded and manually mapped images; also installs the L2.7 restricted CRT whitelist. |
+| `lp_install_iat_hooks` | Patch the 65 hooked IAT slots of an image base (58 Win32 + 7 ntdll), plus any oleaut32 slot imported by ordinal. Works for loaded and manually mapped images; also installs the L2.7 restricted CRT whitelist. |
 | `lp_patch_crt_iat` | L2.7: patch only the file-I/O slots of `ucrtbase.dll` and `msvcrt.dll` (loader/process/registry slots stay real). Returns the number of slots patched; runs once per process, and `lp_install_iat_hooks` calls it too. |
 | `lp_virt_exit_query` | Did a mapped image call ExitProcess, and with what code? Returns 1/0; writes the code to the given address. |
 | `lp_virt_set_temp_path` | Seed the virtual temp directory returned by GetTempPathW (UTF-16LE). Empty disables the override. |
@@ -291,9 +291,7 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
   (`CreateFile*`, `ReadFile`, `WriteFile`, `GetFileType`, `SearchPath*`, …)
   rewritten; loader, process and registry slots stay on the real APIs.
   `runtime/tests/crt_open.c` now reports `C-open result=OK` next to
-  `win32 result=OK`, including through the shipping virtual-bundle path. A
-  child `cmd.exe /c type <virtual file>` still fails earlier, at a resolution
-  step outside the CRT whitelist (L2.8, `GetFullPathNameW`-class).
+  `win32 result=OK`, including through the shipping virtual-bundle path.
   A virtual miss still falls through to the real API. Which modules matched and
   how many slots changed are counted in `lp_virt_lifecycle_stats` (`crtmods`,
   `crtslots`).
@@ -301,6 +299,12 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
   open: `cmd.exe` asks `SearchPathW` where a file lives, and a virtual answer
   includes the `lpFilePart` offset and the required length for a short buffer.
   A miss falls back to the real resolver.
+- **Canonicalization and wildcard expansion are hooked (L2.8).** `cmd.exe` also
+  calls `GetFullPathNameW` to normalize a `TYPE` argument and `FindFirstFileExW`
+  to expand it. The real `FindFirstFileExW` reports `ERROR_PATH_NOT_FOUND` (3)
+  when the parent exists only in the archive, which was the last reason a child
+  `cmd.exe /c type <virtual file>` failed after L2.6/L2.7. Both now answer from
+  the same virtual tree as `CreateFileW`, with a real-API fallback on a miss.
 - **COM components register and activate without administrator rights (L5).**
   The whole `HKCR` namespace (and both `Software\Classes` subtrees, which are
   folded onto `hkcr`) is owned by the hive, so `DllRegisterServer` writes land in
@@ -497,7 +501,7 @@ Two things are worth recording because they cost the most time:
 
 ### L6 re-measure (2026-11-23)
 
-Root tests **213/213**; runtime tests **49/49** (L2.6/L2.7 added three). All nine assertion scripts are
+Root tests **213/213**; runtime tests **50/50** (L2.6/L2.7 added three, L2.8 one more). All nine assertion scripts are
 green: `verify_virtual_bundle`, `verify_child_follow`, `verify_com_activation`,
 `verify_fallback_chain`, `verify_ntdll_spike`, `verify_pe_features`,
 `verify_thin_launcher`, `verify_zero_disk` (run last, because the consume demos
@@ -563,7 +567,7 @@ tries to simplify it:
 | `registry_nt.mbt` | L5: the native registry entry points (`NtOpenKey`, `NtQueryValueKey`, `NtQueryKey`) that combase uses alongside Win32. |
 | `typelib.mbt` | L5.6: reads a type library out of module bytes — the `TYPELIB` resource walk and the `MSFT` layout (segment directory, type-info records, GUID/name/string tables) — reduced to what a registration writes. |
 | `oleaut.mbt` | L5.6: the seven oleaut32 thunks, the `ITypeLib` object and its vtable, and the hive writes a registration produces. |
-| `state.mbt` | Lazy process-wide state, the 62-entry hook table, the L2.7 CRT module/API whitelists, and the ordinal table for libraries that export by number. |
+| `state.mbt` | Lazy process-wide state, the 65-entry hook table, the L2.7 CRT module/API whitelists, and the ordinal table for libraries that export by number. |
 | `entry.mbt` | L5.3: emits a `DllMain(base, DLL_PROCESS_ATTACH, NULL)` stub and has the system call it, for images the runtime maps itself. |
 | `iat.mbt` | In-process import address table patcher; also patches runtime-loaded modules, skipping Windows system DLLs except the L2.7 restricted CRT whitelist. |
 | `thunks.mbt` | The Win32-compatible C ABI thunks and management exports. |

@@ -184,6 +184,8 @@ pub fn thunk_exit_process(Int32) -> Unit
 
 pub fn thunk_find_first_file_a(Int64, Int64) -> Int64
 
+pub fn thunk_find_first_file_ex_w(Int64, Int32, Int64, Int32, Int64, Int32) -> Int64
+
 pub fn thunk_find_first_file_w(Int64, Int64) -> Int64
 
 pub fn thunk_find_next_file_a(Int64, Int64) -> Int32
@@ -203,6 +205,10 @@ pub fn thunk_get_file_information_by_handle(Int64, Int64) -> Int32
 pub fn thunk_get_file_size_ex(Int64, Int64) -> Int32
 
 pub fn thunk_get_file_type(Int64) -> Int32
+
+pub fn thunk_get_full_path_name_a(Int64, Int32, Int64, Int64) -> Int32
+
+pub fn thunk_get_full_path_name_w(Int64, Int32, Int64, Int64) -> Int32
 
 pub fn thunk_get_module_file_name_w(Int64, Int64, Int32) -> Int32
 
@@ -420,6 +426,7 @@ pub fn Vfs::export_blob(Self, VirtualRegistry) -> Bytes
 pub fn Vfs::file_info(Self, Int64) -> FileInfo?
 pub fn Vfs::find_first(Self, String) -> (Int64, String)?
 pub fn Vfs::find_next(Self, Int64) -> String?
+pub fn Vfs::full_path(Self, String) -> String?
 pub fn Vfs::import_blob(Self, VirtualRegistry, Bytes) -> Bool
 pub fn Vfs::is_find_handle(Self, Int64) -> Bool
 pub fn Vfs::new() -> Self

@@ -61,9 +61,31 @@ test "L2.6 hook table registers both SearchPath forms" {
       ansi = true
     }
   }
-  assert_true(count == 62)
+  assert_true(count == 65)
   assert_true(wide)
   assert_true(ansi)
+  assert_true(
+    lookup_thunk("GetFullPathNameW").unwrap() == "lp_get_full_path_name_w",
+  )
+  assert_true(
+    lookup_thunk("GetFullPathNameA").unwrap() == "lp_get_full_path_name_a",
+  )
+  assert_true(
+    lookup_thunk("FindFirstFileExW").unwrap() == "lp_find_first_file_ex_w",
+  )
+}
+
+///|
+test "L2.8 GetFullPathName canonicalizes virtual paths only" {
+  let v = Vfs::new()
+  v.add_file("C:\\virt\\hello.txt", ascii_bytes("VIRTUAL-FS-OK"))
+  v.set_cwd("C:\\work")
+  assert_true(v.full_path("c:/virt/./hello.txt") == Some("C:\\virt\\hello.txt"))
+  // An owned directory is canonicalized too, even before a file is added under it.
+  assert_true(v.full_path("C:\\virt") == Some("C:\\virt"))
+  // A host path must reach the real API so relative paths keep the real CWD.
+  assert_true(v.full_path("C:\\Windows\\System32\\cmd.exe") is None)
+  assert_true(v.full_path("") is None)
 }
 
 ///|
@@ -89,7 +111,8 @@ test "L2.7 CRT API whitelist is file I/O only" {
     name in [
       "CreateFileW", "CreateFileA", "ReadFile", "WriteFile", "CloseHandle", "GetFileSizeEx",
       "GetFileType", "SetFilePointerEx", "GetFileAttributesW", "GetFileAttributesExW",
-      "FindFirstFileW", "FindNextFileW", "SearchPathW", "SearchPathA",
+      "FindFirstFileW", "FindFirstFileExW", "FindNextFileW", "SearchPathW", "SearchPathA",
+      "GetFullPathNameW", "GetFullPathNameA",
     ] {
     assert_true(string_in(apis, name))
   }

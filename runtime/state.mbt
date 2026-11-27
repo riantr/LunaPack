@@ -304,6 +304,13 @@ fn hook_table() -> Array[(String, String)] {
     // reported as missing even though the open side is virtualized.
     ("SearchPathW", "lp_search_path_w"),
     ("SearchPathA", "lp_search_path_a"),
+    // L2.8: normalization and enumeration before open. cmd.exe expands a TYPE
+    // argument with FindFirstFileExW and canonicalizes it with GetFullPathNameW;
+    // without these slots a virtual-only path reports ERROR_PATH_NOT_FOUND (3)
+    // although GetFileAttributesW and CreateFileW already answer for it.
+    ("GetFullPathNameW", "lp_get_full_path_name_w"),
+    ("GetFullPathNameA", "lp_get_full_path_name_a"),
+    ("FindFirstFileExW", "lp_find_first_file_ex_w"),
     ("FindFirstFileA", "lp_find_first_file_a"),
     ("FindNextFileA", "lp_find_next_file_a"),
     ("DeleteFileA", "lp_delete_file_a"),
@@ -391,6 +398,9 @@ fn crt_api_whitelist() -> Array[String] {
     "GetFileAttributesExW", "GetFileAttributesExA", "FindFirstFileW", "FindFirstFileA",
     "FindNextFileW", "FindNextFileA", "DeleteFileW", "DeleteFileA", "MoveFileExW",
     "MoveFileExA", "SearchPathW", "SearchPathA", "GetTempPathW",
+    // L2.8: the same resolution steps the CRT takes before CreateFileW. Every
+    // one of these falls through to the real API on a virtual miss.
+     "GetFullPathNameW", "GetFullPathNameA", "FindFirstFileExW",
   ]
 }
 

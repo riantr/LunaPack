@@ -66,7 +66,39 @@ extern "C" fn real_get_file_type(handle : Int64) -> Int32 = "GetFileType"
 extern "C" fn real_find_first_file_w(path : Int64, data : Int64) -> Int64 = "FindFirstFileW"
 
 ///|
+/// L2.8: cmd.exe expands a TYPE argument through FindFirstFileExW before it
+/// opens the file. On a virtual-only path the real API answers ERROR_PATH_NOT_FOUND
+/// because the parent directory exists only in the archive.
+extern "C" fn real_find_first_file_ex_w(
+  path : Int64,
+  level : Int32,
+  data : Int64,
+  search_op : Int32,
+  filter : Int64,
+  flags : Int32,
+) -> Int64 = "FindFirstFileExW"
+
+///|
 extern "C" fn real_find_next_file_w(handle : Int64, data : Int64) -> Int32 = "FindNextFileW"
+
+///|
+/// L2.8: canonicalization before open. A virtual path has to come back from
+/// GetFullPathName in the same form CreateFileW will accept, or a program that
+/// normalizes its arguments resolves to a host path the layer does not own.
+extern "C" fn real_get_full_path_name_w(
+  path : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 = "GetFullPathNameW"
+
+///|
+extern "C" fn real_get_full_path_name_a(
+  path : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 = "GetFullPathNameA"
 
 ///|
 extern "C" fn real_reg_open_key_ex_w(
@@ -804,6 +836,119 @@ pub fn thunk_search_path_a(
       )
     }
   }
+}
+
+///|
+/// L2.8: FindFirstFileExW, the extended form cmd.exe uses to expand a TYPE
+/// argument. The search operation and extra flags are irrelevant to an exact
+/// virtual name (or to a wildcard over the in-memory tree), so the same VFS
+/// enumeration as FindFirstFileW serves both. A miss still reaches the real
+/// API and keeps host files visible.
+#export_name("lp_find_first_file_ex_w")
+pub fn thunk_find_first_file_ex_w(
+  path : Int64,
+  level : Int32,
+  data : Int64,
+  search_op : Int32,
+  filter : Int64,
+  flags : Int32,
+) -> Int64 {
+  let v = state_vfs()
+  match v.find_first(wide_to_string(path)) {
+    Some((h, name)) => {
+      hit("FindFirstFileExW")
+      fill_find_data(data, name)
+      set_last_error(ERROR_SUCCESS)
+      h
+    }
+    None => {
+      v.note_fallback()
+      real_find_first_file_ex_w(path, level, data, search_op, filter, flags)
+    }
+  }
+}
+
+///|
+/// L2.8: GetFullPathNameW on a virtual path. Same buffer contract as the real
+/// API: the required length is returned even when the buffer is too small, and
+/// lpFilePart points into the written buffer. A non-virtual path falls through.
+#export_name("lp_get_full_path_name_w")
+pub fn thunk_get_full_path_name_w(
+  path : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 {
+  let v = state_vfs()
+  match v.full_path(wide_to_string(path)) {
+    Some(found) => {
+      hit("GetFullPathNameW")
+      emit_full_path(found, n_buffer, buffer, file_part, true)
+    }
+    None => {
+      v.note_fallback()
+      real_get_full_path_name_w(path, n_buffer, buffer, file_part)
+    }
+  }
+}
+
+///|
+/// ANSI form of GetFullPathName. The VFS is ASCII-only; the output encoding is
+/// the only difference.
+#export_name("lp_get_full_path_name_a")
+pub fn thunk_get_full_path_name_a(
+  path : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 {
+  let v = state_vfs()
+  match v.full_path(ansi_to_string(path)) {
+    Some(found) => {
+      hit("GetFullPathNameA")
+      emit_full_path(found, n_buffer, buffer, file_part, false)
+    }
+    None => {
+      v.note_fallback()
+      real_get_full_path_name_a(path, n_buffer, buffer, file_part)
+    }
+  }
+}
+
+///|
+fn emit_full_path(
+  found : String,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+  wide : Bool,
+) -> Int32 {
+  let n = found.length()
+  let need = n + 1
+  if n_buffer < need {
+    if file_part != 0L {
+      poke_bytes(file_part, u64le(0L), 8)
+    }
+    return need
+  }
+  if buffer != 0L {
+    if wide {
+      poke_bytes(buffer, utf16le(found), need * 2)
+    } else {
+      poke_bytes(buffer, ascii_bytes(found), n)
+      poke_bytes(buffer + n.to_int64(), Bytes::make(1, b'\x00'), 1)
+    }
+  }
+  if file_part != 0L && buffer != 0L {
+    let offset = if wide {
+      path_file_part(found) * 2
+    } else {
+      path_file_part(found)
+    }
+    poke_bytes(file_part, u64le(buffer + offset.to_int64()), 8)
+  }
+  set_last_error(ERROR_SUCCESS)
+  n
 }
 
 ///|

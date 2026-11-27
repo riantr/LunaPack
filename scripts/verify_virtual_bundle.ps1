@@ -588,11 +588,12 @@ try {
   Check ($crtLog -match 'crtmods=2') 'both CRT modules matched the whitelist'
   Check ($crtLog -match 'crtslots=([1-9]\d*)') 'at least one CRT file slot was patched'
 
-  Write-Host "==> L2.6 path resolution (child cmd.exe read still gated by L2.8)"
-  # SearchPathW is how cmd.exe resolves a name before opening it. The Win32
-  # open side and CRT stdio are virtualized, but cmd /c type still resolves
-  # through an unhooked API (GetFullPathNameW-class), so this last assertion
-  # stays red until L2.8 closes that gap.
+  Write-Host "==> L2.6/L2.8 path resolution and the child cmd.exe read"
+  # SearchPathW is how cmd.exe resolves a name before opening it; L2.8 adds
+  # GetFullPathNameW/A and FindFirstFileExW, the canonicalization and wildcard
+  # expansion steps that used to send a virtual-only path to the real disk.
+  # The open side and CRT stdio are virtualized as well, so the last assertion
+  # is an end-to-end proof rather than a known-gap marker.
   $searchExit = RunChecked $searchBundle @() $searchOut
   $searchLog = ReadOut $searchOut
   Write-Host $searchLog
@@ -604,6 +605,8 @@ try {
   Check ($searchLog -match 'SEARCH-A part=OK') 'SearchPathA filled lpFilePart inside the buffer'
   Check ($searchLog -match 'SEARCH-W real=OK') 'SearchPathW still resolves a real system DLL'
   Check ($searchLog -match 'SEARCH-W read=OK') 'the path from SearchPathW opens through CreateFileW'
+  Check ($searchLog -match 'L28-FULL hit=OK') 'GetFullPathNameW canonicalizes a virtual path (L2.8)'
+  Check ($searchLog -match 'L28-FIND hit=OK') 'FindFirstFileExW enumerates a virtual file (L2.8)'
 
   $cmdSearchExit = RunChecked $cmdSearchBundle @() $cmdSearchOut
   $cmdSearchLog = ReadOut $cmdSearchOut
@@ -611,7 +614,7 @@ try {
   Check ($cmdSearchExit -eq 0) "child cmd.exe probe exit code 0 (got $cmdSearchExit)"
   Check ($cmdSearchLog -match 'CMD-PROBE control=OK') 'child cmd.exe started and ran an echo control'
   Check ($cmdSearchLog -match 'CMD-PROBE exist=OK') 'child cmd.exe sees the virtual file through GetFileAttributesW'
-  Check ($cmdSearchLog -match 'VIRTUAL-FS-OK') 'child cmd.exe read the virtual file (L2.7 CRT stdio)'
+  Check ($cmdSearchLog -match 'VIRTUAL-FS-OK') 'child cmd.exe read the virtual file (L2.8 resolution + CRT stdio)'
   Check ($cmdSearchLog -match 'CMD-PROBE child=OK code=0') 'child cmd.exe exited successfully'
 
   Write-Host "==> no-payload-on-disk and AV invariants"

@@ -1,15 +1,17 @@
-/* L2.6 negative fixture: does path resolution reach the virtual filesystem?
+/* L2.6/L2.8 fixture: does path resolution reach the virtual filesystem?
  *
- * A mapped program can open C:\virt\hello.txt through CreateFileW today. The
- * same path asked of SearchPathW still fails, because cmd.exe resolves a path
- * before it opens it and SearchPathW is not in hook_table(). This probe is
- * built without the CRT so the only thing under test is the Win32 boundary.
+ * A mapped program can open C:\virt\hello.txt through CreateFileW. Resolving
+ * the same name used to fail because cmd.exe asks SearchPathW, GetFullPathNameW
+ * and FindFirstFileExW before it opens. All three are now hooked; this probe
+ * is built without the CRT so the only thing under test is the Win32 boundary.
  *
- * It checks four properties of the W and A forms:
- *   - a virtual absolute path resolves to a usable path
+ * It checks:
+ *   - SearchPathW/A resolve a virtual absolute path to a usable path
  *   - lpFilePart points at the file name inside the returned buffer
  *   - a too-small buffer returns the required size, as Win32 does
  *   - a real system DLL still resolves through the unhooked fallback
+ *   - GetFullPathNameW canonicalizes a virtual path the way CreateFileW wants it
+ *   - FindFirstFileExW enumerates a virtual exact name instead of error 3
  */
 #include <windows.h>
 
@@ -126,6 +128,44 @@ int __cdecl searchpath_main(void) {
       put(out, "SEARCH-W real=OK\n", 17);
     } else {
       put(out, "SEARCH-W real=FAIL\n", 19);
+      ok = 0;
+    }
+  }
+
+  /* L2.8 canonicalization: the mixed-separator, dot-segment spelling has to
+   * come back as the same path CreateFileW and SearchPathW already accept. */
+  {
+    WCHAR full[256];
+    WCHAR *fpart = NULL;
+    DWORD fn;
+    for (i = 0; i < 256; i++) full[i] = 0;
+    fn = GetFullPathNameW(L"c:/virt/./hello.txt", 256, full, &fpart);
+    if (fn == 17 && equal_w(full, wanted, 17) &&
+        fpart >= full && fpart < full + 256 && (DWORD)(fpart - full) == 8) {
+      put(out, "L28-FULL hit=OK\n", 16);
+    } else {
+      put(out, "L28-FULL hit=FAIL n=", 20);
+      putn(out, fn);
+      put(out, "\n", 1);
+      ok = 0;
+    }
+  }
+
+  /* L2.8 enumeration: cmd.exe expands a TYPE argument with FindFirstFileExW
+   * before CreateFileW. The real API answers ERROR_PATH_NOT_FOUND (3) when the
+   * parent exists only in the archive. */
+  {
+    WIN32_FIND_DATAW fd;
+    HANDLE h;
+    for (i = 0; i < (int)sizeof(fd); i++) ((char *)&fd)[i] = 0;
+    h = FindFirstFileExW(wanted, (FINDEX_INFO_LEVELS)0, &fd,
+                         (FINDEX_SEARCH_OPS)0, NULL, 0);
+    if (h != INVALID_HANDLE_VALUE && equal_w(fd.cFileName, leaf, 9)) {
+      put(out, "L28-FIND hit=OK\n", 16);
+    } else {
+      put(out, "L28-FIND hit=FAIL err=", 22);
+      putn(out, (unsigned long)GetLastError());
+      put(out, "\n", 1);
       ok = 0;
     }
   }

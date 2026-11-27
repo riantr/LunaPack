@@ -446,16 +446,17 @@ proxy to `@http` instead of opening the connection itself (see below).
   tunnel itself is not covered by an automated test.
 
 - **What this release does not claim.** `--virtual` remains a **Tier A preview**.
-  Two resolution/I/O limits used to be pinned here and are now closed: L2.6
-  hooked `SearchPathW`/`SearchPathA`, and L2.7 patched a restricted file-I/O
-  whitelist into `msvcrt`/`ucrtbase` (loader and process slots stay real).
-  `runtime/tests/crt_open.c` now reports both `CreateFileW` and `fopen` as OK;
-  a child `cmd.exe /c type` still stops at a resolution API outside the CRT
-  whitelist (L2.8), not at stdio.
+  Three resolution/I/O limits used to be pinned here and are now closed: L2.6
+  hooked `SearchPathW`/`SearchPathA`, L2.7 patched a restricted file-I/O
+  whitelist into `msvcrt`/`ucrtbase` (loader and process slots stay real), and
+  L2.8 added `GetFullPathNameW`/`A` plus `FindFirstFileExW` so cmd.exe can
+  canonicalize and expand a virtual name before opening it.
+  `runtime/tests/crt_open.c` reports both `CreateFileW` and `fopen` as OK, and a
+  child `cmd.exe /c type` reads the virtual file end to end.
 
   The Tier B matrix of three real programs is still **not** satisfied: x86 is a
-  toolchain NO-GO and the remaining unhooked APIs (e.g. `GetFullPathNameW`,
-  `CreateDirectoryW`, `FindFirstFileExW`) are logged as L2.8 in
+  toolchain NO-GO and the remaining unhooked APIs (e.g. `CreateDirectoryW`,
+  `RemoveDirectoryW`, `CreateFileMappingW`) are logged as L2.8 in
   `runtime/tests/corpus/README.md`.
   A passing Tier A fixture is not a passing Tier B program, and this release does
   not present it as one.
@@ -2067,7 +2068,7 @@ What it currently does, end to end and in one process:
   layer. A path that exists in neither is handed to the real API, so an
   ordinary "file not found" still arrives where the caller expects it.
 
-Two limits used to be measured here and are now closed (both assertions were
+Three limits used to be measured here and are now closed (the assertions were
 flipped with them in `scripts/verify_virtual_bundle.ps1`):
 
 - **CRT stdio reaches the layer (L2.7).** `fopen` lives in `msvcrt`/`ucrtbase`,
@@ -2078,8 +2079,12 @@ flipped with them in `scripts/verify_virtual_bundle.ps1`):
   `crtmods=2 crtslots=N`.
 - **`SearchPathW`/`SearchPathA` are hooked (L2.6).** `cmd.exe` resolves a name
   before starting it; the virtual answer now also fills `lpFilePart` and
-  reports the needed length for a short buffer. `cmd /c type` still needs an
-  L2.8 resolution API, so that last verifier line remains red.
+  reports the needed length for a short buffer.
+- **Canonicalization and expansion are hooked (L2.8).** `GetFullPathNameW`/`A`
+  return a virtual path in the form `CreateFileW` accepts, and
+  `FindFirstFileExW` enumerates a virtual exact name instead of answering
+  `ERROR_PATH_NOT_FOUND` (3). These were the two APIs that kept a child
+  `cmd.exe /c type` red after L2.6 and L2.7; the last verifier line is green.
 - **A `--virtual` bundle can be signed, and the reader is what makes that
   possible.** The archive footer used to be read from the last 24 bytes of the
   file, and an Authenticode certificate table is appended exactly there, so

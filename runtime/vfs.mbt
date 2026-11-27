@@ -369,6 +369,24 @@ pub fn Vfs::search_virtual(
 }
 
 ///|
+/// L2.8: canonicalize a virtual path the way GetFullPathName would, using the
+/// same resolver as SearchPath and CreateFile so a name returning from one API
+/// is accepted by the next. A path outside the virtual tree returns `None` so
+/// the caller can ask the real API instead; that keeps real relative paths
+/// anchored at the real process CWD.
+pub fn Vfs::full_path(self : Self, path : String) -> String? {
+  if path.length() == 0 {
+    return None
+  }
+  let p = self.resolve(path)
+  if owned(self, p) {
+    Some(display_path(p))
+  } else {
+    None
+  }
+}
+
+///|
 fn wildcard_match(name : String, pat : String) -> Bool {
   if pat == "*" || pat == "" {
     return true

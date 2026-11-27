@@ -52,6 +52,9 @@ EXPORTS
   lp_get_file_attributes_ex_a
   lp_search_path_w
   lp_search_path_a
+  lp_get_full_path_name_w
+  lp_get_full_path_name_a
+  lp_find_first_file_ex_w
   lp_find_first_file_a
   lp_find_next_file_a
   lp_delete_file_a
