@@ -201,6 +201,105 @@ jobs:
         run: ./scripts/verify_virtual_bundle.ps1
 
   # ---------------------------------------------------------------------------
+  # The remaining Windows invariants, all of which used to be exercised only
+  # on a developer machine. They share one dist produced by the runtime build
+  # script, so the order below is deliberate:
+  #
+  #   - fallback_chain needs ntdll_target.exe, so it runs before ntdll_spike
+  #     deletes that fixture;
+  #   - each --consume step deletes a different fixture (mini_target.exe,
+  #     ntdll_target.exe, com_server.dll), so none of them starves a later
+  #     verifier;
+  #   - zero_disk is NOT here: like fallback_chain it consumes payload.dll,
+  #     and it gets its own job with a fresh dist below.
+  #
+  # The verifiers run under Windows PowerShell 5.1, the shell they were
+  # authored and validated against. Only the build step uses pwsh: the build
+  # script re-quotes native arguments in a way that is correct there.
+  # ---------------------------------------------------------------------------
+  runtime-verifiers:
+    name: Runtime invariants (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit
+        shell: pwsh
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # No -Consume: the harnesses run but every fixture stays on disk for the
+      # verifiers below.
+      - name: Build the runtime, launcher and C fixtures
+        shell: pwsh
+        run: ./scripts/build_runtime_windows.ps1
+
+      - name: L4 child-process following
+        shell: powershell
+        run: ./scripts/verify_child_follow.ps1
+
+      - name: L3 PE-loader completeness
+        shell: powershell
+        run: ./scripts/verify_pe_features.ps1
+
+      - name: L2.5 fallback-chain integrity
+        shell: powershell
+        run: ./scripts/verify_fallback_chain.ps1
+
+      - name: L2.3 ntdll-boundary spike
+        shell: powershell
+        run: ./scripts/verify_ntdll_spike.ps1
+
+      - name: L5 COM activation
+        shell: powershell
+        run: ./scripts/verify_com_activation.ps1
+
+      - name: L2.0 thin launcher
+        shell: powershell
+        run: ./scripts/verify_thin_launcher.ps1
+
+      - name: Static-analysis gate
+        shell: powershell
+        run: ./scripts/verify_static_analysis.ps1
+
+  # ---------------------------------------------------------------------------
+  # zero_disk consumes payload.dll, which the fallback-chain verifier above
+  # also consumes; a fresh build is the only way to run both gates honestly.
+  # ---------------------------------------------------------------------------
+  zero-disk-verifier:
+    name: Zero-disk invariant (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit
+        shell: pwsh
+        env:
+          MOONBIT_INSTALL_VERSION: ${{ vars.MOONBIT_VERSION }}
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build the runtime, launcher and C fixtures
+        shell: pwsh
+        run: ./scripts/build_runtime_windows.ps1
+
+      - name: L0.3 zero-disk invariant
+        shell: powershell
+        run: ./scripts/verify_zero_disk.ps1
+
+  # ---------------------------------------------------------------------------
   # The source must be formatted and its generated interface up to date.
   # ---------------------------------------------------------------------------
   verify:
