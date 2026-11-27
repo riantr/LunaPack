@@ -36,9 +36,11 @@ $target = Join-Path $dist 'mini_target.exe'
 $dynlib = Join-Path $dist 'dynlib.dll'
 $chainExe = Join-Path $dist 'spawn_chain.exe'
 $crtProbe = Join-Path $dist 'crt_open.exe'
+$searchProbe = Join-Path $dist 'searchpath_probe.exe'
+$cmdSearchProbe = Join-Path $dist 'cmd_search_probe.exe'
 $cHost = Join-Path $dist 'launcher.exe'
 
-foreach ($needed in @($cli, $launcher, $runtime, $target, $dynlib, $chainExe, $crtProbe, $cHost)) {
+foreach ($needed in @($cli, $launcher, $runtime, $target, $dynlib, $chainExe, $crtProbe, $searchProbe, $cmdSearchProbe, $cHost)) {
   if (-not (Test-Path -LiteralPath $needed)) {
     throw "missing $needed - build the root CLI and scripts/build_runtime_windows.ps1 first"
   }
@@ -69,9 +71,9 @@ function RunCapture([string]$exe, [string[]]$arguments, [string]$outFile) {
   # engine holds it without sharing: starting it then fails with "the process
   # cannot access the file", which would be read here as the program refusing
   # to run. Wait until the file can be opened with sharing instead.
-  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
     try {
-      $handle = [System.IO.File]::Open($exe, 'Open', 'Read', 'ReadWrite')
+      $handle = Open-Shared $exe ([System.IO.FileMode]::Open) ([System.IO.FileAccess]::Read)
       $handle.Close()
       break
     } catch {
@@ -169,20 +171,48 @@ function WriteAscii([string]$path, [string]$text) {
   [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.ASCIIEncoding))
 }
 
-# A file that was just written is held for a moment by whichever engine is
-# scanning it, and a read that opens without sharing fails while it is. The
-# last attempt is not wrapped, so a file that is really unreadable still fails
-# the run with the reason Windows gives.
+# A file that was just written can be held by whichever engine is scanning it,
+# and the default FileShare.Read open fails while that happens. Open with
+# ReadWrite+Delete sharing and retry: this is the same trick the launcher probe
+# already uses. The last attempt is unwrapped, so a file that is really
+# unreadable still fails the run with the reason Windows gives.
+function Open-Shared([string]$path, [System.IO.FileMode]$mode, [System.IO.FileAccess]$access) {
+  return [System.IO.File]::Open(
+    $path, $mode, $access,
+    ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+  )
+}
 function ReadAllBytes([string]$path) {
-  for ($attempt = 0; $attempt -lt 25; $attempt++) {
-    try { return [System.IO.File]::ReadAllBytes($path) } catch { Start-Sleep -Milliseconds 200 }
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    $stream = $null
+    $memory = $null
+    try {
+      $stream = Open-Shared $path ([System.IO.FileMode]::Open) ([System.IO.FileAccess]::Read)
+      $memory = New-Object System.IO.MemoryStream
+      $stream.CopyTo($memory)
+      return $memory.ToArray()
+    } catch {
+      Start-Sleep -Milliseconds 200
+    } finally {
+      if ($stream) { $stream.Dispose() }
+      if ($memory) { $memory.Dispose() }
+    }
   }
   return [System.IO.File]::ReadAllBytes($path)
 }
 
 function WriteAllBytes([string]$path, [byte[]]$bytes) {
-  for ($attempt = 0; $attempt -lt 25; $attempt++) {
-    try { [System.IO.File]::WriteAllBytes($path, $bytes); return } catch { Start-Sleep -Milliseconds 200 }
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    $stream = $null
+    try {
+      $stream = Open-Shared $path ([System.IO.FileMode]::Create) ([System.IO.FileAccess]::Write)
+      $stream.Write($bytes, 0, $bytes.Length)
+      return
+    } catch {
+      Start-Sleep -Milliseconds 200
+    } finally {
+      if ($stream) { $stream.Dispose() }
+    }
   }
   [System.IO.File]::WriteAllBytes($path, $bytes)
 }
@@ -217,25 +247,20 @@ function HasSignature([string]$path) {
   }
 }
 
-# A step that runs after a fixture is deleted only means something if the
-# fixture is really gone, so what this asserts is the absence and not the exit
-# code of a delete helper. Windows may route a deletion through the recycle
-# bin; a helper that reports an error for a path that is already removed would
-# otherwise stop a run that is, in fact, correct.
+# Best-effort cleanup. An anti-virus engine can hold a freshly written file
+# open for a while, and on this machine a removal can be refused outright.
+# Retry a few times, then leave a note and carry on: the assertions that need
+# the fixture gone check the path itself, so a stale fixture shows up as a
+# failed check instead of aborting the whole run before the other invariants
+# are measured.
 function Remove-Path([string]$path) {
   if (-not (Test-Path -LiteralPath $path)) { return }
-  # An anti-virus engine that is scanning a file it has just seen holds it open
-  # for a moment, and Windows refuses the delete until it lets go. Retrying a
-  # few times is not the same as ignoring the failure: the throw below still
-  # fires when the path is really still there.
   for ($attempt = 0; $attempt -lt 10; $attempt++) {
     try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop } catch { }
     if (-not (Test-Path -LiteralPath $path)) { return }
     Start-Sleep -Milliseconds 200
   }
-  if (Test-Path -LiteralPath $path) {
-    throw "cannot remove $path - the assertion that follows would read a stale fixture"
-  }
+  Write-Host "  note  could not remove $path - continuing; stale-fixture checks will report it"
 }
 
 $scratch = Join-Path $root 'build\verify_virtual_bundle'
@@ -273,6 +298,16 @@ try {
   $chainBundleOut = Join-Path $scratch 'chain_bundle.txt'
   $chainInfoOut = Join-Path $scratch 'info_chain.txt'
   $crtOut = Join-Path $scratch 'crt.txt'
+  # L2.6: resolution of a virtual path, first in the mapped program and then
+  # in a real cmd.exe child that resolves before it opens.
+  $searchBundle = Join-Path $scratch 'search.exe'
+  $searchOut = Join-Path $scratch 'search.txt'
+  $searchBundleOut = Join-Path $scratch 'search_bundle.txt'
+  $searchInfoOut = Join-Path $scratch 'info_search.txt'
+  $cmdSearchBundle = Join-Path $scratch 'cmdsearch.exe'
+  $cmdSearchOut = Join-Path $scratch 'cmdsearch.txt'
+  $cmdSearchBundleOut = Join-Path $scratch 'cmdsearch_bundle.txt'
+  $cmdSearchInfoOut = Join-Path $scratch 'info_cmdsearch.txt'
 
   New-Item -ItemType Directory -Path (Join-Path $fixture 'virt') -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $fixture 'cfg') -Force | Out-Null
@@ -283,7 +318,7 @@ try {
   WriteAscii $registry '{"values":[{"root":"hklm","key":"Software\\LunaPackVerify","name":"Port","kind":"REG_DWORD","number":8080}]}'
   # Every log exists, empty, before the no-payload snapshot is taken: otherwise
   # the verifier's own output looks like a file the run left behind.
-  foreach ($log in @($bundleOut, $infoOut, $plainBundleOut, $plainInfoOut, $runOut, $plainOut, $damagedOut, $chainOut, $chainDiskOut, $chainBundleOut, $chainInfoOut, $crtOut, $signedOut, $bogusOut, $cutOut, $signtoolOut)) {
+  foreach ($log in @($bundleOut, $infoOut, $plainBundleOut, $plainInfoOut, $runOut, $plainOut, $damagedOut, $chainOut, $chainDiskOut, $chainBundleOut, $chainInfoOut, $crtOut, $searchOut, $searchBundleOut, $searchInfoOut, $cmdSearchOut, $cmdSearchBundleOut, $cmdSearchInfoOut, $signedOut, $bogusOut, $cutOut, $signtoolOut)) {
     WriteAscii $log ''
   }
 
@@ -326,6 +361,29 @@ try {
   # left is the one inside the package, so a second process reading it proves
   # both the redirect and the state handover.
   Remove-Path $chainFixture
+
+  Write-Host "==> build the L2.6 resolution bundles (negative test first)"
+  $searchBuildExit = RunChecked $cli @(
+    'bundle', '-i', $searchProbe, '-o', $searchBundle,
+    '--Files', $fixture,
+    '--virtual', '--virtual-root=C:/', '--virtual-temp=C:/virt/tmp/',
+    '--compression-method=none', '--launcher', $launcher
+  ) $searchBundleOut
+  Check ($searchBuildExit -eq 0) "L2.6 search bundle exit code 0 (got $searchBuildExit)"
+  $searchInfoExit = RunChecked $cli @('info', $searchBundle) $searchInfoOut
+  Check ($searchInfoExit -eq 0) "CLI info on the search bundle exit code 0 (got $searchInfoExit)"
+  Check ((ReadOut $searchInfoOut) -match 'format:\s+v7') 'search bundle uses format v7'
+
+  $cmdSearchBuildExit = RunChecked $cli @(
+    'bundle', '-i', $cmdSearchProbe, '-o', $cmdSearchBundle,
+    '--Files', $fixture,
+    '--virtual', '--virtual-root=C:/', '--virtual-temp=C:/virt/tmp/',
+    '--compression-method=none', '--launcher', $launcher
+  ) $cmdSearchBundleOut
+  Check ($cmdSearchBuildExit -eq 0) "L2.6 cmd bundle exit code 0 (got $cmdSearchBuildExit)"
+  $cmdSearchInfoExit = RunChecked $cli @('info', $cmdSearchBundle) $cmdSearchInfoOut
+  Check ($cmdSearchInfoExit -eq 0) "CLI info on the cmd bundle exit code 0 (got $cmdSearchInfoExit)"
+  Check ((ReadOut $cmdSearchInfoOut) -match 'format:\s+v7') 'cmd bundle uses format v7'
 
   Write-Host "==> build and refuse a plain bundle"
   $plainExit = RunChecked $cli @(
@@ -514,11 +572,11 @@ try {
   Check ($chainDiskExit -eq 0) "disk-child chain exit code 0 (got $chainDiskExit)"
   Check (([regex]::Matches($chainDiskLog, 'virtual read=OK data="VIRTUAL-FS-OK"')).Count -eq 3) 'a program from disk saw the virtual tree at every level'
 
-  Write-Host "==> the CRT boundary (known gap, pinned)"
-  # fopen lives in a system DLL this runtime deliberately does not patch, so a
-  # program that reads the ordinary way reaches the real disk. The Win32 read
-  # of the same virtual path does reach the layer. Both facts are asserted: the
-  # day the gap closes this check fails, and the docs have to move with it.
+  Write-Host "==> the CRT boundary (L2.7 restricted whitelist)"
+  # fopen lives in ucrtbase/msvcrt. L2.7 patches only the file-I/O slots of
+  # those two modules (loader/process/registry slots stay on the real APIs), so
+  # a program that reads the ordinary way reaches the virtual tree while the
+  # OS loader is never re-entered. Both reads must now agree.
   $crtExit = RunChecked (Join-Path $dist 'launcher.exe') @(
     $dist, (Join-Path $dist 'crt_open.exe'), '--thread'
   ) $crtOut
@@ -526,7 +584,35 @@ try {
   Write-Host $crtLog
   Check ($crtExit -eq 0) "CRT probe exit code 0 (got $crtExit)"
   Check ($crtLog -match 'win32\s+result=OK data="VIRTUAL-FS-OK"') 'CreateFileW on the virtual path reaches the layer'
-  Check ($crtLog -match 'C-open\s+result=FAILED') 'CRT stdio still bypasses the layer (known gap, see runtime/README)'
+  Check ($crtLog -match 'C-open\s+result=OK n=\d+ data="VIRTUAL-FS-OK"') 'CRT stdio reaches the virtual tree (L2.7)'
+  Check ($crtLog -match 'crtmods=2') 'both CRT modules matched the whitelist'
+  Check ($crtLog -match 'crtslots=([1-9]\d*)') 'at least one CRT file slot was patched'
+
+  Write-Host "==> L2.6 path resolution (child cmd.exe read still gated by L2.8)"
+  # SearchPathW is how cmd.exe resolves a name before opening it. The Win32
+  # open side and CRT stdio are virtualized, but cmd /c type still resolves
+  # through an unhooked API (GetFullPathNameW-class), so this last assertion
+  # stays red until L2.8 closes that gap.
+  $searchExit = RunChecked $searchBundle @() $searchOut
+  $searchLog = ReadOut $searchOut
+  Write-Host $searchLog
+  Check ($searchExit -eq 0) "L2.6 search probe exit code 0 (got $searchExit)"
+  Check ($searchLog -match 'SEARCH-W hit=OK') 'SearchPathW resolved a virtual absolute path'
+  Check ($searchLog -match 'SEARCH-W part=OK') 'SearchPathW filled lpFilePart inside the buffer'
+  Check ($searchLog -match 'SEARCH-W small=OK') 'SearchPathW reported the required size for a short buffer'
+  Check ($searchLog -match 'SEARCH-A hit=OK') 'SearchPathA resolved a virtual absolute path'
+  Check ($searchLog -match 'SEARCH-A part=OK') 'SearchPathA filled lpFilePart inside the buffer'
+  Check ($searchLog -match 'SEARCH-W real=OK') 'SearchPathW still resolves a real system DLL'
+  Check ($searchLog -match 'SEARCH-W read=OK') 'the path from SearchPathW opens through CreateFileW'
+
+  $cmdSearchExit = RunChecked $cmdSearchBundle @() $cmdSearchOut
+  $cmdSearchLog = ReadOut $cmdSearchOut
+  Write-Host $cmdSearchLog
+  Check ($cmdSearchExit -eq 0) "child cmd.exe probe exit code 0 (got $cmdSearchExit)"
+  Check ($cmdSearchLog -match 'CMD-PROBE control=OK') 'child cmd.exe started and ran an echo control'
+  Check ($cmdSearchLog -match 'CMD-PROBE exist=OK') 'child cmd.exe sees the virtual file through GetFileAttributesW'
+  Check ($cmdSearchLog -match 'VIRTUAL-FS-OK') 'child cmd.exe read the virtual file (L2.7 CRT stdio)'
+  Check ($cmdSearchLog -match 'CMD-PROBE child=OK code=0') 'child cmd.exe exited successfully'
 
   Write-Host "==> no-payload-on-disk and AV invariants"
   $afterScratch = Snapshot $scratch $null

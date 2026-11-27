@@ -642,7 +642,8 @@ pub fn lp_mapped_detach(base : Int64) -> Int32 {
 /// How many images were attached vs detached, and how many detach-before-unmap
 /// violations were recorded. Layout: [mapped_hooks, loaded_hooks, attaches,
 /// detaches, violations]. A clean teardown has attaches == detaches and
-/// violations == 0.
+/// violations == 0. L2.7 adds [crt_modules, crt_slots] when the caller supplies
+/// at least 28 bytes; older callers passing 20 keep the original five.
 #export_name("lp_virt_lifecycle_stats")
 pub fn lp_virt_lifecycle_stats(out : Int64, cap : Int32) -> Int32 {
   if out == 0L || cap < 20 {
@@ -654,8 +655,10 @@ pub fn lp_virt_lifecycle_stats(out : Int64, cap : Int32) -> Int32 {
     g_runtime.attach_bases.length().to_int64(),
     g_runtime.detach_bases.length().to_int64(),
     g_runtime.detach_order_violations.to_int64(),
+    g_runtime.crt_modules_patched.to_int64(),
+    g_runtime.crt_patched_slots.to_int64(),
   ]
-  let n = if cap < 20 { 0 } else { vals.length() }
+  let n = if cap < 28 { 5 } else { vals.length() }
   for i = 0; i < n; i = i + 1 {
     poke_bytes(out + (i * 4).to_int64(), u32le(vals[i]), 4)
   }

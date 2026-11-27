@@ -1,14 +1,14 @@
-/* L4/Tier-B probe: does a CRT-mediated read reach the virtual filesystem?
+/* L2.7/Tier-B probe: does a CRT-mediated read reach the virtual filesystem?
  *
- * Every fixture so far calls CreateFileW itself, so the virtual layer only had
+ * Every other fixture calls CreateFileW itself, so the virtual layer only had
  * to answer a Win32 import of the mapped image. A program built the ordinary
- * way reads through its CRT, and `fopen` lives in msvcrt/ucrtbase - a system
- * DLL this runtime deliberately does not patch. This probe is the smallest
- * thing that can tell those two paths apart: it opens the same virtual file
- * twice, once through stdio and once through Win32.
+ * way reads through its CRT, and `fopen` lives in msvcrt/ucrtbase. L2.7 patches
+ * a restricted file-I/O whitelist into those two modules, so this probe opens
+ * the same virtual file twice - once through stdio and once through Win32 - and
+ * expects both to say OK.
  *
- * Expected under full coverage: both lines say OK. The interesting case is
- * `crthelp` failing while `win32` succeeds.
+ * The interesting case is `C-open result=FAILED` while `win32 result=OK`: that
+ * is the pre-L2.7 gap (the CRT DLL IAT was skipped along with all system DLLs).
  */
 #include <stdio.h>
 #include <string.h>

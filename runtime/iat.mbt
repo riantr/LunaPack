@@ -29,7 +29,10 @@ fn patch_slot(addr : Int64, value : Int64, ptr_size : Int32) -> Bool {
 
 ///|
 /// Rewrite the IAT of `module_base`. Returns the number of slots patched.
-fn patch_imports(module_base : Int64) -> Int32 {
+/// `restricted` limits the rewrite to the L2.7 CRT file-I/O whitelist: a CRT
+/// module's loader and dynamic-resolution slots must stay on the real APIs or
+/// the OS loader re-enters our thunks during startup.
+fn patch_imports_filtered(module_base : Int64, restricted : Bool) -> Int32 {
   if module_base == 0L || peek16(module_base) != 0x5a4d {
     return 0
   }
@@ -81,11 +84,17 @@ fn patch_imports(module_base : Int64) -> Int32 {
         (entry & 0x80000000L) == 0L
       }
       let thunk = if by_name {
-        lookup_thunk(ascii_at(module_base + (entry & 0xFFFFFFFFL) + 2L, 128))
-      } else {
+        lookup_thunk_restricted(
+          ascii_at(module_base + (entry & 0xFFFFFFFFL) + 2L, 128),
+          restricted,
+        )
         // oleaut32 exports its automation entry points by ordinal, so a
         // component built the ordinary way imports them as numbers and a
-        // name-only hook would never run.
+        // name-only hook would never run. A restricted CRT module never takes
+        // this branch: its whitelisted file APIs are all imported by name.
+      } else if restricted {
+        None
+      } else {
         ordinal_thunk(dll_name, (entry & 0xFFFFL).to_int())
       }
       match thunk {
@@ -102,6 +111,51 @@ fn patch_imports(module_base : Int64) -> Int32 {
     cur = cur + 20L
   }
   patched
+}
+
+///|
+/// Ordinary (application) import patching. The full hook table applies.
+fn patch_imports(module_base : Int64) -> Int32 {
+  patch_imports_filtered(module_base, false)
+}
+
+///|
+/// L2.7: patch the two CRT modules that are already loaded in this process.
+/// Runs at most once. The guard is set before any work because this function is
+/// reached from the shared installer, which a LoadLibrary thunk can re-enter.
+/// Each module gets only the restricted file-I/O whitelist, never the loader,
+/// process or registry slots: the OS loader depends on those inside a CRT.
+fn patch_crt_modules() -> Int32 {
+  if g_runtime.crt_patched {
+    return 0
+  }
+  g_runtime.crt_patched = true
+  let modules = crt_module_whitelist()
+  let mut total = 0
+  let mut matched = 0
+  let mut i = 0
+  while i < modules.length() {
+    let name = modules[i]
+    let h = get_module_handle_a(cstring(name))
+    if h != 0L {
+      matched = matched + 1
+      total = total + patch_imports_filtered(h, true)
+    }
+    i = i + 1
+  }
+  g_runtime.crt_modules_patched = matched
+  g_runtime.crt_patched_slots = total
+  total
+}
+
+///|
+/// L2.7: let a C host patch the CRT IATs explicitly. Returns the number of
+/// slots changed on the first call and 0 afterwards; the authoritative counts
+/// stay in `lp_virt_lifecycle_stats`. The shared installer calls the same
+/// function, so a host that only maps an image gets identical coverage.
+#export_name("lp_patch_crt_iat")
+pub fn lp_patch_crt_iat() -> Int32 {
+  patch_crt_modules()
 }
 
 ///|
@@ -152,6 +206,11 @@ fn install_hooks(
   guard_system : Bool,
   accumulate : Bool,
 ) -> Int32 {
+  // L2.7: the CRT patch is process-wide and independent of whether THIS module
+  // may be patched. Run it on every path (mapped image, load-library thunk,
+  // bundle) so coverage cannot depend on which door a host came through; the
+  // once-guard makes repeated calls free.
+  ignore(patch_crt_modules())
   if !eligible_for_patch(module_base, guard_system) {
     return 0
   }

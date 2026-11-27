@@ -129,6 +129,15 @@ int main(int argc, char **argv) {
      an argument, because the launcher was started by the redirect. */
   if (child_target(target_buf, sizeof(target_buf))) {
     target = target_buf;
+    /* The child's command line starts with the target's arguments, not with a
+       directory. Taking argv[1] here used to look for lpvirt.dll in "/c\\" for
+       `cmd.exe /c ...`. The launcher always lives beside the runtime, so its
+       own path is the only reliable directory in child mode. */
+    if (!own_dir(dir_buf, sizeof(dir_buf))) {
+      printf("child mode: cannot find the launcher directory\n");
+      return 2;
+    }
+    dir = dir_buf;
     printf("child mode: parent asked for %s\n", target);
   }
   if (target == NULL) {
@@ -278,11 +287,13 @@ int main(int argc, char **argv) {
          (long)s[10], (long)s[11], (long)s[12]);
 
   /* L2.4: the mapped EXE path plus any runtime LoadLibrary both went through
-     the single installer. Layout: mapped,loaded,att,det,viol. */
-  int32_t life[5] = {0};
-  lifecycle(life, 20);
-  printf("hook lifecycle: mapped=%ld loaded=%ld attach=%ld detach=%ld violations=%ld\n",
-         (long)life[0], (long)life[1], (long)life[2], (long)life[3], (long)life[4]);
+     the single installer. Layout: mapped,loaded,att,det,viol,crtmods,crtslots. */
+  int32_t life[7] = {0};
+  lifecycle(life, 28);
+  printf("hook lifecycle: mapped=%ld loaded=%ld attach=%ld detach=%ld violations=%ld "
+         "crtmods=%ld crtslots=%ld\n",
+         (long)life[0], (long)life[1], (long)life[2], (long)life[3], (long)life[4],
+         (long)life[5], (long)life[6]);
 
   /* L4.1: how many programs this process redirected back into the launcher.
      Layout: redirects, failures, sections kept open, last error. */

@@ -25,6 +25,12 @@ struct RuntimeState {
   // crashing at process teardown.
   mut mapped_hook_count : Int32
   mut loaded_hook_count : Int32
+  // L2.7: the restricted CRT patch is process-wide and runs once. These count
+  // what it actually changed, so a probe can tell "whitelist matched nothing"
+  // apart from "stdio still bypasses the layer".
+  mut crt_patched : Bool
+  mut crt_modules_patched : Int32
+  mut crt_patched_slots : Int32
   mut attach_bases : Array[Int64]
   mut detach_bases : Array[Int64]
   mut detach_order_violations : Int32
@@ -94,6 +100,9 @@ let g_runtime : RuntimeState = {
   ntdll_hits: 0,
   mapped_hook_count: 0,
   loaded_hook_count: 0,
+  crt_patched: false,
+  crt_modules_patched: 0,
+  crt_patched_slots: 0,
   attach_bases: [],
   detach_bases: [],
   detach_order_violations: 0,
@@ -257,6 +266,10 @@ fn hook_table() -> Array[(String, String)] {
     ("GetFileAttributesW", "lp_get_file_attributes_w"),
     ("GetFileAttributesExW", "lp_get_file_attributes_ex_w"),
     ("GetFileSizeEx", "lp_get_file_size_ex"),
+    // L2.7: the CRT asks for the handle type right after CreateFileW; an
+    // unhooked GetFileType answers FILE_TYPE_UNKNOWN for a virtual handle and
+    // fopen fails with errno 9 (EBADF) even though the open succeeded.
+    ("GetFileType", "lp_get_file_type"),
     ("GetFileInformationByHandle", "lp_get_file_information_by_handle"),
     ("SetFilePointerEx", "lp_set_file_pointer_ex"),
     ("DeleteFileW", "lp_delete_file_w"),
@@ -286,6 +299,11 @@ fn hook_table() -> Array[(String, String)] {
     ("CreateFileA", "lp_create_file_a"),
     ("GetFileAttributesA", "lp_get_file_attributes_a"),
     ("GetFileAttributesExA", "lp_get_file_attributes_ex_a"),
+    // L2.6: resolution before open. cmd.exe asks SearchPathW where a file is
+    // before CreateFileW sees it; without these slots a virtual name is
+    // reported as missing even though the open side is virtualized.
+    ("SearchPathW", "lp_search_path_w"),
+    ("SearchPathA", "lp_search_path_a"),
     ("FindFirstFileA", "lp_find_first_file_a"),
     ("FindNextFileA", "lp_find_next_file_a"),
     ("DeleteFileA", "lp_delete_file_a"),
@@ -345,6 +363,76 @@ fn lookup_thunk(api : String) -> String? {
     i = i + 1
   }
   None
+}
+
+///|
+/// L2.7: the only system DLLs whose IATs may be rewritten. `hook_table()` is
+/// deliberately blind to the importing module: an ordinary application image
+/// gets every slot, but a Windows DLL is left alone because the OS loader
+/// resolves its own API-set dependencies through LoadLibraryExW at startup and
+/// a patched LoadLibrary slot re-enters us until the stack overflows. These two
+/// CRT modules are the one narrow exception: a program built the ordinary way
+/// reaches stdio through them, so their file slots have to answer from the
+/// virtual tree. Only `crt_api_whitelist()` below is touched in them.
+fn crt_module_whitelist() -> Array[String] {
+  ["ucrtbase.dll", "msvcrt.dll"]
+}
+
+///|
+/// L2.7: the only imports rewritten inside a whitelisted CRT module. Restricted
+/// to file I/O on purpose: no LoadLibrary*, GetProcAddress, ExitProcess,
+/// CreateProcess*, registry, ntdll, module-name or type-library slot is safe to
+/// touch inside a DLL the loader depends on. A virtual miss still falls back to
+/// the real API, so an unmatched real path keeps working.
+fn crt_api_whitelist() -> Array[String] {
+  [
+    "CreateFileW", "CreateFileA", "ReadFile", "WriteFile", "CloseHandle", "GetFileSizeEx",
+    "GetFileType", "SetFilePointerEx", "GetFileAttributesW", "GetFileAttributesA",
+    "GetFileAttributesExW", "GetFileAttributesExA", "FindFirstFileW", "FindFirstFileA",
+    "FindNextFileW", "FindNextFileA", "DeleteFileW", "DeleteFileA", "MoveFileExW",
+    "MoveFileExA", "SearchPathW", "SearchPathA", "GetTempPathW",
+  ]
+}
+
+///|
+/// Linear membership test. Both whitelists are tiny (2 modules, 22 APIs) and
+/// read on every patch decision, so a Map would cost more to build than it
+/// saves.
+fn string_in(list : Array[String], item : String) -> Bool {
+  let mut i = 0
+  while i < list.length() {
+    if list[i] == item {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+/// The leaf of a lower-cased module path. GetModuleFileNameA answers with a
+/// full path (`C:\\Windows\\System32\\ucrtbase.dll`) even when the module was
+/// loaded by short name, so matching has to ignore the directories.
+fn crt_module_name(path : String) -> String {
+  let normalized = path.to_lower().replace_all(old="\\", new="/")
+  basename(normalized)
+}
+
+///|
+/// Is this lower-cased module path one of the two CRT modules we may patch?
+fn is_crt_module(path : String) -> Bool {
+  string_in(crt_module_whitelist(), crt_module_name(path))
+}
+
+///|
+/// Resolve an import name to a thunk under the L2.7 restriction. An ordinary
+/// mapped image passes `restricted=false` and uses the full hook table; a CRT
+/// module passes `true` and only its file slots can change.
+fn lookup_thunk_restricted(api : String, restricted : Bool) -> String? {
+  if restricted && !string_in(crt_api_whitelist(), api) {
+    return None
+  }
+  lookup_thunk(api)
 }
 
 ///|

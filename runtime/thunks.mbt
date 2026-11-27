@@ -33,7 +33,34 @@ extern "C" fn real_close_handle(handle : Int64) -> Int32 = "CloseHandle"
 extern "C" fn real_get_file_attributes_w(path : Int64) -> Int32 = "GetFileAttributesW"
 
 ///|
+/// L2.6: the real resolver is only reached on a virtual miss, so a program
+/// still sees ordinary files and directories on the host.
+extern "C" fn real_search_path_w(
+  path : Int64,
+  file_name : Int64,
+  extension : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 = "SearchPathW"
+
+///|
+extern "C" fn real_search_path_a(
+  path : Int64,
+  file_name : Int64,
+  extension : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 = "SearchPathA"
+
+///|
 extern "C" fn real_get_file_size_ex(handle : Int64, size : Int64) -> Int32 = "GetFileSizeEx"
+
+///|
+/// L2.7: GetFileType is part of the CRT's open sequence. A virtual handle would
+/// otherwise look like an unknown device and stdio would reject it.
+extern "C" fn real_get_file_type(handle : Int64) -> Int32 = "GetFileType"
 
 ///|
 extern "C" fn real_find_first_file_w(path : Int64, data : Int64) -> Int64 = "FindFirstFileW"
@@ -244,6 +271,20 @@ pub fn thunk_get_file_size_ex(handle : Int64, size : Int64) -> Int32 {
       1
     }
     None => real_get_file_size_ex(handle, size)
+  }
+}
+
+///|
+/// L2.7: FILE_TYPE_DISK (1) for a virtual handle, real GetFileType otherwise.
+/// UCRT calls this between CreateFileW and its first read; without it `fopen`
+/// fails with errno 9 although the virtual open succeeded.
+#export_name("lp_get_file_type")
+pub fn thunk_get_file_type(handle : Int64) -> Int32 {
+  let v = state_vfs()
+  if v.handles.contains(handle) {
+    1
+  } else {
+    real_get_file_type(handle)
   }
 }
 
@@ -650,6 +691,118 @@ pub fn thunk_get_file_attributes_a(path : Int64) -> Int32 {
     real_get_file_attributes_a(path)
   } else {
     attrs
+  }
+}
+
+///|
+/// Offset of the file-name component in a path returned by SearchPath. The
+/// caller receives a pointer into its own buffer, not a copy of the leaf.
+fn path_file_part(s : String) -> Int32 {
+  let mut i = s.length() - 1
+  while i >= 0 {
+    if s[i] == '\\' || s[i] == '/' {
+      return i + 1
+    }
+    i = i - 1
+  }
+  0
+}
+
+///|
+/// L2.6: cmd.exe resolves a name with SearchPathW before it opens it. Serve
+/// virtual hits from the VFS; a miss keeps the real Win32 resolver, including
+/// its PATH handling and error codes.
+#export_name("lp_search_path_w")
+pub fn thunk_search_path_w(
+  path : Int64,
+  file_name : Int64,
+  extension : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 {
+  let v = state_vfs()
+  match
+    v.search_virtual(
+      wide_to_string(path),
+      wide_to_string(file_name),
+      wide_to_string(extension),
+    ) {
+    Some(found) => {
+      hit("SearchPathW")
+      let n = found.length()
+      let need = n + 1
+      if n_buffer < need {
+        if file_part != 0L {
+          poke_bytes(file_part, u64le(0L), 8)
+        }
+        return need
+      }
+      if buffer != 0L {
+        poke_bytes(buffer, utf16le(found), need * 2)
+      }
+      if file_part != 0L && buffer != 0L {
+        let part = buffer + (path_file_part(found) * 2).to_int64()
+        poke_bytes(file_part, u64le(part), 8)
+      }
+      set_last_error(ERROR_SUCCESS)
+      n
+    }
+    None => {
+      v.note_fallback()
+      real_search_path_w(
+        path, file_name, extension, n_buffer, buffer, file_part,
+      )
+    }
+  }
+}
+
+///|
+/// ANSI form of SearchPath. The VFS is ASCII-only, so the same lookup serves
+/// both forms and only the returned encoding differs.
+#export_name("lp_search_path_a")
+pub fn thunk_search_path_a(
+  path : Int64,
+  file_name : Int64,
+  extension : Int64,
+  n_buffer : Int32,
+  buffer : Int64,
+  file_part : Int64,
+) -> Int32 {
+  let v = state_vfs()
+  match
+    v.search_virtual(
+      ansi_to_string(path),
+      ansi_to_string(file_name),
+      ansi_to_string(extension),
+    ) {
+    Some(found) => {
+      hit("SearchPathA")
+      let n = found.length()
+      let need = n + 1
+      if n_buffer < need {
+        if file_part != 0L {
+          poke_bytes(file_part, u64le(0L), 8)
+        }
+        return need
+      }
+      if buffer != 0L {
+        poke_bytes(buffer, ascii_bytes(found), n)
+        poke_bytes(buffer + n.to_int64(), Bytes::make(1, b'\x00'), 1)
+      }
+      if file_part != 0L && buffer != 0L {
+        let part = buffer + path_file_part(found).to_int64()
+        poke_bytes(file_part, u64le(part), 8)
+      }
+      set_last_error(ERROR_SUCCESS)
+      n
+    }
+    None => {
+      v.note_fallback()
+      real_search_path_a(
+        path, file_name, extension, n_buffer, buffer, file_part,
+      )
+    }
   }
 }
 

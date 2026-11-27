@@ -8,6 +8,7 @@ EXPORTS
   lp_virt_has_reg
   lp_virt_stats
   lp_install_iat_hooks
+  lp_patch_crt_iat
   lp_create_file_w
   lp_read_file
   lp_write_file
@@ -15,6 +16,7 @@ EXPORTS
   lp_get_file_attributes_w
   lp_get_file_attributes_ex_w
   lp_get_file_size_ex
+  lp_get_file_type
   lp_get_file_information_by_handle
   lp_set_file_pointer_ex
   lp_delete_file_w
@@ -48,6 +50,8 @@ EXPORTS
   lp_create_file_a
   lp_get_file_attributes_a
   lp_get_file_attributes_ex_a
+  lp_search_path_w
+  lp_search_path_a
   lp_find_first_file_a
   lp_find_next_file_a
   lp_delete_file_a

@@ -282,6 +282,93 @@ fn basename(p : String) -> String {
 }
 
 ///|
+/// Split a Win32 semicolon-separated search path (`lpPath`) into directories.
+fn split_search_path(p : String) -> Array[String] {
+  let out : Array[String] = []
+  let mut start = 0
+  let mut i = 0
+  while i <= p.length() {
+    if i == p.length() || p[i] == ';' {
+      if i > start {
+        out.push(str_slice(p, start, i))
+      }
+      start = i + 1
+    }
+    i = i + 1
+  }
+  out
+}
+
+///|
+/// Win32 appends `lpExtension` only when the leaf has no extension of its own.
+fn with_search_extension(name : String, ext : String) -> String {
+  if ext.length() == 0 {
+    return name
+  }
+  let dot_ext = if ext[0] == '.' { ext } else { "." + ext }
+  if basename(norm_path(name)).contains(".") {
+    name
+  } else {
+    name + dot_ext
+  }
+}
+
+///|
+/// Render a canonical virtual path with Win32 separators. The returned string
+/// must be usable by CreateFileW on the way back out of SearchPath.
+fn display_path(p : String) -> String {
+  let win = p.replace_all(old="/", new="\\")
+  if win.length() >= 2 && win[1] == ':' {
+    str_slice(win, 0, 1).to_upper() + str_slice(win, 1, win.length())
+  } else {
+    win
+  }
+}
+
+///|
+/// L2.6: resolve a name against the virtual tree before handing it to the real
+/// SearchPath API. An absolute name is checked as-is; an explicit `lpPath`
+/// list is checked in order; then the virtual CWD and a bare relative name.
+/// A miss returns `None` so the caller can forward to the real API and keep
+/// real files visible.
+pub fn Vfs::search_virtual(
+  self : Vfs,
+  search_path : String,
+  file_name : String,
+  extension : String,
+) -> String? {
+  if file_name.length() == 0 {
+    return None
+  }
+  let candidates : Array[String] = []
+  if is_absolute(norm_path(file_name)) {
+    candidates.push(file_name)
+  } else if search_path.length() > 0 {
+    // An explicit lpPath replaces Win32's default search order; an empty
+    // element in the list means the current directory.
+    let dirs = split_search_path(search_path)
+    for dir in dirs {
+      let entry = if dir.length() > 0 { dir } else { "." }
+      candidates.push(entry + "/" + file_name)
+    }
+  } else {
+    if self.cwd.length() > 0 {
+      candidates.push(self.cwd + "/" + file_name)
+    }
+    candidates.push(file_name)
+  }
+  let mut i = 0
+  while i < candidates.length() {
+    let p = self.resolve(with_search_extension(candidates[i], extension))
+    if self.files.contains(p) || self.dirs.contains(p) {
+      return Some(display_path(p))
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
 fn wildcard_match(name : String, pat : String) -> Bool {
   if pat == "*" || pat == "" {
     return true

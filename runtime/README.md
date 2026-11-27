@@ -185,7 +185,8 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
 | `lp_virt_set_cwd` | Set the directory used to resolve relative virtual paths. |
 | `lp_virt_add_alias` | Register a short-name alias (e.g. `progra~1` -> `program files`). |
 | `lp_virt_post_completion` | Post an overlapped completion record to the in-memory queue. |
-| `lp_install_iat_hooks` | Patch the 59 hooked IAT slots of an image base (52 Win32 + 7 ntdll), plus any oleaut32 slot imported by ordinal. Works for loaded and manually mapped images. |
+| `lp_install_iat_hooks` | Patch the 62 hooked IAT slots of an image base (55 Win32 + 7 ntdll), plus any oleaut32 slot imported by ordinal. Works for loaded and manually mapped images; also installs the L2.7 restricted CRT whitelist. |
+| `lp_patch_crt_iat` | L2.7: patch only the file-I/O slots of `ucrtbase.dll` and `msvcrt.dll` (loader/process/registry slots stay real). Returns the number of slots patched; runs once per process, and `lp_install_iat_hooks` calls it too. |
 | `lp_virt_exit_query` | Did a mapped image call ExitProcess, and with what code? Returns 1/0; writes the code to the given address. |
 | `lp_virt_set_temp_path` | Seed the virtual temp directory returned by GetTempPathW (UTF-16LE). Empty disables the override. |
 | `lp_map_image` | Manually map a PE32+ DLL from a byte array. Returns the image base, or 0. |
@@ -194,7 +195,7 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
 | `lp_get_entry` | Address of DllMain of a mapped image. |
 | `lp_unmap_image` | Release the private pages of a mapped image. Records a detach-order violation if ATTACH was noted without DETACH. |
 | `lp_mapped_attach`, `lp_mapped_detach` | L2.4: record the host's manual DllMain ATTACH / DETACH for a mapped image. DETACH must precede unmap. |
-| `lp_virt_lifecycle_stats` | L2.4: `[mapped_hooks, loaded_hooks, attaches, detaches, violations]` — proves both install paths share one hook table and teardown order held. |
+| `lp_virt_lifecycle_stats` | L2.4: `[mapped_hooks, loaded_hooks, attaches, detaches, violations]`, plus `[crt_modules, crt_slots]` when the caller passes at least 28 bytes (L2.7). Proves both install paths share one hook table, teardown order held, and the CRT whitelist matched. |
 | `lp_virt_fallback_audit` | L2.5: `[self_thunk_hits, probes, unresolved, status]`. `self_thunk_hits=0` proves lpvirt.dll's own IAT is unpatched (no trampoline/recursion). |
 | `lp_get_tls_callbacks` | L3.4: allocate a TLS index and return the callback array VA of a mapped image (host invokes each callback). |
 | `lp_register_eh`, `lp_unregister_eh` | L3.4: register/unregister the mapped image's `.pdata` with RtlAdd/DeleteFunctionTable for SEH unwinding. |
@@ -283,21 +284,23 @@ launcher. Skipping the attach makes `HeapAlloc` fault inside the runtime.
   neither the virtual tree nor on disk is handed to the real `CreateProcess`,
   so caller code that handles "file not found" still works. This also means
   the runtime never invents a process for a path it cannot map.
-- **CRT-mediated file I/O is not virtualized.** This is the largest known gap
-  and it is measured, not assumed: `runtime/tests/crt_open.c` opens the same
-  virtual file twice and reports `C-open result=FAILED` next to
-  `win32 result=OK`. `fopen` lives in `msvcrt`/`ucrtbase`, a system DLL this
-  runtime deliberately does not patch, so a program that reads through stdio
-  reaches the real disk. Consequences: a real application that uses `FILE*`
-  or `std::ifstream` for its data files will not see the layer; `cmd.exe /c
-  type <virtual file>` fails for the same reason. `scripts/verify_virtual_bundle.ps1`
-  pins both halves of that boundary, so closing the gap fails the gate and
-  forces this paragraph to change with it.
-- **`SearchPathW` is not hooked.** A program that resolves a name before
-  starting or opening it asks the real filesystem (Windows 11 `cmd.exe` is one:
-  it imports `SearchPathW`, and that is why it cannot find a virtual program
-  even though `GetFileAttributesW` would answer). `CreateFileW` on the same
-  literal path works, so this is a resolution gap rather than a lookup gap.
+- **CRT-mediated file I/O is virtualized (L2.7), by a restricted whitelist.**
+  System DLLs used to be excluded from IAT patching: rewriting a CRT's own
+  `LoadLibrary` slot re-enters the OS loader and overflows the stack. L2.7 adds
+  a narrow exception — `ucrtbase.dll` and `msvcrt.dll` get only their file slots
+  (`CreateFile*`, `ReadFile`, `WriteFile`, `GetFileType`, `SearchPath*`, …)
+  rewritten; loader, process and registry slots stay on the real APIs.
+  `runtime/tests/crt_open.c` now reports `C-open result=OK` next to
+  `win32 result=OK`, including through the shipping virtual-bundle path. A
+  child `cmd.exe /c type <virtual file>` still fails earlier, at a resolution
+  step outside the CRT whitelist (L2.8, `GetFullPathNameW`-class).
+  A virtual miss still falls through to the real API. Which modules matched and
+  how many slots changed are counted in `lp_virt_lifecycle_stats` (`crtmods`,
+  `crtslots`).
+- **`SearchPathW`/`SearchPathA` are hooked (L2.6).** Resolution happens before
+  open: `cmd.exe` asks `SearchPathW` where a file lives, and a virtual answer
+  includes the `lpFilePart` offset and the required length for a short buffer.
+  A miss falls back to the real resolver.
 - **COM components register and activate without administrator rights (L5).**
   The whole `HKCR` namespace (and both `Software\Classes` subtrees, which are
   folded onto `hkcr`) is owned by the hive, so `DllRegisterServer` writes land in
@@ -494,7 +497,7 @@ Two things are worth recording because they cost the most time:
 
 ### L6 re-measure (2026-11-23)
 
-Root tests **213/213**; runtime tests **43/43**. All nine assertion scripts are
+Root tests **213/213**; runtime tests **49/49** (L2.6/L2.7 added three). All nine assertion scripts are
 green: `verify_virtual_bundle`, `verify_child_follow`, `verify_com_activation`,
 `verify_fallback_chain`, `verify_ntdll_spike`, `verify_pe_features`,
 `verify_thin_launcher`, `verify_zero_disk` (run last, because the consume demos
@@ -560,9 +563,9 @@ tries to simplify it:
 | `registry_nt.mbt` | L5: the native registry entry points (`NtOpenKey`, `NtQueryValueKey`, `NtQueryKey`) that combase uses alongside Win32. |
 | `typelib.mbt` | L5.6: reads a type library out of module bytes — the `TYPELIB` resource walk and the `MSFT` layout (segment directory, type-info records, GUID/name/string tables) — reduced to what a registration writes. |
 | `oleaut.mbt` | L5.6: the seven oleaut32 thunks, the `ITypeLib` object and its vtable, and the hive writes a registration produces. |
-| `state.mbt` | Lazy process-wide state and the 59-entry hook table, plus the ordinal table for libraries that export by number. |
+| `state.mbt` | Lazy process-wide state, the 62-entry hook table, the L2.7 CRT module/API whitelists, and the ordinal table for libraries that export by number. |
 | `entry.mbt` | L5.3: emits a `DllMain(base, DLL_PROCESS_ATTACH, NULL)` stub and has the system call it, for images the runtime maps itself. |
-| `iat.mbt` | In-process import address table patcher; also patches runtime-loaded modules, skipping Windows system DLLs. |
+| `iat.mbt` | In-process import address table patcher; also patches runtime-loaded modules, skipping Windows system DLLs except the L2.7 restricted CRT whitelist. |
 | `thunks.mbt` | The Win32-compatible C ABI thunks and management exports. |
 | `mapper.mbt` | Manual PE mapping, relocations, imports, protections, export lookup. |
 | `bundle.mbt` | L6: v7 virtual-layer manifest reader, the backwards footer search that lets a signed bundle keep running, checksummed archive entry decoder, registry seeding and `lp_run_bundle` — the whole run lives inside the DLL. |

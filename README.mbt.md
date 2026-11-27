@@ -445,20 +445,18 @@ proxy to `@http` instead of opening the connection itself (see below).
   direct". The `NO_PROXY` and loopback bypass logic is unchanged and tested; the
   tunnel itself is not covered by an automated test.
 
-- **What this release does not claim.** `--virtual` is a **Tier A preview**.
-  Two limits are measured, not suspected, and each is pinned by an assertion so
-  that closing it turns the gate red:
+- **What this release does not claim.** `--virtual` remains a **Tier A preview**.
+  Two resolution/I/O limits used to be pinned here and are now closed: L2.6
+  hooked `SearchPathW`/`SearchPathA`, and L2.7 patched a restricted file-I/O
+  whitelist into `msvcrt`/`ucrtbase` (loader and process slots stay real).
+  `runtime/tests/crt_open.c` now reports both `CreateFileW` and `fopen` as OK;
+  a child `cmd.exe /c type` still stops at a resolution API outside the CRT
+  whitelist (L2.8), not at stdio.
 
-  * CRT stdio never reaches the layer. `runtime/tests/crt_open.c` opens one
-    virtual file twice in the same process: `CreateFileW` succeeds and `fopen`
-    does not, because `msvcrt`/`ucrtbase` are system DLLs and the import-table
-    patch deliberately leaves them alone.
-  * `SearchPathW` is not hooked, so `cmd.exe` cannot resolve a program that
-    exists only in the virtual tree, even though `GetFileAttributesW` and
-    `CreateFileW` answer for that same path.
-
-  The Tier B matrix of three real programs is therefore **not** satisfied; both
-  limits are registered as its preconditions in `runtime/tests/corpus/README.md`.
+  The Tier B matrix of three real programs is still **not** satisfied: x86 is a
+  toolchain NO-GO and the remaining unhooked APIs (e.g. `GetFullPathNameW`,
+  `CreateDirectoryW`, `FindFirstFileExW`) are logged as L2.8 in
+  `runtime/tests/corpus/README.md`.
   A passing Tier A fixture is not a passing Tier B program, and this release does
   not present it as one.
 
@@ -2069,18 +2067,19 @@ What it currently does, end to end and in one process:
   layer. A path that exists in neither is handed to the real API, so an
   ordinary "file not found" still arrives where the caller expects it.
 
-Two limits are measured rather than assumed, and both are asserted by
-`scripts/verify_virtual_bundle.ps1`:
+Two limits used to be measured here and are now closed (both assertions were
+flipped with them in `scripts/verify_virtual_bundle.ps1`):
 
-- **stdio does not reach the layer.** `fopen` lives in `msvcrt`/`ucrtbase`, a
-  system DLL the runtime does not patch, so a program that reads its data
-  through `FILE*` or `std::ifstream` still sees the real disk. The script runs
-  `crt_open.exe`, which opens one virtual file both ways and prints
-  `C-open result=FAILED` next to `win32 result=OK`.
-- **`SearchPathW` is not hooked.** A program that resolves a name before
-  starting it asks the real filesystem; Windows 11's own `cmd.exe` does exactly
-  that, which is why it cannot find a virtual program even though
-  `GetFileAttributesW` on the same literal path is answered from the layer.
+- **CRT stdio reaches the layer (L2.7).** `fopen` lives in `msvcrt`/`ucrtbase`,
+  which are still system DLLs, but a restricted whitelist now rewrites only
+  their file slots and keeps every loader/process slot on the real API. The
+  script runs `crt_open.exe`, which opens one virtual file both ways and prints
+  `C-open result=OK` next to `win32 result=OK`; the launcher also reports
+  `crtmods=2 crtslots=N`.
+- **`SearchPathW`/`SearchPathA` are hooked (L2.6).** `cmd.exe` resolves a name
+  before starting it; the virtual answer now also fills `lpFilePart` and
+  reports the needed length for a short buffer. `cmd /c type` still needs an
+  L2.8 resolution API, so that last verifier line remains red.
 - **A `--virtual` bundle can be signed, and the reader is what makes that
   possible.** The archive footer used to be read from the last 24 bytes of the
   file, and an Authenticode certificate table is appended exactly there, so

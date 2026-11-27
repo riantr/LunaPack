@@ -14,6 +14,115 @@ test "paths normalize separators, case, trailing slash and duplicates" {
 }
 
 ///|
+test "L2.6 SearchPath resolves an absolute virtual file to an openable path" {
+  let v = Vfs::new()
+  v.add_file("C:\\virt\\hello.txt", ascii_bytes("VIRTUAL-FS-OK"))
+  match v.search_virtual("", "C:\\virt\\hello.txt", "") {
+    Some(p) => {
+      assert_true(p == "C:\\virt\\hello.txt")
+      // The string SearchPath returns must work on the way back into CreateFileW.
+      assert_true(v.attributes(p) == FILE_ATTRIBUTE_NORMAL)
+    }
+    None => assert_true(false)
+  }
+  assert_true(v.search_virtual("", "C:\\virt\\missing.txt", "") is None)
+}
+
+///|
+test "L2.6 SearchPath honours the path list, extension and virtual CWD" {
+  let v = Vfs::new()
+  v.add_file("c:/bin/tool.exe", Bytes::make(2, b'x'))
+  v.add_file("c:/work/tool.exe", Bytes::make(2, b'y'))
+  v.add_file("c:/work/data.txt", Bytes::make(2, b'z'))
+  v.set_cwd("C:\\work")
+  // The explicit lpPath list wins over the CWD copy.
+  assert_true(
+    v.search_virtual("c:/nowhere;c:/bin", "tool", ".exe").unwrap() ==
+    "C:\\bin\\tool.exe",
+  )
+  assert_true(
+    v.search_virtual("", "data.txt", "").unwrap() == "C:\\work\\data.txt",
+  )
+  assert_true(v.search_virtual("c:/nowhere", "tool.exe", "") is None)
+}
+
+///|
+test "L2.6 hook table registers both SearchPath forms" {
+  let mut count = 0
+  let mut wide = false
+  let mut ansi = false
+  for pair in hook_table() {
+    let (name, _) = pair
+    count = count + 1
+    if name == "SearchPathW" {
+      wide = true
+    }
+    if name == "SearchPathA" {
+      ansi = true
+    }
+  }
+  assert_true(count == 62)
+  assert_true(wide)
+  assert_true(ansi)
+}
+
+///|
+test "L2.7 CRT whitelist names the two CRT modules only" {
+  let mods = crt_module_whitelist()
+  assert_true(mods.length() == 2)
+  assert_true(mods[0] == "ucrtbase.dll")
+  assert_true(mods[1] == "msvcrt.dll")
+  // The leaf is matched, not the directory: GetModuleFileNameA answers with a
+  // full path even when the module was loaded by short name.
+  assert_true(is_crt_module("c:\\windows\\system32\\ucrtbase.dll"))
+  assert_true(is_crt_module("C:/Windows/System32/MSVCRT.DLL"))
+  assert_true(!is_crt_module("c:\\windows\\system32\\kernel32.dll"))
+  assert_true(!is_crt_module("c:\\windows\\system32\\ucrtbase2.dll"))
+  // Matching is by leaf name, not directory: an app that ships its own CRT is
+  // still a CRT, and GetModuleHandleA resolves by leaf name too.
+}
+
+///|
+test "L2.7 CRT API whitelist is file I/O only" {
+  let apis = crt_api_whitelist()
+  for
+    name in [
+      "CreateFileW", "CreateFileA", "ReadFile", "WriteFile", "CloseHandle", "GetFileSizeEx",
+      "GetFileType", "SetFilePointerEx", "GetFileAttributesW", "GetFileAttributesExW",
+      "FindFirstFileW", "FindNextFileW", "SearchPathW", "SearchPathA",
+    ] {
+    assert_true(string_in(apis, name))
+  }
+  // Touching any of these inside a CRT DLL risks loader re-entry, so they must
+  // stay outside the restricted set even though they are in hook_table().
+  for
+    name in [
+      "LoadLibraryA", "LoadLibraryW", "LoadLibraryExW", "GetProcAddress", "ExitProcess",
+      "CreateProcessW", "RegOpenKeyExW", "NtCreateFile", "GetModuleFileNameW", "LoadTypeLibEx",
+      "SearchPathMissing",
+    ] {
+    assert_true(!string_in(apis, name))
+  }
+}
+
+///|
+test "L2.7 restricted lookup filters the full hook table" {
+  match lookup_thunk_restricted("CreateFileW", true) {
+    Some(thunk) => assert_true(thunk == "lp_create_file_w")
+    None => assert_true(false)
+  }
+  match lookup_thunk_restricted("LoadLibraryW", true) {
+    Some(_) => assert_true(false)
+    None => ()
+  }
+  // Unrestricted modules still get every slot in hook_table().
+  match lookup_thunk_restricted("LoadLibraryW", false) {
+    Some(thunk) => assert_true(thunk == "lp_load_library_w")
+    None => assert_true(false)
+  }
+}
+
+///|
 test "a virtual file opens, reads, reports size and closes" {
   let v = Vfs::new()
   v.add_file("C:\\virt\\hello.txt", ascii_bytes("virtual-hello"))

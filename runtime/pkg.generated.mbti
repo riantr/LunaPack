@@ -104,6 +104,8 @@ pub fn lp_nt_query_value_key(Int64, Int64, Int32, Int64, Int32, Int64) -> Int32
 
 pub fn lp_nt_read_file(Int64, Int64, Int64, Int64, Int64, Int64, Int32, Int64, Int64) -> Int32
 
+pub fn lp_patch_crt_iat() -> Int32
+
 pub fn lp_proc_stats(Int64, Int32) -> Int32
 
 pub fn lp_reg_log_count() -> Int32
@@ -200,6 +202,8 @@ pub fn thunk_get_file_information_by_handle(Int64, Int64) -> Int32
 
 pub fn thunk_get_file_size_ex(Int64, Int64) -> Int32
 
+pub fn thunk_get_file_type(Int64) -> Int32
+
 pub fn thunk_get_module_file_name_w(Int64, Int64, Int32) -> Int32
 
 pub fn thunk_get_proc_address(Int64, Int64) -> Int64
@@ -259,6 +263,10 @@ pub fn thunk_reg_set_value_ex_w(Int64, Int64, Int64, Int32, Int64, Int32) -> Int
 pub fn thunk_register_typelib(Int64, Int64, Int64) -> Int32
 
 pub fn thunk_register_typelib_for_user(Int64, Int64, Int64) -> Int32
+
+pub fn thunk_search_path_a(Int64, Int64, Int64, Int32, Int64, Int64) -> Int32
+
+pub fn thunk_search_path_w(Int64, Int64, Int64, Int32, Int64, Int64) -> Int32
 
 pub fn thunk_set_file_pointer_ex(Int64, Int64, Int64, Int32) -> Int32
 
@@ -425,6 +433,7 @@ pub fn Vfs::read_at(Self, Int64, Int32, Int64) -> Bytes?
 pub fn Vfs::read_file(Self, String) -> Bytes?
 pub fn Vfs::rename_file(Self, String, String) -> Bool
 pub fn Vfs::resolve(Self, String) -> String
+pub fn Vfs::search_virtual(Self, String, String, String) -> String?
 pub fn Vfs::seek(Self, Int64, Int64, Int32) -> Int64?
 pub fn Vfs::set_cwd(Self, String) -> Unit
 pub fn Vfs::set_meta(Self, String, Int32, Int64, Int64, Int64) -> Bool

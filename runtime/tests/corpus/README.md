@@ -27,19 +27,26 @@ Tier B run is meaningful.
 
 ## Tier B — real programs (at least five, one per required capability)
 
-**Two blockers found on 2026-11-23 must be closed or accepted before a Tier B
-run means anything.** Both were measured, not inferred:
+**The two blockers found on 2026-11-23 are now closed (2026-11-26):** both had
+been measured, and both fixes are measured too.
 
-1. **CRT stdio does not reach the layer.** `fopen` is in `msvcrt`/`ucrtbase`,
-   which the runtime does not patch. `runtime/tests/crt_open.c` opens one
-   virtual file through stdio and through Win32 in the same process and prints
-   `C-open result=FAILED` / `win32 result=OK`. Any sample that reads its data
-   with `FILE*` or `std::ifstream` cannot pass a virtual-file probe until this
-   changes, so a run today would measure the gap, not the program.
-2. **`SearchPathW` is not hooked.** Samples that resolve a name before opening
-   or starting it ask the real filesystem. `cmd.exe` on Windows 11 imports it,
-   which is why `cmd /c C:\virt\app.exe` reports "path not found" while
-   `CreateFileW` on the same path is answered from the layer.
+1. **CRT stdio reaches the layer (L2.7).** `fopen` is in `msvcrt`/`ucrtbase`;
+   a restricted whitelist now patches only their file slots, leaving loader
+   and process slots on the real APIs. `runtime/tests/crt_open.c` prints
+   `C-open result=OK` / `win32 result=OK`. A real sample using `FILE*` or
+   `std::ifstream` can now be measured instead of measuring the gap. A child
+   `cmd.exe /c type` still stops at an unhooked resolution API (L2.8), so that
+   one is not a CRT finding.
+2. **`SearchPathW`/`SearchPathA` are hooked (L2.6).** A name resolved before
+   open gets a virtual answer with `lpFilePart` and short-buffer length; a
+   miss falls back to the real resolver. `cmd /c C:\virt\app.exe` no longer
+   reports "path not found".
+
+**Still open before Tier B can be read as a coverage result:** x86 PE32 is a
+toolchain NO-GO (`X86_DECISION.md`), and the remaining unhooked file APIs —
+`GetFullPathNameW`, `CreateDirectoryW`, `FindFirstFileExW`, `GetShortPathNameW`,
+`MapViewOfFile`, and others — are registered as L2.8. A Tier B sample failing
+through one of those is a coverage gap, not "program unsupported".
 
 A probe that only needs Win32 calls (`CreateFileW`, `FindFirstFileW`) or a
 mapped child is unaffected: `scripts/verify_virtual_bundle.ps1` covers both,

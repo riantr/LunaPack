@@ -175,6 +175,12 @@ $xpExe = Join-Path $distDir 'pe_export_probe.exe'
 $spawnSrc = Join-Path $runtimeDir 'tests\spawn_chain.c'
 $spawnObj = Join-Path $distDir 'spawn_chain.obj'
 $spawnExe = Join-Path $distDir 'spawn_chain.exe'
+$searchSrc = Join-Path $runtimeDir 'tests\searchpath_probe.c'
+$searchObj = Join-Path $distDir 'searchpath_probe.obj'
+$searchExe = Join-Path $distDir 'searchpath_probe.exe'
+$cmdSearchSrc = Join-Path $runtimeDir 'tests\cmd_search_probe.c'
+$cmdSearchObj = Join-Path $distDir 'cmd_search_probe.obj'
+$cmdSearchExe = Join-Path $distDir 'cmd_search_probe.exe'
 Write-Host '==> compile mini_target.exe (no CRT, /ENTRY:mini_main)'
 & $clExe /nologo /c /GS- "/Fo:$miniObj" "$miniSrc"
 Assert-Ok 'cl mini_exe.c'
@@ -217,6 +223,18 @@ Assert-Ok 'cl spawn_chain.c'
 & $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:spawn_main /NODEFAULTLIB `
   "/OUT:$spawnExe" "$spawnObj" kernel32.lib
 Assert-Ok 'link spawn_chain.exe'
+Write-Host '==> compile searchpath_probe.exe (L2.6 resolution probe, /ENTRY:searchpath_main)'
+& $clExe /nologo /c /GS- "/Fo:$searchObj" "$searchSrc"
+Assert-Ok 'cl searchpath_probe.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:searchpath_main /NODEFAULTLIB `
+  "/OUT:$searchExe" "$searchObj" kernel32.lib
+Assert-Ok 'link searchpath_probe.exe'
+Write-Host '==> compile cmd_search_probe.exe (L2.6 child cmd.exe probe, /ENTRY:cmdsearch_main)'
+& $clExe /nologo /c /GS- "/Fo:$cmdSearchObj" "$cmdSearchSrc"
+Assert-Ok 'cl cmd_search_probe.c'
+& $linkExe /nologo /MACHINE:X64 /SUBSYSTEM:CONSOLE /ENTRY:cmdsearch_main /NODEFAULTLIB `
+  "/OUT:$cmdSearchExe" "$cmdSearchObj" kernel32.lib
+Assert-Ok 'link cmd_search_probe.exe'
 Write-Host '==> compile crt_target.exe (CRT diagnostic, /SUBSYSTEM:CONSOLE)'
 & $clExe /nologo "/Fo:$objDir" "/Fe:$crtExe" "$crtSrc" /link kernel32.lib
 Assert-Ok 'cl crt_target.exe'
