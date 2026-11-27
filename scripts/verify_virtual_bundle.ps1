@@ -101,7 +101,7 @@ function RunChecked([string]$exe, [string[]]$arguments, [string]$outFile) {
   for ($attempt = 0; $attempt -lt 5; $attempt++) {
     $code = RunCapture $exe $arguments $outFile
     $text = ReadOut $outFile
-    if ($text -notmatch 'Access is denied|拒绝访问|正在使用此文件|cannot access the file') { break }
+    if ($text -notmatch 'Access is denied|denied|in use|being used|cannot access the file|process cannot access') { break }
     Start-Sleep -Milliseconds 1500
   }
   return $code
