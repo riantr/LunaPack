@@ -65,7 +65,13 @@ Check ($exit -eq 0) "host.exe exit code 0 (got $exit)"
 Check ($out -match 'payload file deleted before mapping: YES') 'payload deleted before mapping'
 Check ($out -match 'OS loader knows payload.dll: NO') 'OS loader does not know payload.dll'
 Check ($out -match 'payload file still on disk : NO') 'payload absent from disk after run'
-Check ($out -match 'patched IAT slots\s+: 22') '22 IAT slots patched (one per hooked API the payload imports; 21 before the L5 hooks grew the table)'
+# One patched slot per imported hooked API. The number rose from 21 to 22
+# when L5 hooks landed, and to 24 after the L2.6/L2.7/L2.8 resolution hooks,
+# so pin a floor rather than an exact count: growth is expected, a fall is not.
+$iatSlots = 0
+$iatMatch = [regex]::Match($out, 'patched IAT slots\s+: (\d+)')
+if ($iatMatch.Success) { $iatSlots = [int]$iatMatch.Groups[1].Value }
+Check ($iatSlots -ge 22) "IAT slots patched >= 22 (got $iatSlots; one per hooked API the payload imports)"
 Check ($out -match 'DllMain\(DLL_PROCESS_ATTACH\): TRUE') 'DllMain attach succeeded'
 Check ($out -match 'real registry key open = 2') 'real HKLM key never created'
 Check ($out -match 'virtual file :.*VIRTUAL-FS-OK') 'virtual file read from memory'
